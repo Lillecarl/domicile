@@ -133,7 +133,7 @@ pub enum Request {
     /// are off, and what holds them on or captures the desktop.
     Status,
     /// Turn every monitor off until input or [`Request::WakeDisplays`], or
-    /// only `display`, by its `wl_output` name, until it is woken. The
+    /// only `display`, by any name a profile matches it by, until it is woken. The
     /// compositor owns the monitors, so this works with any shell. See
     /// `docs/IDLE.md#sleeping-on-demand`.
     SleepDisplays {

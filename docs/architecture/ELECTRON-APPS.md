@@ -392,5 +392,5 @@ Inspected 2026-11-13: every `.node` file's imports and every window's
 - [x] an app's own schemes kept for the next engine start
 - [x] the quirks table: known phase-2 apps go straight to their own Electron
 - [ ] the quirks table seeds known apps' schemes, once checked against the real apps
-- [ ] VM test with a fixture app, and memory against the same app on its own Electron
+- [x] VM test with a fixture app, and memory against the same app on its own Electron (`electron-app-on-a-tty` in `flake.nix`)
 - [ ] phase 2: Node in the page

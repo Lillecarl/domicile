@@ -59,6 +59,7 @@
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/restore_type.h"
 #include "content/public/browser/page.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/reload_type.h"
@@ -189,17 +190,22 @@ blink::mojom::StreamDevicesSetPtr BrowserWindowTab(
   return TabCapture(tab, CaptureHandleFor(*capturer, origin, captured), audio);
 }
 
-// The context a guest's page is made in: `owner`, or its off-the-record
-// context for a private guest.
+// The context a guest's page is made in: `owner`, or BrowserWindowHost's
+// for a private guest or one that names a profile.
 content::BrowserContext* ContextFor(content::BrowserContext& owner,
-                                    bool private_browsing) {
-  if (!private_browsing) {
+                                    bool private_browsing,
+                                    const std::string& profile) {
+  if (!private_browsing && profile.empty()) {
     return &owner;
   }
-  // guard-webview-private.sh reads this to tell "never asked for" from "asked
-  // for and shared the user's storage".
-  LOG(INFO) << "domicile: made a private guest.";
-  return &Host().PrivateContext(owner);
+  content::BrowserContext* context =
+      &Host().ContextFor(owner, private_browsing, profile);
+  if (context->IsOffTheRecord()) {
+    // guard-webview-private.sh reads this to tell "never asked for" from
+    // "asked for and shared the user's storage".
+    LOG(INFO) << "domicile: made a private guest.";
+  }
+  return context;
 }
 
 // The params a guest's page is made from: in ContextFor's context, and in
@@ -208,8 +214,10 @@ content::BrowserContext* ContextFor(content::BrowserContext& owner,
 content::WebContents::CreateParams ParamsFor(
     content::BrowserContext& owner,
     bool private_browsing,
+    const std::string& profile,
     const std::optional<WebViewPartition>& partition) {
-  content::BrowserContext* context = ContextFor(owner, private_browsing);
+  content::BrowserContext* context =
+      ContextFor(owner, private_browsing, profile);
   if (!partition.has_value()) {
     return content::WebContents::CreateParams(context);
   }
@@ -294,6 +302,7 @@ class WebViewGuestHost final
     std::optional<std::string> window;
     bool extension_popup;
     bool private_browsing;
+    std::string profile;
     std::optional<WebViewPartition> partition;
     mojo::ReportBadMessageCallback report_bad_message;
   };
@@ -305,6 +314,7 @@ class WebViewGuestHost final
                    const std::optional<std::string>& window,
                    bool extension_popup,
                    bool private_browsing,
+                   const std::string& profile,
                    const std::string& partition) override {
     // A shell's markup, not a bad message: the element sends the attribute
     // as written. The pipes drop, as for an unknown `window`.
@@ -348,12 +358,13 @@ class WebViewGuestHost final
                                   window,
                                   extension_popup,
                                   private_browsing,
+                                  profile,
                                   *parsed,
                                   mojo::GetBadMessageCallback()};
         return;
       case PlaceholderStage::kReady:
         Give(*placeholder, std::move(guest), std::move(client), window,
-             extension_popup, private_browsing, *parsed);
+             extension_popup, private_browsing, profile, *parsed);
         return;
     }
   }
@@ -425,15 +436,15 @@ class WebViewGuestHost final
       case PlaceholderStage::kReady:
         Give(*placeholder, std::move(request.guest), std::move(request.client),
              request.window, request.extension_popup,
-             request.private_browsing, request.partition);
+             request.private_browsing, request.profile, request.partition);
         return;
     }
   }
 
   // Puts a page behind `placeholder`: the browser window `window` names, or a
   // new page owned by this document (an extension's action popup when
-  // `extension_popup` is set, a private page when `private_browsing` is, in
-  // `partition` when there is one).
+  // `extension_popup` is set, in ContextFor's context for `private_browsing`
+  // and `profile`, in `partition` when there is one).
   //
   // An unknown `window` is expected: it may close before the shell hears. The
   // pipes drop and a warning is logged.
@@ -443,11 +454,12 @@ class WebViewGuestHost final
             const std::optional<std::string>& window,
             bool extension_popup,
             bool private_browsing,
+            const std::string& profile,
             const std::optional<WebViewPartition>& partition) {
     if (!window.has_value()) {
       WebViewGuest::CreateAndAttach(render_frame_host(), placeholder,
                                     std::move(guest), std::move(client),
-                                    extension_popup, private_browsing,
+                                    extension_popup, private_browsing, profile,
                                     partition, created_);
       return;
     }
@@ -675,12 +687,14 @@ void WebViewGuest::CreateAndAttach(
     mojo::PendingRemote<mojom::WebViewGuestClient> client,
     bool extension_popup,
     bool private_browsing,
+    const std::string& profile,
     const std::optional<WebViewPartition>& partition,
     const GuestCreatedCallback& created) {
   std::unique_ptr<WebViewGuest> guest = base::WrapUnique(new WebViewGuest(
       owner, std::move(receiver), std::move(client), extension_popup));
   guest->owned_guest_contents_ = guest->MakeContents(
-      ParamsFor(*owner.GetBrowserContext(), private_browsing, partition),
+      ParamsFor(*owner.GetBrowserContext(), private_browsing, profile,
+                partition),
       created);
 
 
@@ -731,12 +745,13 @@ std::unique_ptr<WebViewGuest> WebViewGuest::MakeWindow(
     const std::string& window_id,
     std::optional<int> popup_window,
     bool private_browsing,
+    const std::string& profile,
     const std::optional<WebViewPartition>& partition,
     const GuestCreatedCallback& created) {
   std::unique_ptr<WebViewGuest> guest =
       base::WrapUnique(new WebViewGuest(shell, window_id, popup_window));
-  content::WebContents::CreateParams params =
-      ParamsFor(*shell.GetBrowserContext(), private_browsing, partition);
+  content::WebContents::CreateParams params = ParamsFor(
+      *shell.GetBrowserContext(), private_browsing, profile, partition);
   // Hidden (and throttled) like a background tab until AttachWindowTo shows
   // it.
   params.initially_hidden = true;
@@ -790,8 +805,8 @@ std::unique_ptr<content::WebContents> WebViewGuest::MakeContents(
   // context, the user's cookies unless the guest is private. See the class
   // comment and ParamsFor.
   content::BrowserContext* context = params.browser_context;
-  // The shell is never private, so an off-the-record page is a private one,
-  // whether asked for or opened by one.
+  // The shell is never private, so an off-the-record page is a private
+  // profile's, whether asked for or opened by one.
   if (context->IsOffTheRecord()) {
     private_context_ = context;
     Host().PrivatePageOpened(*context);
@@ -1392,6 +1407,80 @@ void WebViewGuest::TakeHistoryStep(WebViewGuest& source, HistoryStep step) {
   // The history-in-a-new-window guard greps for this.
   LOG(INFO) << "domicile: browser window " << window_id_
             << " took a step through a copy of another page's history.";
+}
+
+void WebViewGuest::MoveHistoryFrom(WebViewGuest& source,
+                                   const PageMove& move) {
+  CHECK(guest_contents_);
+  CHECK(source.guest_contents_);
+
+  content::NavigationController& from =
+      source.guest_contents_->GetController();
+  content::NavigationController& history = guest_contents_->GetController();
+  // A page that never committed has only its initial entry, and no history.
+  if (!from.GetLastCommittedEntry()->IsInitialEntry()) {
+    const int current = from.GetLastCommittedEntryIndex();
+    const int count = move.kind == PageMove::Kind::kNavigate
+                          ? current + 1
+                          : from.GetEntryCount();
+    // Fresh entries, not copies: a copy carries its SiteInstance and page
+    // state, which belong to the other profile.
+    std::vector<std::unique_ptr<content::NavigationEntry>> entries;
+    for (int i = 0; i < count; ++i) {
+      content::NavigationEntry& entry = *from.GetEntryAtIndex(i);
+      std::unique_ptr<content::NavigationEntry> moved =
+          content::NavigationController::CreateNavigationEntry(
+              entry.GetURL(), content::Referrer(),
+              /*initiator_origin=*/std::nullopt,
+              /*initiator_base_url=*/std::nullopt,
+              ui::PAGE_TRANSITION_RELOAD,
+              /*is_renderer_initiated=*/false,
+              /*extra_headers=*/std::string(),
+              guest_contents_->GetBrowserContext(),
+              /*blob_url_loader_factory=*/nullptr);
+      moved->SetTitle(entry.GetTitle());
+      entries.push_back(std::move(moved));
+    }
+    const int selected =
+        move.kind == PageMove::Kind::kHistory
+            ? std::clamp(current + move.offset, 0, count - 1)
+            : current;
+    history.Restore(selected, content::RestoreType::kRestored, &entries);
+  }
+
+  if (move.kind == PageMove::Kind::kNavigate) {
+    // As Navigate: a page's link may name an address no <webview> shows.
+    const bool may_show = MayShowInWebView(move.url, app_host_);
+    content::NavigationController::LoadURLParams params(
+        may_show ? move.url : GURL(content::kBlockedURL));
+    params.referrer = move.referrer;
+    params.transition_type = move.transition;
+    history.LoadURLWithParams(params);
+  } else {
+    history.LoadIfNecessary();
+  }
+  LOG(INFO) << "domicile: browser window " << window_id_
+            << " took its old page's history.";
+}
+
+void WebViewGuest::Replaced() {
+  // Before the pipe closes, so the element hears it.
+  client_->Replaced();
+  receiver_.reset();
+  Unclient();
+  find_text_.clear();
+  LOG(INFO) << "domicile: browser window " << window_id_
+            << "'s page was replaced by one in another browser profile.";
+}
+
+std::optional<std::string> WebViewGuest::ProfileToMoveTo(const GURL& from,
+                                                         const GURL& to) {
+  return Host().ProfileToMoveTo(*this, from, to);
+}
+
+void WebViewGuest::MoveToProfile(const std::string& profile,
+                                 const PageMove& move) {
+  Host().Reopen(*this, profile, move);
 }
 
 void WebViewGuest::GoForward() {

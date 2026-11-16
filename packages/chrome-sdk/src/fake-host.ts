@@ -35,6 +35,7 @@ const CHANGED: Readonly<
 > = {
   accentColor: "appearancechanged",
   altKey: "modifierschanged",
+  browserProfiles: "browserprofileschanged",
   browserWindows: "browserwindowschanged",
   castSinks: "castsinkschanged",
   clipboard: "clipboardchanged",
@@ -63,6 +64,7 @@ const CHANGED: Readonly<
 const UNDESCRIBED: DomicileState = {
   accentColor: null,
   altKey: null,
+  browserProfiles: null,
   browserWindows: null,
   castSinks: null,
   clipboard: null,
@@ -136,6 +138,7 @@ export const describedWindow = (
 
 /** The methods that return a promise. The fake's never settle. */
 const ASKS = new Set([
+  "browserProfileFor",
   "configureExtension",
   "confinePointer",
   "countBrowserWindowMatches",
@@ -175,8 +178,11 @@ export class FakeDomicileHost {
         } else if (name === "openBrowserWindow") {
           return (...args: Parameters<DomicileHost["openBrowserWindow"]>) => {
             calls.push([name, ...args]);
-            const [url, partition = ""] = args;
-            this.openBrowser(url, { partition });
+            const [url, partition = "", profile = ""] = args;
+            this.openBrowser(url, {
+              partition,
+              ...(profile === "" ? {} : { profile }),
+            });
           };
         } else if (name === "openPrivateBrowserWindow") {
           return (url: string) => {
@@ -188,6 +194,11 @@ export class FakeDomicileHost {
             calls.push([name, ...args]);
             const [url, appId = "", reuse = "new"] = args;
             this.openApp(url, appId, reuse);
+          };
+        } else if (name === "reopenBrowserWindow") {
+          return (id: string, profile: string) => {
+            calls.push([name, id, profile]);
+            this.moveBrowser(id, profile);
           };
         } else if (name === "closeBrowserWindow") {
           return (id: string) => {
@@ -254,7 +265,10 @@ export class FakeDomicileHost {
    * `openPrivateBrowserWindow` with `isPrivate`, and `openApp` with `isApp`
    * and `appId`. Ids count up from `"1"`; the asked-for size is 0 unless
    * `width` and `height` give one. With a `parent`, it is an Electron app's
-   * view in that window, at `x` and `y`.
+   * view in that window, at `x` and `y`. It is in `profile`, or as the
+   * engine picks: none for an app window, else the default private profile
+   * when `isPrivate` and the default one otherwise, from `browserProfiles`
+   * or the config's own `default` and `private`.
    */
   openBrowser(
     url: string,
@@ -266,6 +280,7 @@ export class FakeDomicileHost {
       parent = null,
       partition = "",
       popupWindow = null,
+      profile,
       width = 0,
       height = 0,
       x = 0,
@@ -281,6 +296,7 @@ export class FakeDomicileHost {
         | "parent"
         | "partition"
         | "popupWindow"
+        | "profile"
         | "width"
         | "x"
         | "y"
@@ -288,6 +304,10 @@ export class FakeDomicileHost {
     > = {},
   ): void {
     this.#browsersOpened += 1;
+    const profiles = this.#state.browserProfiles ?? [];
+    const fallback = isPrivate
+      ? (profiles.find((each) => each.isDefaultPrivate)?.id ?? "private")
+      : (profiles.find((each) => each.isDefault)?.id ?? "default");
     this.set({
       browserWindows: [
         ...(this.#state.browserWindows ?? []),
@@ -306,6 +326,7 @@ export class FakeDomicileHost {
           parent,
           partition,
           popupWindow,
+          profile: isApp ? null : (profile ?? fallback),
           title: "",
           toplevelId: null,
           url,
@@ -382,6 +403,19 @@ export class FakeDomicileHost {
     this.set({
       browserWindows: (this.#state.browserWindows ?? []).map((window) =>
         window.id === id ? { ...window, messageBox: box } : window,
+      ),
+    });
+  }
+
+  /**
+   * The engine moved browser window `id`'s page to browser profile `profile`,
+   * as for a link to another profile's site. `reopenBrowserWindow` calls this
+   * too.
+   */
+  moveBrowser(id: string, profile: string): void {
+    this.set({
+      browserWindows: (this.#state.browserWindows ?? []).map((window) =>
+        window.id === id ? { ...window, profile } : window,
       ),
     });
   }

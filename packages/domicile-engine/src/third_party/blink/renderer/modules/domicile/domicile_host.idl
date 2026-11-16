@@ -404,18 +404,34 @@
   // `browserWindows` for the current list.
   attribute EventHandler onbrowserwindowschanged;
 
+  // The desk's browser profiles, in the config's order: sets of sign-ins,
+  // site data and extensions, as the config's `browser.profiles` names them.
+  // Null until the browser lists them. No [SameObject], for `displays`'
+  // reason. See docs/architecture/BROWSER-PROFILES.md.
+  readonly attribute FrozenArray<DomicileBrowserProfile>? browserProfiles;
+
+  // Fires when a profile is added, removed, renamed or recolored, or the
+  // defaults move. Read `browserProfiles` for the current list.
+  attribute EventHandler onbrowserprofileschanged;
+
   // Opens a browser window at `url`, for the shell's own UI such as a `+`
   // button or a launcher. It appears in the next `browserwindowschanged`. A
   // domicile:// address shows blocked, as in a <webview>.
   //
   // `partition` gives its page storage of its own, as a <webview>'s
   // `partition` attribute does. Throws TypeError for "persist:" with no name.
+  //
+  // `profile` opens it in that browser profile, one of `browserProfiles`;
+  // empty for the one `url`'s site opens in (browserProfileFor). A profile
+  // the desk no longer has opens in the default one.
   [CallWith=ScriptState, RaisesException] undefined openBrowserWindow(
-      USVString url, optional DOMString partition = "");
+      USVString url,
+      optional DOMString partition = "",
+      optional DOMString profile = "");
 
-  // Opens a private browser window at `url`, as openBrowserWindow does. Its
-  // page is in the off-the-record profile; see DomicileBrowserWindow's
-  // `isPrivate`.
+  // Opens a private browser window at `url`, as openBrowserWindow does, in
+  // the default private profile; see DomicileBrowserWindow's `isPrivate`. To
+  // open one in another private profile, name it to openBrowserWindow.
   [CallWith=ScriptState, RaisesException] undefined openPrivateBrowserWindow(
       USVString url);
 
@@ -447,6 +463,23 @@
   // on its <webview>; Cancel keeps the window. An unknown id does nothing.
   [CallWith=ScriptState, RaisesException] undefined closeBrowserWindow(
       DOMString id);
+
+  // Moves window `id`'s page to browser profile `profile`, one of
+  // `browserProfiles`, as a new page under the same id: the window keeps its
+  // place, its <webview> shows the new page, and its back and forward list
+  // comes along as addresses. The page reloads; what was typed into it is
+  // not kept. Throws TypeError for an empty id or profile. An unknown window
+  // or profile, or an app window, does nothing: the shell's lists may be a
+  // change behind.
+  [CallWith=ScriptState, RaisesException] undefined reopenBrowserWindow(
+      DOMString id, DOMString profile);
+
+  // The browser profile `url` opens in: the most specific of the config's
+  // `browser.sites` that matches it, else the default profile. The engine
+  // routes every new window and every page the user takes to another site
+  // by this. Throws TypeError for a `url` that is no address.
+  [CallWith=ScriptState, RaisesException] Promise<DOMString>
+      browserProfileFor(USVString url);
 
   // The user clicked entry `command` of window `id`'s menu bar
   // (DomicileBrowserWindow.menu); its Electron app runs the entry. Throws a

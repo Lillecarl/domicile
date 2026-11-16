@@ -59,8 +59,9 @@ every page and keep one state (one Bitwarden login).
   storage, cache, history, permissions, extensions and extension state.
 - **The default profile is the shell's profile**, today's user data directory,
   so existing sign-ins stay.
-- **Other profiles** live under `Profiles/<id>` in the user data directory,
-  created through `ProfileManager` when a page first opens in one.
+- **Other profiles** live in `domicile-<id>` in the user data directory,
+  since `ProfileManager` loads only its direct children. Each is loaded when
+  the config names it.
 - **A private profile** is the primary off-the-record profile of a hidden
   regular profile `<id>`. Chrome gives an off-the-record profile its parent's
   extensions, so the hidden profile holds the private profile's extension
@@ -92,12 +93,13 @@ and `chrome.tabs.create` behave the same.
 
 ### Moving a page
 
-`ReopenIn(window, profile)` makes a new guest in the target profile under the
-same window id, so the shell keeps its place and group.
+`Reopen(window, profile)` makes a new guest in the target profile under the
+same window id, so the shell keeps its place and group. The window's
+`<webview>` is told to ask for it again, and shows the new page.
 
 - The back and forward list moves as URLs and titles. Page state, form input
   and POST bodies do not; the page reloads.
-- Routing swaps pages the same way.
+- Routing moves pages the same way.
 
 ### SDK
 
@@ -107,7 +109,7 @@ same window id, so the shell keeps its place and group.
 | `DomicileBrowserWindow.profile` | The window's profile id. |
 | `openBrowserWindow(url, { profile })` | Opens in `profile`, or by routing when unset. |
 | `reopenBrowserWindow(id, profile)` | Moves a window's page to `profile`. |
-| `profileForUrl(url)` | Routing's answer for `url`. |
+| `browserProfileFor(url)` | Routing's answer for `url`. |
 | `browser.fetch(url, { profile })` | Fetches with `profile`'s cookies. |
 | `InstalledExtension.profiles` | The profiles an extension is on in. |
 
@@ -139,12 +141,12 @@ Mockup: `/mnt/project-files/browser-profiles/mockup.html` in the project.
 
 ## Plan
 
-- [ ] config: `browser`, the JSON schema, home-manager options; drop
-  `extensions.settings.*.private`
-- [ ] engine: a Chrome profile per browser profile, private profiles, guests
+- [x] config: `browser`, the JSON schema, home-manager options
+- [ ] config: drop `extensions.settings.*.private`
+- [x] engine: a Chrome profile per browser profile, private profiles, guests
   opened in a profile, windows listed with their profile
-- [ ] engine: extensions per profile, a desk per profile
-- [ ] engine: routing and `ReopenIn`
+- [x] engine: extensions per profile, a desk per profile
+- [x] engine: routing and `Reopen`
 - [ ] protocol and SDK: the API above, `domicile open --profile`
 - [ ] Manganese: address bar button and menu, tab dots, tray by profile
 - [ ] Settings: Profiles page

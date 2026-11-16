@@ -47,6 +47,7 @@ template <typename IDLType>
 class FrozenArray;
 
 class DOMRectReadOnly;
+class DomicileBrowserProfile;
 class DomicileBrowserWindow;
 class DomicileCastSink;
 class DomicileDisplay;
@@ -277,11 +278,17 @@ class MODULES_EXPORT DomicileHost final
     return browser_windows_.Get();
   }
 
+  // The desk's browser profiles, or null until the browser has listed them.
+  const FrozenArray<DomicileBrowserProfile>* browserProfiles() const {
+    return browser_profiles_.Get();
+  }
+
   // Opens or closes a browser window. The next `browserwindowschanged`
   // reflects it.
   void openBrowserWindow(ScriptState*,
                          const String& url,
                          const String& partition,
+                         const String& profile,
                          ExceptionState&);
   void openPrivateBrowserWindow(ScriptState*,
                                 const String& url,
@@ -296,6 +303,13 @@ class MODULES_EXPORT DomicileHost final
                                                    const String& selector,
                                                    ExceptionState&);
   void closeBrowserWindow(ScriptState*, const String& id, ExceptionState&);
+  void reopenBrowserWindow(ScriptState*,
+                           const String& id,
+                           const String& profile,
+                           ExceptionState&);
+  ScriptPromise<IDLString> browserProfileFor(ScriptState*,
+                                             const String& url,
+                                             ExceptionState&);
   void clickBrowserWindowMenu(ScriptState*,
                               const String& id,
                               int32_t command,
@@ -475,6 +489,10 @@ class MODULES_EXPORT DomicileHost final
   // domicile::mojom::blink::BrowserWindowsClient:
   void WindowsChanged(
       Vector<domicile::mojom::blink::BrowserWindowPtr> windows) override;
+  void ProfilesChanged(
+      Vector<domicile::mojom::blink::BrowserProfilePtr> profiles,
+      const String& default_profile,
+      const String& default_private_profile) override;
 
   // domicile::mojom::blink::CastSinksClient:
   void SinksChanged(
@@ -631,6 +649,7 @@ class MODULES_EXPORT DomicileHost final
   // `partition` as openBrowserWindow's.
   void OpenBrowserWindow(const String& url,
                          WindowKind,
+                         const String& profile,
                          const String& partition,
                          ExceptionState&);
   bool ReadyForApp(const String& app_id, ExceptionState&);
@@ -684,6 +703,8 @@ class MODULES_EXPORT DomicileHost final
   Member<FrozenArray<DomicileBrowserWindow>> browser_windows_;
   Vector<domicile::mojom::blink::BrowserWindowPtr> listed_browser_windows_;
   HashMap<String, String> browser_toplevel_ids_;
+  // And `browser_profiles_`, for the same reason.
+  Member<FrozenArray<DomicileBrowserProfile>> browser_profiles_;
   // And `cast_sinks_`, for the same reason.
   Member<FrozenArray<DomicileCastSink>> cast_sinks_;
   // And `downloads_`.

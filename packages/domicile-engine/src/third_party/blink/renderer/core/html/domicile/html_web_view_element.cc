@@ -173,9 +173,13 @@ constexpr char kFocusRequestEvent[] = "domicile-focus-request";
 // matters.
 constexpr char kExtensionPopupAttr[] = "extensionpopup";
 
-// Makes the guest's page private: in the off-the-record profile. Read once,
-// on requesting the guest; only presence matters.
+// Makes the guest's page private: in the default private profile, off the
+// record. Read once, on requesting the guest; only presence matters.
 constexpr char kPrivateAttr[] = "private";
+
+// Puts the guest's page in the browser profile it names, by id. Read once, on
+// requesting the guest. See docs/architecture/BROWSER-PROFILES.md.
+constexpr char kProfileAttr[] = "profile";
 
 // Gives the guest's page storage of its own: "persist:<name>" on disk, any
 // other name in memory. Read once, on requesting the guest. See
@@ -389,11 +393,18 @@ void HTMLWebViewElement::RequestGuest() {
                      client_receiver_.BindNewPipeAndPassRemote(task_runner),
                      BrowserWindow(),
                      hasAttribute(AtomicString(kExtensionPopupAttr)),
-                     hasAttribute(AtomicString(kPrivateAttr)), Partition());
+                     hasAttribute(AtomicString(kPrivateAttr)), Profile(),
+                     Partition());
 }
 
 String HTMLWebViewElement::BrowserWindow() const {
   return getAttribute(AtomicString(kWindowAttr));
+}
+
+String HTMLWebViewElement::Profile() const {
+  const AtomicString& profile = getAttribute(AtomicString(kProfileAttr));
+  // Empty, not null, when absent, as Partition.
+  return profile.IsNull() ? g_empty_string : profile.GetString();
 }
 
 String HTMLWebViewElement::Partition() const {
@@ -818,6 +829,30 @@ void HTMLWebViewElement::UnhandledModifierUp(const String& key,
   init->setCode(code);
   DispatchEvent(*MakeGarbageCollected<KeyboardEvent>(
       AtomicString(kGuestKeyupEvent), init));
+}
+
+void HTMLWebViewElement::Replaced() {
+  // The old page's asks go with it, as when it withdraws them.
+  PermissionRequestWithdrawn();
+  DeviceRequestWithdrawn();
+  DialogWithdrawn();
+  SignInWithdrawn();
+  PromptWithdrawn();
+  IdentityWithdrawn();
+  PickerWithdrawn();
+  if (external_app_) {
+    external_app_->DismissIfUnanswered();
+  }
+  host_.reset();
+  guest_.reset();
+  client_receiver_.reset();
+  // The old page is attached to the placeholder frame, and stays there until
+  // the frame goes, so the new page needs a new one. Removing the frame
+  // detaches the old page, which the browser destroys. Inserting this element
+  // makes a placeholder and asks for the window the same way, and the window
+  // id now names the new page.
+  DisconnectContentFrame();
+  DidNotifySubtreeInsertionsToDocument();
 }
 
 void HTMLWebViewElement::ZoomChanged(double factor) {

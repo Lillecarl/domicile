@@ -1288,6 +1288,27 @@ describe("a window's menu bar", () => {
 
     expect(clicks).toEqual([["New Note", window]]);
   });
+  it("is the focused window while an entry of its menu bar runs", () => {
+    const { BrowserWindow, menus, say } = setUp();
+    const focused: unknown[] = [];
+    const window = new BrowserWindow();
+    void window.loadURL("https://notes.test/");
+    // As Claude's View > Full Screen, which acts on the focused window.
+    window.setMenu(
+      menus.Menu.buildFromTemplate([
+        {
+          click: () => focused.push(BrowserWindow.getFocusedWindow()),
+          label: "Full Screen",
+        },
+      ]),
+    );
+
+    // The shell's menu has the keyboard, not the window's page.
+    say({ command: 1, type: "menu_clicked", window: 1 });
+
+    expect(focused).toEqual([window]);
+    expect(BrowserWindow.getFocusedWindow()).toBeNull();
+  });
 });
 
 describe("a window's popup menus", () => {
@@ -1475,6 +1496,36 @@ describe("a window's state", () => {
 
     expect(asked(sent)).toEqual([]);
     expect(window.isFullScreenable()).toBe(false);
+  });
+
+  it("asks again for fullscreen after the user left it", () => {
+    const { BrowserWindow, say, sent } = setUp();
+    const window = new BrowserWindow();
+    void window.loadURL("https://claude.test/");
+    window.setFullScreen(true);
+    shellMade(say, { fullscreen: true });
+    // The user left fullscreen with the shell, not the app. The shell acts
+    // only on a change to what the app wants, so the engine must hear that
+    // the app no longer wants it, or the app's next ask changes nothing.
+    shellMade(say, {});
+
+    window.setFullScreen(true);
+
+    expect(asked(sent).map(({ fullscreen }) => fullscreen)).toEqual([
+      true,
+      false,
+      true,
+    ]);
+  });
+
+  it("asks nothing back of the state a window opens in", () => {
+    const { BrowserWindow, say, sent } = setUp();
+    const window = new BrowserWindow({ fullscreen: true });
+    void window.loadURL("https://claude.test/");
+    // The shell's first word, before it acts on the ask.
+    shellMade(say, {});
+
+    expect(asked(sent).map(({ fullscreen }) => fullscreen)).toEqual([true]);
   });
 
   it("starts the app's next ask from what the shell made the window", () => {

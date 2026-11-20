@@ -112,6 +112,12 @@ const NORMAL: WindowState = {
   minimized: false,
 };
 
+/** Whether `a` and `b` are the same state. */
+const sameState = (a: WindowState, b: WindowState) =>
+  a.fullscreen === b.fullscreen &&
+  a.maximized === b.maximized &&
+  a.minimized === b.minimized;
+
 /** What setWindowOpenHandler's handler is told of a page's new window. */
 export type WindowOpenDetails = {
   readonly url: string;
@@ -1291,6 +1297,11 @@ export const createBrowserWindow = <Menu extends EventEmitter>(
     protected override wasClosed() {
       this.holder?.contentView.removeChildView(this);
     }
+
+    /** Its window has the keyboard while the view's page does. */
+    override focusChanged(_focused: boolean) {
+      this.holder?.focusMoved();
+    }
   }
 
   /**
@@ -1365,6 +1376,7 @@ export const createBrowserWindow = <Menu extends EventEmitter>(
       this.#children.splice(index ?? this.#children.length, 0, view);
       view.holder = this.window;
       this.window.placeViews();
+      this.window.focusMoved();
     };
 
     readonly removeChildView = (view: WebContentsView) => {
@@ -1372,6 +1384,7 @@ export const createBrowserWindow = <Menu extends EventEmitter>(
         this.#children = this.#children.filter((child) => child !== view);
         view.holder = undefined;
         this.window.placeViews();
+        this.window.focusMoved();
       }
     };
 
@@ -1416,12 +1429,16 @@ export const createBrowserWindow = <Menu extends EventEmitter>(
     #lastPopup = 0;
     #menuBarVisible = true;
     #menuBarAutoHide: boolean;
+    /** Whether its page or one of its views' has the keyboard. */
+    #focused = false;
+    /** Whether an entry of its menu bar is running. */
+    #choosing = false;
     /** What the app asks the shell to make the window. */
     #wants: WindowState = NORMAL;
     /** What the shell last made it. */
     #state: WindowState = NORMAL;
-    /** The ask the engine last heard, so it hears each only once: none yet. */
-    #asked = JSON.stringify(NORMAL);
+    /** What the engine holds the app asked, so it hears each only once. */
+    #asked: WindowState = NORMAL;
     #fullScreenable: boolean;
 
     constructor(options: BrowserWindowOptions = {}) {
@@ -1614,11 +1631,32 @@ export const createBrowserWindow = <Menu extends EventEmitter>(
     readonly setParentWindow = (_parent: unknown) => undefined;
     readonly getNativeWindowHandle = () => Buffer.alloc(8);
     readonly getMediaSourceId = () => "";
-    readonly isFocused = () => this.webContents.isFocused();
+    /**
+     * Whether it is the app's window with the keyboard, as Electron's: its
+     * page or one of its views' has it, or the user is choosing from its menu
+     * bar, which the shell draws and which has the keyboard meanwhile.
+     */
+    readonly isFocused = () => this.#choosing || this.#focused;
 
-    override focusChanged(focused: boolean) {
-      this.emit(focused ? "focus" : "blur", eventObject());
+    override focusChanged(_focused: boolean) {
+      this.focusMoved();
     }
+
+    /**
+     * The keyboard moved in or out of its page or one of its views': says
+     * focus or blur when the window took or lost it. Focus moving from the
+     * page to a view says blur, then focus, as the engine reports each page
+     * on its own.
+     */
+    readonly focusMoved = () => {
+      const focused =
+        this.webContents.isFocused() ||
+        this.contentView.children.some((view) => view.webContents.isFocused());
+      if (focused !== this.#focused) {
+        this.#focused = focused;
+        this.emit(focused ? "focus" : "blur", eventObject());
+      }
+    };
     readonly reload = () => this.webContents.reload();
 
     readonly setBrowserView = (view: BrowserView | null) => {
@@ -1778,10 +1816,16 @@ export const createBrowserWindow = <Menu extends EventEmitter>(
     };
 
     readonly #tellWants = () => {
-      const asked = JSON.stringify(this.#wants);
-      if (this.opened && !this.destroyed && asked !== this.#asked) {
-        this.#asked = asked;
-        toEngine({ type: "set_window_state", window: this.id, ...this.#wants });
+      const wants = this.#wants;
+      if (this.opened && !this.destroyed && !sameState(wants, this.#asked)) {
+        this.#asked = wants;
+        toEngine({
+          fullscreen: wants.fullscreen,
+          maximized: wants.maximized,
+          minimized: wants.minimized,
+          type: "set_window_state",
+          window: this.id,
+        });
       }
     };
 
@@ -1789,9 +1833,15 @@ export const createBrowserWindow = <Menu extends EventEmitter>(
       const was = this.#state;
       this.#state = state;
       // What the user did, such as leaving fullscreen, is what the app's next
-      // ask starts from.
+      // ask starts from. The engine keeps what was last asked, and the shell
+      // acts only when that changes: a change the user made away from it is
+      // asked back, or the app asking for the same again would do nothing.
+      // The shell's word on a window that hasn't changed, such as the first
+      // before it acts on an ask, leaves the ask be.
       this.#wants = state;
-      this.#asked = JSON.stringify(state);
+      if (!sameState(was, state)) {
+        this.#tellWants();
+      }
       if (was.maximized !== state.maximized) {
         this.emit(state.maximized ? "maximize" : "unmaximize");
       }
@@ -1817,7 +1867,12 @@ export const createBrowserWindow = <Menu extends EventEmitter>(
 
     protected override menuClicked(command: number) {
       if (this.#menu !== null) {
-        menus.click(this.#menu, command, this.id);
+        this.#choosing = true;
+        try {
+          menus.click(this.#menu, command, this.id);
+        } finally {
+          this.#choosing = false;
+        }
       }
     }
 

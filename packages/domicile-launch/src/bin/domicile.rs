@@ -3112,6 +3112,8 @@ struct SaidSession {
     is_the_session: bool,
     scope_clients: bool,
     manager: Mutex<Option<zbus::Connection>>,
+    /// The session's variables that naming this desktop replaced.
+    before: Vec<String>,
     /// This run's control socket and the session it took over, once said.
     took_over: Mutex<Option<(PathBuf, Vec<String>)>>,
 }
@@ -3121,22 +3123,28 @@ impl SaidSession {
     /// any component starts; see `graphical_session::name`.
     fn new(platform: &str) -> Self {
         let is_the_session = platform == "drm";
+        let (manager, before) = match is_the_session.then(Self::named).flatten() {
+            Some((manager, before)) => (Some(manager), before),
+            None => (None, Vec::new()),
+        };
         SaidSession {
             is_the_session,
             scope_clients: is_the_session && Self::a_user_manager_answers(),
-            manager: Mutex::new(is_the_session.then(Self::named).flatten()),
+            manager: Mutex::new(manager),
+            before,
             took_over: Mutex::new(None),
         }
     }
 
-    /// Exports the desktop's name. Says why on stderr when it cannot.
-    fn named() -> Option<zbus::Connection> {
+    /// Exports the desktop's name, and returns the variables it replaced. Says
+    /// why on stderr when it cannot.
+    fn named() -> Option<(zbus::Connection, Vec<String>)> {
         let named = notification::session_bus().and_then(|manager| {
-            graphical_session::name(&manager)?;
-            Ok(manager)
+            let before = graphical_session::name(&manager)?;
+            Ok((manager, before))
         });
         match named {
-            Ok(manager) => Some(manager),
+            Ok(named) => Some(named),
             Err(why) => {
                 launcher_log::error(&format!(
                     "the user manager was not told this desktop's name before the \
@@ -3179,7 +3187,7 @@ impl SaidSession {
     /// Registers the desktop that just came up.
     fn say(&self, places: &Runtime) {
         if self.is_the_session {
-            match Self::said(places) {
+            match Self::said(places, &self.before) {
                 Ok((manager, earlier)) => {
                     *self.manager.lock().expect("nothing panics holding it") = Some(manager);
                     self.took_over
@@ -3195,11 +3203,15 @@ impl SaidSession {
         }
     }
 
-    fn said(places: &Runtime) -> Result<(zbus::Connection, Vec<String>), String> {
+    fn said(
+        places: &Runtime,
+        before: &[String],
+    ) -> Result<(zbus::Connection, Vec<String>), String> {
         let session = published(places)?;
         let manager = notification::session_bus().map_err(|why| why.to_string())?;
-        let earlier = graphical_session::begin(&manager, &session.wayland_display, &places.control)
-            .map_err(|why| why.to_string())?;
+        let earlier =
+            graphical_session::begin(&manager, &session.wayland_display, &places.control, before)
+                .map_err(|why| why.to_string())?;
         Ok((manager, earlier))
     }
 }

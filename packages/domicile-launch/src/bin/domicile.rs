@@ -222,6 +222,12 @@ fn run() -> Result<ExitCode, String> {
         Invocation::Run { shell, config } => desktop(shell.as_deref(), config.as_deref()),
         Invocation::Ask { request } => asked(&request),
         Invocation::Load { shell } => asked(&shell_to_load(&shell)?),
+        // Absolute here, since the engine does not share this working
+        // directory.
+        Invocation::LoadExtension { directory } => asked(&Request::LoadUnpacked {
+            directory: std::path::absolute(&directory)
+                .map_err(|why| format!("cannot tell where {directory} is: {why}"))?,
+        }),
         Invocation::Dev { entry } => developed(&entry),
         Invocation::Open { target, profile } => opened(&target, profile),
         Invocation::Opener { target } => {
@@ -1130,6 +1136,9 @@ fn asked(request: &Request) -> Result<ExitCode, String> {
         // Longer than the supervisor waits for the engine, so why a shell
         // did not run reaches this terminal rather than a timeout.
         Request::LoadShell { .. } => Some(LOAD_WITHIN + ANSWER_WITHIN),
+        // Longer than the supervisor waits for the engine, so the engine's
+        // refusal reaches this terminal rather than a timeout.
+        Request::LoadUnpacked { .. } => Some(ANSWER_WITHIN + ANSWER_WITHIN),
         Request::ConfigureDisplay { .. } => Some(CONFIGURE_WITHIN + ANSWER_WITHIN),
         Request::ShootDesk { .. } => Some(CAPTURE_WITHIN + ANSWER_WITHIN),
         Request::DevTools { .. } => Some(DEVTOOLS_WITHIN + ANSWER_WITHIN),
@@ -1198,6 +1207,10 @@ fn asked(request: &Request) -> Result<ExitCode, String> {
             println!("{}", file.display());
             Ok(ExitCode::SUCCESS)
         }
+        Response::LoadedUnpacked { id } => {
+            println!("{id}");
+            Ok(ExitCode::SUCCESS)
+        }
         Response::DeskShot { shot } => {
             println!(
                 "{}",
@@ -1232,7 +1245,6 @@ fn asked(request: &Request) -> Result<ExitCode, String> {
         | Response::SettingsFiles { .. }
         | Response::SitePermissions(_)
         | Response::Stored
-        | Response::LoadedUnpacked { .. }
         | Response::Uninstalled
         | Response::ConfigExtensions { .. }
         | Response::MediaDevices(_)

@@ -683,6 +683,23 @@ pub const COMMANDS: &[Command] = &[
         see_also: &["list-windows", "list-displays", "list-inputs", "status"],
     },
     Command {
+        name: "load-extension",
+        group: Group::Desktop,
+        takes: "<directory>",
+        summary: "Load or reload an unpacked extension",
+        forms: &[],
+        about: &[
+            "Loads the unpacked Chrome extension in `<directory>` into the browser \
+             windows' profile, and prints its id. An extension already loaded from \
+             that directory reloads in place and keeps its id. Nothing restarts.",
+            "It stays across restarts until it is uninstalled, as one loaded from \
+             the Settings app does.",
+        ],
+        sections: &[],
+        examples: &["domicile load-extension ~/src/my-extension"],
+        see_also: &[],
+    },
+    Command {
         name: "power-off",
         group: Group::Desktop,
         takes: "",

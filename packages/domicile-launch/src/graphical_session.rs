@@ -10,15 +10,16 @@
 //! not find a dead socket or display.
 //!
 //! A second login session, on another tty, takes over the user manager's
-//! session from the first. [`begin`] returns the first's variables, and
-//! [`end`] gives them back while the first still runs instead of stopping the
-//! session under it.
+//! session from the first, which may be another compositor such as niri.
+//! [`name`] returns the first's variables, [`begin`] keeps them, and [`end`]
+//! gives them back while the first still runs instead of stopping the session
+//! under it.
 //!
 //! Only a desktop running as the login session does this. A nested desktop
 //! leaves the session to its host.
 
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::control_socket::VARIABLE;
 
@@ -49,7 +50,10 @@ const VARIABLES: [&str; 4] = [
 ///
 /// The portal frontend reads `XDG_CURRENT_DESKTOP` once, when it starts, and
 /// routes every interface by it. Neither value waits on the compositor.
-pub fn name(manager: &zbus::Connection) -> Result<(), zbus::Error> {
+///
+/// Returns the [`VARIABLES`] `manager` held before, for [`begin`].
+pub fn name(manager: &zbus::Connection) -> Result<Vec<String>, zbus::Error> {
+    let before = held(manager)?;
     call(
         manager,
         "SetEnvironment",
@@ -57,22 +61,23 @@ pub fn name(manager: &zbus::Connection) -> Result<(), zbus::Error> {
             format!("XDG_CURRENT_DESKTOP={CURRENT_DESKTOP}"),
             "XDG_SESSION_TYPE=wayland".to_string(),
         ],),
-    )
+    )?;
+    Ok(before)
 }
 
 /// Exports the desktop's environment to `manager`, then starts [`TARGET`].
 ///
-/// Returns the [`VARIABLES`] `manager` held when they named another desktop's
-/// control socket, for [`end`]. Empty when they named none or this desktop's.
+/// Returns `before`, the variables [`name`] replaced, for [`end`]. Empty when
+/// they name this desktop's control socket.
 pub fn begin(
     manager: &zbus::Connection,
     wayland_display: &str,
     control: &Path,
+    before: &[String],
 ) -> Result<Vec<String>, zbus::Error> {
-    let held = held(manager)?;
-    let earlier = match socket(&held) {
-        Some(socket) if Path::new(socket) != control => held,
-        _ => Vec::new(),
+    let earlier = match socket(before) {
+        Some(socket) if Path::new(socket) == control => Vec::new(),
+        _ => before.to_vec(),
     };
     let values = [
         CURRENT_DESKTOP.to_string(),
@@ -95,7 +100,8 @@ pub fn begin(
 ///
 /// - Another desktop's control socket in `manager`: that desktop took the
 ///   session over later, so it is left alone.
-/// - `earlier`'s desktop still answers: its variables are set again.
+/// - `earlier`'s desktop still answers: its variables are set again, and the
+///   [`VARIABLES`] it lacks are unset.
 /// - Otherwise starts [`SHUTDOWN`], then unsets the environment from
 ///   [`begin`]. Uses `replace-irreversibly`, as niri does, so no later job can
 ///   cancel the shutdown.
@@ -108,11 +114,30 @@ pub fn end(
     if socket(&held).is_some_and(|socket| Path::new(socket) != control) {
         return Ok(());
     }
-    if socket(earlier).is_some_and(|socket| UnixStream::connect(socket).is_ok()) {
-        return call(manager, "SetEnvironment", &(earlier,));
+    if answers(earlier, control) {
+        let lacking: Vec<&str> = VARIABLES
+            .into_iter()
+            .filter(|name| value(earlier, name).is_none())
+            .collect();
+        return call(manager, "UnsetAndSetEnvironment", &(lacking, earlier));
     }
     call(manager, "StartUnit", &(SHUTDOWN, "replace-irreversibly"))?;
     call(manager, "UnsetEnvironment", &(VARIABLES.to_vec(),))
+}
+
+/// Whether the desktop `earlier` names still runs.
+///
+/// A Domicile desktop answers on its control socket, another compositor on its
+/// Wayland socket. A relative `WAYLAND_DISPLAY` is in `XDG_RUNTIME_DIR`, which
+/// also holds `control` ([`crate::control_socket::address`]), and an absolute
+/// one replaces the whole path.
+fn answers(earlier: &[String], control: &Path) -> bool {
+    let listening = match (socket(earlier), value(earlier, "WAYLAND_DISPLAY")) {
+        (Some(socket), _) => PathBuf::from(socket),
+        (None, Some(display)) => control.with_file_name(display),
+        (None, None) => return false,
+    };
+    UnixStream::connect(listening).is_ok()
 }
 
 /// The assignments of [`VARIABLES`] in `manager`'s environment.
@@ -138,9 +163,14 @@ fn held(manager: &zbus::Connection) -> Result<Vec<String>, zbus::Error> {
 
 /// The control socket among `assignments`.
 fn socket(assignments: &[String]) -> Option<&str> {
+    value(assignments, VARIABLE)
+}
+
+/// The value `assignments` gives `name`.
+fn value<'a>(assignments: &'a [String], name: &str) -> Option<&'a str> {
     assignments.iter().find_map(|assignment| {
         assignment
-            .strip_prefix(VARIABLE)
+            .strip_prefix(name)
             .and_then(|rest| rest.strip_prefix('='))
     })
 }

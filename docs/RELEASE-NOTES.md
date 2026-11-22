@@ -91,6 +91,7 @@ Grouped `--help`, `domicile help <command>` for usage and examples, and man page
 ### Fixes
 
 - `system-audio`: a filter device (such as speaker correction) reads as `muted` when anything it passes through is muted, listed in `through`; `setMuted(id, false)` unmutes the whole chain. Devices behind a filter are marked `filtered`, for pickers to hide.
+- A desktop on a second tty gives the session back to another compositor that still runs on the first, such as niri, when it exits. It no longer stops `graphical-session.target`, which stopped that compositor too. [Portals](PORTALS.md)
 - Quiet logs: turning up one subsystem shows only its engine lines, pages' and extensions' consoles stay out unless everything is up, and apps the desktop starts log under their own names. [Levels](LOGGING.md#levels) · [Names](LOGGING.md#names)
 - A page that has never drawn, such as a new page or an empty ad frame, no longer logs as stalled; a page that drew and stopped still does.
 - A `<webview>` hidden with `display: none` keeps its page's tiles, so showing it again draws at once instead of rastering the whole page.

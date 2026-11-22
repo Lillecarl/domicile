@@ -10,6 +10,7 @@ use domicile_launch::notification::connected;
 enum Heard {
     SetEnvironment(Vec<String>),
     UnsetEnvironment(Vec<String>),
+    UnsetAndSetEnvironment(Vec<String>, Vec<String>),
     StartUnit(String, String),
     StopUnit(String, String),
 }
@@ -33,6 +34,13 @@ impl Manager {
             .lock()
             .unwrap()
             .push(Heard::UnsetEnvironment(names));
+    }
+
+    fn unset_and_set_environment(&self, names: Vec<String>, assignments: Vec<String>) {
+        self.heard
+            .lock()
+            .unwrap()
+            .push(Heard::UnsetAndSetEnvironment(names, assignments));
     }
 
     fn start_unit(&self, name: String, mode: String) -> zbus::zvariant::OwnedObjectPath {
@@ -109,6 +117,26 @@ fn a_desk_names_its_desktop_before_anything_can_start_the_portal() {
     );
 }
 
+/// The variables niri sets on `display`.
+fn niri(display: &str) -> Vec<String> {
+    vec![
+        "XDG_CURRENT_DESKTOP=niri".into(),
+        format!("WAYLAND_DISPLAY={display}"),
+        "XDG_SESSION_TYPE=wayland".into(),
+    ]
+}
+
+#[test]
+fn a_desk_keeps_the_variables_its_name_replaces() {
+    // Naming the desktop overwrites `XDG_CURRENT_DESKTOP`, so the session to
+    // hand back is read before that.
+    let held = niri("wayland-1");
+    let mut environment: Vec<&str> = held.iter().map(String::as_str).collect();
+    environment.push("PATH=/bin");
+    let (_server, client, _heard) = paired_with(&environment);
+    assert_eq!(name(&client).unwrap(), held);
+}
+
 #[test]
 fn a_desk_that_is_the_session_is_said_before_the_session_starts() {
     // Services bound to `graphical-session.target`, such as the portal, read
@@ -119,6 +147,7 @@ fn a_desk_that_is_the_session_is_said_before_the_session_starts() {
         &client,
         "wayland-1",
         Path::new("/run/d/domicile-ipc.4242.sock"),
+        &[],
     )
     .unwrap();
     assert_eq!(
@@ -181,27 +210,30 @@ fn said(display: &str, control: &Path) -> Vec<String> {
 #[test]
 fn a_desk_remembers_the_session_it_takes_over() {
     // A second login session on another tty, so it can hand the session back.
-    let earlier = said("wayland-1", Path::new("/run/d/domicile-ipc.1.sock"));
-    let mut environment: Vec<&str> = earlier.iter().map(String::as_str).collect();
-    environment.push("PATH=/bin");
-    let (_server, client, _heard) = paired_with(&environment);
-    let taken = begin(
-        &client,
-        "wayland-2",
-        Path::new("/run/d/domicile-ipc.2.sock"),
-    )
-    .unwrap();
-    assert_eq!(taken, earlier);
+    // The session is the one `name` replaced: by then the user manager holds
+    // this desktop's name.
+    let (_server, client, _heard) = paired();
+    for earlier in [
+        said("wayland-1", Path::new("/run/d/domicile-ipc.1.sock")),
+        niri("wayland-1"),
+    ] {
+        let taken = begin(
+            &client,
+            "wayland-2",
+            Path::new("/run/d/domicile-ipc.2.sock"),
+            &earlier,
+        )
+        .unwrap();
+        assert_eq!(taken, earlier);
+    }
 }
 
 #[test]
 fn a_desk_restarting_takes_over_no_session() {
     let ours = Path::new("/run/d/domicile-ipc.2.sock");
-    let before = said("wayland-1", ours);
-    let environment: Vec<&str> = before.iter().map(String::as_str).collect();
-    let (_server, client, _heard) = paired_with(&environment);
+    let (_server, client, _heard) = paired();
     assert_eq!(
-        begin(&client, "wayland-2", ours).unwrap(),
+        begin(&client, "wayland-2", ours, &said("wayland-1", ours)).unwrap(),
         Vec::<String>::new()
     );
 }
@@ -219,7 +251,50 @@ fn a_desk_that_ends_hands_the_session_back_to_the_desk_it_took_it_from() {
     let (_server, client, heard) = paired_with(&environment);
     let earlier = said("wayland-1", &first);
     end(&client, &ours, &earlier).unwrap();
-    assert_eq!(*heard.lock().unwrap(), [Heard::SetEnvironment(earlier)]);
+    assert_eq!(
+        *heard.lock().unwrap(),
+        [Heard::UnsetAndSetEnvironment(vec![], earlier)]
+    );
+}
+
+#[test]
+fn a_desk_that_ends_hands_the_session_back_to_another_compositor() {
+    // niri on tty1, this desk on tty2. niri's unit binds to
+    // `graphical-session.target`, so the shutdown target would stop niri too.
+    // A relative `WAYLAND_DISPLAY` is in `XDG_RUNTIME_DIR`, beside the control
+    // socket.
+    let directory = tempfile::tempdir().unwrap();
+    let _serving =
+        std::os::unix::net::UnixListener::bind(directory.path().join("wayland-1")).unwrap();
+    let ours = directory.path().join("domicile-ipc.2.sock");
+    let now = said("wayland-2", &ours);
+    let environment: Vec<&str> = now.iter().map(String::as_str).collect();
+    let (_server, client, heard) = paired_with(&environment);
+    end(&client, &ours, &niri("wayland-1")).unwrap();
+    assert_eq!(
+        *heard.lock().unwrap(),
+        [Heard::UnsetAndSetEnvironment(
+            vec!["DOMICILE_SOCK".into()],
+            niri("wayland-1")
+        )]
+    );
+}
+
+#[test]
+fn a_desk_that_ends_after_its_compositor_exited_ends_the_session() {
+    let directory = tempfile::tempdir().unwrap();
+    let ours = directory.path().join("domicile-ipc.2.sock");
+    let now = said("wayland-2", &ours);
+    let environment: Vec<&str> = now.iter().map(String::as_str).collect();
+    let (_server, client, heard) = paired_with(&environment);
+    end(&client, &ours, &niri("wayland-1")).unwrap();
+    assert_eq!(
+        heard.lock().unwrap().first(),
+        Some(&Heard::StartUnit(
+            SHUTDOWN.into(),
+            "replace-irreversibly".into()
+        ))
+    );
 }
 
 #[test]

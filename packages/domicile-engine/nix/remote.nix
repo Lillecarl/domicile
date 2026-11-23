@@ -332,7 +332,7 @@ let
         export HOME=$TMPDIR RBE_service_no_security=true
         ${fhs}/bin/chromium-fhs -c '${siso} ninja -C out/Release \
           -reapi_address unix://${socket} -reapi_instance "${instance}" \
-          -strict_remote -local_jobs "$NIX_BUILD_CORES" -remote_jobs ${toString remoteJobs} \
+          -strict_remote -k 0 -local_jobs "$NIX_BUILD_CORES" -remote_jobs ${toString remoteJobs} \
           ${toString targets}' || {
           # The build directory goes with a failed build; keep Siso's own log.
           grep -E '^[EW]' out/Release/siso.INFO | tail -100 >&2 || true

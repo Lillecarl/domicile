@@ -54,7 +54,7 @@ index e662274..7476a7a 100644
  template("repack_locales") {
    if (defined(invoker.output_dir)) {
      _output_dir = invoker.output_dir
-@@ -149,6 +153,32 @@ template("repack_locales") {
+@@ -149,6 +153,33 @@ template("repack_locales") {
    # Collects all targets the loop generates.
    _locale_targets = []
  
@@ -73,12 +73,13 @@ index e662274..7476a7a 100644
 +      script = "//components/domicile/locales/foreign_allowlist.py"
 +      outputs = [ _allowlist ]
 +
-+      # Every id each source has in en-US. Read, not declared as inputs: grit
-+      # writes the .info beside each pak without naming it as an output.
++      # Every id each source has in en-US. grit_rule.gni declares each
++      # .pak.info as an output, so a remote step can be given them.
 +      _infos = []
 +      foreach(_pattern, invoker.source_patterns) {
 +        _infos += [ "${_pattern}en-US.pak.info" ]
 +      }
++      inputs = _infos
 +      args = [ rebase_path(_allowlist, root_build_dir) ] +
 +             rebase_path(_infos, root_build_dir)
 +    }

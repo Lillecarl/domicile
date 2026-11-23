@@ -12,6 +12,11 @@
 
   `base`
   : only `//base`, with Siso's metrics as the output: the first test
+
+  `compile`
+  : the targets scripts/build.sh builds, with Siso's metrics as the output.
+  nixpkgs' install copies an official build's files, not a component
+  build's libraries, so this proves the compile before the install is right.
 */
 {
   engine ? (import ./engine.nix { }).engine,
@@ -23,24 +28,36 @@
 let
   inherit ((import "${nixidae}/pynixd" { }).lib) buildbarn;
   remote = buildbarn.chromium { chromium = engine; };
+  metricsOnly =
+    pname: targets:
+    remote.overrideAttrs {
+      inherit pname;
+      outputs = [ "out" ];
+      buildPhase = ''
+        runHook preBuild
+        ninja -C out/Release ${toString targets}
+        runHook postBuild
+      '';
+      installPhase = ''
+        mkdir -p $out
+        cp out/Release/siso_metrics.json out/Release/siso_compile_summary.json out/Release/siso_output $out/
+      '';
+      dontFixup = true;
+      postFixup = "";
+      doCheck = false;
+      doInstallCheck = false;
+    };
 in
 {
   engine = remote;
-  base = remote.overrideAttrs {
-    pname = "domicile-engine-base";
-    outputs = [ "out" ];
-    buildPhase = ''
-      runHook preBuild
-      ninja -C out/Release base
-      runHook postBuild
-    '';
-    installPhase = ''
-      mkdir -p $out
-      cp out/Release/siso_metrics.json out/Release/siso_compile_summary.json out/Release/siso_output $out/
-    '';
-    dontFixup = true;
-    postFixup = "";
-    doCheck = false;
-    doInstallCheck = false;
-  };
+  base = metricsOnly "domicile-engine-base" [ "base" ];
+  compile = metricsOnly "domicile-engine-compile" [
+    "chrome"
+    "domicile_solid_color_submitter"
+    "domicile_css_parity"
+    "domicile_color_probe"
+    "domicile_capture_probe"
+    "domicile_desk_probe"
+    "third_party/electron_node:node"
+  ];
 }

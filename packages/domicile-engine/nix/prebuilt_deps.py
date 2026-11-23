@@ -90,7 +90,7 @@ SKIP = (
     "src/tools/resultdb",
     "src/tools/skia_goldctl/linux",
     # Recursed DEPS files' standalone tools; a Chromium build uses its own.
-    "src/third_party/dawn/tools/golang/linux-amd64",
+    # Dawn's linux-amd64 Go stays: tint's generate-sources-gn.py runs it.
     "src/third_party/dawn/tools/golang/linux-arm64",
     "src/third_party/openscreen/src/third_party/llvm-build/Release+Asserts",
     "src/third_party/webpagereplay/third_party/golang/linux/arm64",

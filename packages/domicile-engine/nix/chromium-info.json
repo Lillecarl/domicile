@@ -896,6 +896,14 @@
         "version": "version:3@1.12.1.chromium.4"
       }
     ],
+    "src/third_party/dawn/tools/golang/linux-amd64": [
+      {
+        "package": "infra/3pp/tools/go/linux-amd64",
+        "sha256": "31fd0d71f24489775a444b7d0c1c94f483fdb297c4948539a923e39bc400ffe7",
+        "url": "https://chrome-infra-packages.appspot.com/dl/infra/3pp/tools/go/linux-amd64/+/version:3@1.26.6",
+        "version": "version:3@1.26.6"
+      }
+    ],
     "src/third_party/devtools-frontend/src/third_party/esbuild": [
       {
         "package": "infra/3pp/tools/esbuild/linux-amd64",

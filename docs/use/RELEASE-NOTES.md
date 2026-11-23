@@ -92,6 +92,7 @@ Keep work and personal apart: each profile has its own sign-ins and extensions, 
 - Print takes a screenshot while the launcher is open, with the launcher dimmed behind the picker, and pressing it again in the screenshot picker no longer opens a second picker once you close the first. [Screenshots](SCREENSHOTS.md)
 - The wallpaper takes less memory on screens smaller than 4K: it downloads each photo only as large as your screens show it.
 - Screenshot, share and other dialogs fade out when you answer them, instead of vanishing.
+- A screenshot of a Firefox window shows the window instead of a blank picture, and Firefox no longer flashes a stretched frame while it resizes.
 - Sharing your screen or a window in Google Meet asks once, not twice.
 - A site's notifications show the site's icon instead of the browser's.
 - "Open Slack" and other buttons that open an app from a page work again.

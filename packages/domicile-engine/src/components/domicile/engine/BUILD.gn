@@ -262,6 +262,12 @@ _alloc_token_functions = [
   "__alloc_token__ZnwmSt11align_val_tRKSt9nothrow_t",
 ]
 
+# A compiler without alloc-token support (nixpkgs' clang) leaves the list
+# unused, and gn refuses an unused assignment.
+if (!use_alloc_token) {
+  not_needed([ "_alloc_token_functions" ])
+}
+
 shared_library("domicile_engine") {
   output_name = "domicile_engine"
 

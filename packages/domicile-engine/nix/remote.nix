@@ -172,6 +172,32 @@ let
     )
   '';
 
+  # Chromium's main.star, renamed, with one rule first: Node's GN actions
+  # (third_party/electron_node) run locally. Node's unofficial GN leaves
+  # inputs undeclared (.pdl includes, mksnapshot's component libraries) and
+  # passes absolute paths, so they fail on a worker. Node's compiles match no
+  # action rule and stay remote.
+  mainStar = pkgs.writeText "main.star" ''
+    load("@builtin//encoding.star", "json")
+    load("@builtin//struct.star", "module")
+    load("./chromium_main.star", chromium_init = "init")
+
+    def init(ctx):
+        chromium = chromium_init(ctx)
+        step_config = json.decode(chromium.step_config)
+        step_config["rules"].insert(0, {
+            "name": "domicile/electron_node",
+            "action": "__third_party_electron_node_.*",
+            "remote": False,
+        })
+        return module(
+            "config",
+            step_config = json.encode(step_config),
+            filegroups = chromium.filegroups,
+            handlers = chromium.handlers,
+        )
+  '';
+
   # scripts/build.sh's args, with remote execution.
   gnArgs = ''
     is_debug = false
@@ -220,6 +246,8 @@ let
     echo -n '${info.DEPS."src/third_party/dawn".rev}' > gpu/webgpu/DAWN_VERSION
 
     install -m 0644 ${backendStar} build/config/siso/backend_config/backend.star
+    mv build/config/siso/main.star build/config/siso/chromium_main.star
+    install -m 0644 ${mainStar} build/config/siso/main.star
   '';
 
   siso = "third_party/siso/cipd/siso";

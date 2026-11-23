@@ -847,6 +847,80 @@
       "url": "https://chromium.googlesource.com/v8/v8.git"
     }
   },
+  "cipd": {
+    "src/buildtools/linux64": [
+      {
+        "package": "gn/gn/linux-amd64",
+        "sha256": "b2fdd4f4ba88cfc5faacfb2a04fa4361522f2ecef32cda5bb18244b8ab4ef8df",
+        "url": "https://chrome-infra-packages.appspot.com/dl/gn/gn/linux-amd64/+/git_revision:ddc6c4ae595393d43b38e62f2e2baa7661af716f",
+        "version": "git_revision:ddc6c4ae595393d43b38e62f2e2baa7661af716f"
+      }
+    ],
+    "src/buildtools/third_party/mold/cipd": [
+      {
+        "package": "chromium/buildtools/third_party/mold/mold",
+        "sha256": "c3d42a67ea0fdc6a2f03ece339ac18cdbe7271afade3b19b4fe7a33dad014266",
+        "url": "https://chrome-infra-packages.appspot.com/dl/chromium/buildtools/third_party/mold/mold/+/w9QqZ-oP3GovA-zjOawYzb5yca-t47GbT-ejPa0BQmYC",
+        "version": "w9QqZ-oP3GovA-zjOawYzb5yca-t47GbT-ejPa0BQmYC"
+      }
+    ],
+    "src/third_party/cpython3/host": [
+      {
+        "package": "infra/3pp/tools/cpython3/linux-amd64",
+        "sha256": "b7b8a0a6d171b8918fda51aee1d6ffeb0c8a14c791fb1d0bc5d7454c8c9d949b",
+        "url": "https://chrome-infra-packages.appspot.com/dl/infra/3pp/tools/cpython3/linux-amd64/+/version:3@3.11.9.chromium.38",
+        "version": "version:3@3.11.9.chromium.38"
+      }
+    ],
+    "src/third_party/cpython3/linux-amd64": [
+      {
+        "package": "infra/3pp/tools/cpython3/linux-amd64",
+        "sha256": "b7b8a0a6d171b8918fda51aee1d6ffeb0c8a14c791fb1d0bc5d7454c8c9d949b",
+        "url": "https://chrome-infra-packages.appspot.com/dl/infra/3pp/tools/cpython3/linux-amd64/+/version:3@3.11.9.chromium.38",
+        "version": "version:3@3.11.9.chromium.38"
+      }
+    ],
+    "src/third_party/gperf/cipd": [
+      {
+        "package": "infra/3pp/tools/gperf/linux-amd64",
+        "sha256": "49d1516575ce2f48aa8f59652c746d95022e31cf5fd8079613e16fd41e015ce1",
+        "url": "https://chrome-infra-packages.appspot.com/dl/infra/3pp/tools/gperf/linux-amd64/+/version:3@3.2.chromium.1",
+        "version": "version:3@3.2.chromium.1"
+      }
+    ],
+    "src/third_party/ninja": [
+      {
+        "package": "infra/3pp/tools/ninja/linux-amd64",
+        "sha256": "3f1f1cc0f69a1bcfdf67fb6c2bc7419b1dd812bb8d0e79afa9bfa8a3553b5082",
+        "url": "https://chrome-infra-packages.appspot.com/dl/infra/3pp/tools/ninja/linux-amd64/+/version:3@1.12.1.chromium.4",
+        "version": "version:3@1.12.1.chromium.4"
+      }
+    ],
+    "src/third_party/screen-ai/linux": [
+      {
+        "package": "chromium/third_party/screen-ai/linux",
+        "sha256": "b9c06974122103e4dcfe4bbc942c5a90668a1b42df880786bcd86e450fde33ad",
+        "url": "https://chrome-infra-packages.appspot.com/dl/chromium/third_party/screen-ai/linux/+/version:153.08",
+        "version": "version:153.08"
+      }
+    ],
+    "src/third_party/siso/cipd": [
+      {
+        "package": "build/siso/linux-amd64",
+        "sha256": "9c29e7221a9d3d3207b64c3116def33f219b56d5568e934b1353d0c1f2a5801b",
+        "url": "https://chrome-infra-packages.appspot.com/dl/build/siso/linux-amd64/+/git_revision:3025be9c477069426f08b8235e9545d5b20afd0f",
+        "version": "git_revision:3025be9c477069426f08b8235e9545d5b20afd0f"
+      }
+    ],
+    "src/third_party/typescript/linux-amd64/src": [
+      {
+        "package": "chromium/third_party/typescript/linux-amd64",
+        "sha256": "848c8198d586273d0cd6f21c66d52510c27bdecd03954d9acc5a0c95894a0a71",
+        "url": "https://chrome-infra-packages.appspot.com/dl/chromium/third_party/typescript/linux-amd64/+/version:2@7.0.2",
+        "version": "version:2@7.0.2"
+      }
+    ]
+  },
   "deps": {
     "depot_tools": {
       "hash": "sha256-XcnkXK9hxAdHISWT1h37Z+kUG0tnCuOoy7t6B02iU5g=",
@@ -858,6 +932,230 @@
       "version": "0-unstable-2026-11-13"
     },
     "npmHash": "sha256-P7EOD/Tsur9/R6/lYSMxPjzwWaje10VepIZUUQo3dU0="
+  },
+  "gcs": {
+    "src/build/linux/debian_bullseye_amd64-sysroot": [
+      {
+        "file": "f851add76bdae472fb6c94b4f920bc4a132d85ac607951391297f636af7e934e",
+        "sha256": "f851add76bdae472fb6c94b4f920bc4a132d85ac607951391297f636af7e934e",
+        "url": "https://storage.googleapis.com/chrome-linux-sysroot/f851add76bdae472fb6c94b4f920bc4a132d85ac607951391297f636af7e934e"
+      }
+    ],
+    "src/build/linux/debian_bullseye_i386-sysroot": [
+      {
+        "file": "854e63992a633c8d54b69959d7b789453239d7f4bc30216594f0e3eb1b520402",
+        "sha256": "854e63992a633c8d54b69959d7b789453239d7f4bc30216594f0e3eb1b520402",
+        "url": "https://storage.googleapis.com/chrome-linux-sysroot/854e63992a633c8d54b69959d7b789453239d7f4bc30216594f0e3eb1b520402"
+      }
+    ],
+    "src/buildtools/linux64-format": [
+      {
+        "file": "clang-format",
+        "sha256": "5d384f2a3e72f01c5c61dd07e3a2577723cfa20c8c019131467f00fb6da8a75c",
+        "url": "https://storage.googleapis.com/chromium-clang-format/f5485c39451137ee943021a0fb63738b306c5026"
+      }
+    ],
+    "src/third_party/chromium-bidi/node_modules": [
+      {
+        "file": "node_modules.tar.gz",
+        "sha256": "7da310bf46956828c164237a912a201d21f51220dfbe60df454188dbad75889c",
+        "url": "https://storage.googleapis.com/chromium-nodejs/chromium-bidi/7da310bf46956828c164237a912a201d21f51220dfbe60df454188dbad75889c"
+      }
+    ],
+    "src/third_party/llvm-build/Release+Asserts": [
+      {
+        "file": "Linux_x64/clang-android-runtime-library-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "d81b3b0fa28fd111ab754746a9dbc8387c7e85545dda549c48688926b4178856",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Linux_x64/clang-android-runtime-library-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Linux_x64/clang-linux-runtime-library-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "aa09a24753ad55acd25198c32625d29cb427e40518c89ce13ad10126291570f2",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Linux_x64/clang-linux-runtime-library-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Linux_x64/clang-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "9734886d2b685a9a9955b7aeef27ace62a248dfbec7c69b6752ccbcd10818d62",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Linux_x64/clang-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Linux_x64/clang-tidy-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "453c1cbde629b28dadc936e64e457ae49d52c2721f44958647849fe64ddd3754",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Linux_x64/clang-tidy-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Linux_x64/clangd-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "4c6b6b57b23d41ccd199e2c4acb57c07eb36ab61cadddfda8997d2c932e3c9de",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Linux_x64/clangd-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Linux_x64/llvm-code-coverage-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "5f19525b89849f56ea9cdcb705760aa9f3859e8e150650cf54b92225ecb4f065",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Linux_x64/llvm-code-coverage-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Linux_x64/llvmobjdump-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "db2ac150d52e0240ee85a91a611d216d2a8e55d24395fbaa3c1882dbc5e9b7e0",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Linux_x64/llvmobjdump-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Mac/clang-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "4e8c6307abdd2e795710a6404d9f06faed211d3e2fb700e3c5d4fa517a54307f",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Mac/clang-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Mac/clang-mac-runtime-library-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "3d255b8d8005d73f74aa9871166a2b7d6d41d83efc20852ec37843ee4fa98579",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Mac/clang-mac-runtime-library-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Mac/clang-tidy-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "efb266bf4fbb80926eabeef23d739a2726c1f13c35f60253f5cb57f88ee2a603",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Mac/clang-tidy-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Mac/clangd-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "ca046b064454ffb36f475cf5ad8eb695e33a790184d12d8949502515f8da8b71",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Mac/clangd-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Mac/llvm-code-coverage-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "d6913cf8041ecdd8651d9712d45c240e92eda29ab3d08425e959472bb33daed6",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Mac/llvm-code-coverage-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Mac/llvmobjdump-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "7a2b405a93c06a4ec4f9b6e1ce3fa0b810fa6b4ca8eb32a5f4876c72cceac2bd",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Mac/llvmobjdump-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Mac_arm64/clang-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "610bcafcc958226870f64dcb2a5c6b4bbc74b47fe21b7452392ce6ddbfd446f2",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Mac_arm64/clang-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Mac_arm64/clang-tidy-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "2cc9a2ec13b1cc6307c6cd12dae51da44ee0810ff0feb86d83756a553ffd4d70",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Mac_arm64/clang-tidy-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Mac_arm64/clangd-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "3e0d01b7cd857b2e3235db4dc7a9b765549c437c142a9b60518f0a5813385899",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Mac_arm64/clangd-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Mac_arm64/llvm-code-coverage-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "c6f3b777f7886a17202b6c85b45e0ff60a0a0079cf52fb3778b35a40e208acaf",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Mac_arm64/llvm-code-coverage-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Mac_arm64/llvmobjdump-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "31fac4f2d0980ed2a0be8b93775f2dc73b2cda23a22d02c49aa9473407674b23",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Mac_arm64/llvmobjdump-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Win/clang-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "1733d589a7f2a4c90adc75de4cfe70b2b5d5efeaab9612fff8cf3aa52bd72316",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Win/clang-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Win/clang-tidy-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "1d2031f4e497405687e60ee3f9d645559f3825ad561c98ba206012b7194dbf9a",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Win/clang-tidy-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Win/clang-win-runtime-library-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "c3baf36073ade51766059262f59e37cc2902277011397575cd062a0c3b32351c",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Win/clang-win-runtime-library-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Win/clangd-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "b14653b09f70b9d6eb59f47316722d174f65d70ea985b4ec9a8680d50fbfd1e3",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Win/clangd-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Win/llvm-code-coverage-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "882b8cfddc2fff52c3ecf1931856ce878f5084145f49f58ce111ef38b88ef5d1",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Win/llvm-code-coverage-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      },
+      {
+        "file": "Win/llvmobjdump-llvmorg-24-init-17044-gc3223914-63.tar.xz",
+        "sha256": "7cceb60d56c0d6a81ca4049b3c749894a52e7d4a4bbd996ceb20ec9b866eba23",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Win/llvmobjdump-llvmorg-24-init-17044-gc3223914-63.tar.xz"
+      }
+    ],
+    "src/third_party/llvm-libclang": [
+      {
+        "file": "Linux_x64/rust-libclang-96a18bf5ffa2b24f9cf3d1c731a9eb121c1acad9-5-llvmorg-24-init-17044-gc3223914.tar.xz",
+        "sha256": "bdfa70274badca548d73b95f353ebc6451c96c6ada1e561c6da880f857f21bb6",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Linux_x64/rust-libclang-96a18bf5ffa2b24f9cf3d1c731a9eb121c1acad9-5-llvmorg-24-init-17044-gc3223914.tar.xz"
+      },
+      {
+        "file": "Mac/rust-libclang-96a18bf5ffa2b24f9cf3d1c731a9eb121c1acad9-5-llvmorg-24-init-17044-gc3223914.tar.xz",
+        "sha256": "daa332f90f0237bd1389cfa482957eee5f08cd341c42b3c0f7ec9ee96cf90544",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Mac/rust-libclang-96a18bf5ffa2b24f9cf3d1c731a9eb121c1acad9-5-llvmorg-24-init-17044-gc3223914.tar.xz"
+      },
+      {
+        "file": "Mac_arm64/rust-libclang-96a18bf5ffa2b24f9cf3d1c731a9eb121c1acad9-5-llvmorg-24-init-17044-gc3223914.tar.xz",
+        "sha256": "4bfdfe46686aa3c1f8f6fd9447fac5e37e699bccf213138b279c99a71c732a03",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Mac_arm64/rust-libclang-96a18bf5ffa2b24f9cf3d1c731a9eb121c1acad9-5-llvmorg-24-init-17044-gc3223914.tar.xz"
+      },
+      {
+        "file": "Win/rust-libclang-96a18bf5ffa2b24f9cf3d1c731a9eb121c1acad9-5-llvmorg-24-init-17044-gc3223914.tar.xz",
+        "sha256": "7b4dd46967b0a84b83ab6aa6f3999ca18b15926c5f05a481445e47aaed2558e2",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Win/rust-libclang-96a18bf5ffa2b24f9cf3d1c731a9eb121c1acad9-5-llvmorg-24-init-17044-gc3223914.tar.xz"
+      }
+    ],
+    "src/third_party/node/linux": [
+      {
+        "file": "node-linux-x64.tar.gz",
+        "sha256": "17abfaa0adf2423b4498a546f9ed290adec36915c15fea362219d82f5438415e",
+        "url": "https://storage.googleapis.com/chromium-nodejs/4ed1feeeaab164c5be794cc58f6ba87a50e8718a"
+      }
+    ],
+    "src/third_party/node/node_modules": [
+      {
+        "file": "node_modules.tar.gz",
+        "sha256": "5b5e38c58094ee898b1eceb29df7d3a2a2e6b07add6a05b4c554eef0dfb56465",
+        "url": "https://storage.googleapis.com/chromium-nodejs/8b170cc9b6a9725b4082b7b2255ca797bc80ea5f"
+      }
+    ],
+    "src/third_party/rust-toolchain": [
+      {
+        "file": "Linux_x64/rust-toolchain-96a18bf5ffa2b24f9cf3d1c731a9eb121c1acad9-5-llvmorg-24-init-17044-gc3223914.tar.xz",
+        "sha256": "73e395668def3e0a488f5edffd3ccaeb86a99f0476ed06c04930c6895094b212",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Linux_x64/rust-toolchain-96a18bf5ffa2b24f9cf3d1c731a9eb121c1acad9-5-llvmorg-24-init-17044-gc3223914.tar.xz"
+      },
+      {
+        "file": "Mac/rust-toolchain-96a18bf5ffa2b24f9cf3d1c731a9eb121c1acad9-5-llvmorg-24-init-17044-gc3223914.tar.xz",
+        "sha256": "0888daf1c1215ac4556028d7e6df7d5fa0c57336bff64c570a57f93fef0da565",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Mac/rust-toolchain-96a18bf5ffa2b24f9cf3d1c731a9eb121c1acad9-5-llvmorg-24-init-17044-gc3223914.tar.xz"
+      },
+      {
+        "file": "Mac_arm64/rust-toolchain-96a18bf5ffa2b24f9cf3d1c731a9eb121c1acad9-5-llvmorg-24-init-17044-gc3223914.tar.xz",
+        "sha256": "64a506650c18e57eeae11d493c41faf3a712885b7b65d993f4c76eac7f0498b7",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Mac_arm64/rust-toolchain-96a18bf5ffa2b24f9cf3d1c731a9eb121c1acad9-5-llvmorg-24-init-17044-gc3223914.tar.xz"
+      },
+      {
+        "file": "Win/rust-toolchain-96a18bf5ffa2b24f9cf3d1c731a9eb121c1acad9-5-llvmorg-24-init-17044-gc3223914.tar.xz",
+        "sha256": "c3c1f2e465ed50a67e2ba5c5579c3df46e2fb445ccb73d063869087972d84e1c",
+        "url": "https://storage.googleapis.com/chromium-browser-clang/Win/rust-toolchain-96a18bf5ffa2b24f9cf3d1c731a9eb121c1acad9-5-llvmorg-24-init-17044-gc3223914.tar.xz"
+      }
+    ],
+    "src/third_party/subresource-filter-ruleset/data": [
+      {
+        "file": "UnindexedRules",
+        "sha256": "c0e0c30df5033d057165dc68ed0b87c334fd847da38b1591edc562bf68fbc7e5",
+        "url": "https://storage.googleapis.com/chromium-ads-detection/c0e0c30df5033d057165dc68ed0b87c334fd847da38b1591edc562bf68fbc7e5"
+      }
+    ],
+    "src/third_party/test_fonts/test_fonts": [
+      {
+        "file": "9c07d19d9c5ee1ff94f717e6fb17e0c8c354e6f9",
+        "sha256": "f0e9628f9e43e3f3476cde06a1849058de460e0e037b7449ce0d42b9a73c37d5",
+        "url": "https://storage.googleapis.com/chromium-fonts/9c07d19d9c5ee1ff94f717e6fb17e0c8c354e6f9"
+      }
+    ]
   },
   "version": "160.0.8174.0"
 }

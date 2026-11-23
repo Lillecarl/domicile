@@ -57,7 +57,7 @@ async def nix_eval_raw(expr: str) -> str:
     return out
 
 
-async def resolve_deps(nixpkgs: str, rev: str) -> dict[str, dict[str, str]]:
+async def fetch_depot_tools(nixpkgs: str) -> str:
     depot_tools = await nix_eval_raw(
         f'(import {nixpkgs} {{}}).fetchgit {{ url = "https://chromium.googlesource.com/chromium/tools/depot_tools.git";'
         f' rev = "{DEPOT_TOOLS["rev"]}"; hash = "{DEPOT_TOOLS["hash"]}"; }}'
@@ -65,11 +65,69 @@ async def resolve_deps(nixpkgs: str, rev: str) -> dict[str, dict[str, str]]:
     rc, _, err = await run("nix", "build", "--no-link", depot_tools)
     if rc != 0:
         raise RuntimeError(f"depot_tools fetch failed:\n{err}")
+    return depot_tools
+
+
+async def resolve_deps(
+    nixpkgs: str, depot_tools: str, rev: str
+) -> dict[str, dict[str, str]]:
     script = f"{nixpkgs}/pkgs/applications/networking/browsers/chromium/depot_tools.py"
     rc, out, err = await run("python3", script, depot_tools, rev)
     if rc != 0:
         raise RuntimeError(f"depot_tools.py failed:\n{err}")
     return json.loads(out)
+
+
+async def prebuilt(
+    depot_tools: str, deps_file: str
+) -> dict[str, dict[str, list[dict[str, str]]]]:
+    """The CIPD and GCS deps, each with the url and sha256 a fetchurl pins."""
+    async with anyio.NamedTemporaryFile("w", suffix=".DEPS") as f:
+        await f.write(deps_file)
+        await f.flush()
+        rc, out, err = await run(
+            "python3", str(HERE / "prebuilt_deps.py"), depot_tools, str(f.name)
+        )
+    if rc != 0:
+        raise RuntimeError(f"prebuilt_deps.py failed:\n{err}")
+    found = json.loads(out)
+    gcs = {
+        path: [
+            {
+                "url": f"https://storage.googleapis.com/{dep['bucket']}/{o['object_name']}",
+                "sha256": o["sha256sum"],
+                "file": o["output_file"] or o["object_name"],
+            }
+            for o in dep["objects"]
+        ]
+        for path, dep in found["gcs"].items()
+    }
+    cipd: dict[str, list[dict[str, str]]] = {}
+    limit = anyio.Semaphore(JOBS)
+
+    async def one(path: str, package: str, version: str) -> None:
+        url = f"https://chrome-infra-packages.appspot.com/dl/{package}/+/{version}"
+        async with limit:
+            # CIPD refuses HEAD; a GET that does not follow shows the redirect.
+            rc, out, err = await run("curl", "-s", "-o", "/dev/null", "-D", "-", url)
+        # CIPD redirects to its content-addressed store: the archive's sha256.
+        found_hash = re.search(r"(?im)^location: .*/SHA256/([0-9a-f]{64})", out)
+        if rc != 0 or found_hash is None:
+            raise RuntimeError(f"CIPD did not resolve {package}@{version}:\n{out}{err}")
+        cipd.setdefault(path, []).append(
+            {
+                "package": package,
+                "version": version,
+                "url": url,
+                "sha256": found_hash.group(1),
+            }
+        )
+
+    async with anyio.create_task_group() as tg:
+        for path, packages in found["cipd"].items():
+            for p in packages:
+                tg.start_soon(one, path, p["package"], p["version"])
+    return {"cipd": dict(sorted(cipd.items())), "gcs": gcs}
 
 
 async def gn_lock(rev: str, deps_file: str) -> dict[str, str]:
@@ -106,7 +164,8 @@ async def main() -> int:
         if await lock_path.exists()
         else {"DEPS": {}, "deps": {}}
     )
-    resolved = await resolve_deps(nixpkgs, rev)
+    depot_tools = await fetch_depot_tools(nixpkgs)
+    resolved = await resolve_deps(nixpkgs, depot_tools, rev)
     rc, deps_file, err = await run(
         "sh",
         "-c",
@@ -123,6 +182,7 @@ async def main() -> int:
             "gn": await gn_lock(rev, deps_file),
             "npmHash": FAKE,
         },
+        **(await prebuilt(depot_tools, deps_file)),
     }
     for path, dep in resolved.items():
         entry: dict[str, str | bool] = {

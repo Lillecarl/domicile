@@ -220,16 +220,14 @@ let
     echo -n '${info.DEPS."src/third_party/dawn".rev}' > gpu/webgpu/DAWN_VERSION
 
     install -m 0644 ${backendStar} build/config/siso/backend_config/backend.star
-
-    # gn's exec_script and Siso's local steps run this path; a remote step
-    # runs cpython3/linux-amd64 instead. Chromium's own loads
-    # /lib64/ld-linux-x86-64.so.2, which the sandbox lacks.
-    rm -rf third_party/cpython3/host
-    mkdir -p third_party/cpython3/host/bin
-    ln -s ${lib.getExe pkgs.python3} third_party/cpython3/host/bin/python3
   '';
 
   siso = "third_party/siso/cipd/siso";
+  # gn gen and Siso run in it: gn's exec_script and the steps Chromium keeps
+  # local run Chromium's own host Python and clang, which load
+  # /lib64/ld-linux-x86-64.so.2 (fhs.nix). Nix's Python will not do: a
+  # remote step writes .pyc archives (grit.pyz) for Python 3.11, and a local
+  # step must read them.
   fhs = (import ./fhs.nix { inherit pkgs; }).env;
 
   # The tree `gclient sync` and `gclient runhooks` give, then `gn gen`.
@@ -252,7 +250,10 @@ let
     ${applySeries "node" "third_party/electron_node"}
     ${hooks}
 
-    gn gen out/Release --args=${lib.escapeShellArg gnArgs}
+    mkdir -p out/Release
+    cp ${pkgs.writeText "args.gn" gnArgs} out/Release/args.gn
+    chmod u+w out/Release/args.gn
+    ${fhs}/bin/chromium-fhs -c '${lib.getExe gn} gen out/Release'
   '';
 
   derivation =
@@ -277,8 +278,6 @@ let
       '';
 
       nativeBuildInputs = [
-        gn
-        pkgs.python3
         pkgs.pkg-config
         pkgs.unzip
         pkgs.zstd

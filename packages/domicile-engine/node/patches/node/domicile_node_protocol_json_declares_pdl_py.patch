@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 23 Nov 2026 00:00:00 +0000
+Subject: [PATCH] domicile: node_protocol_json declares pdl.py
+
+convert_protocol_to_json.py imports pdl.py from its own directory, and
+the action did not list it. A remote build step gets only the inputs an
+action declares, so on Buildbarn the step failed with "No module named
+'pdl'".
+---
+--- a/src/inspector/unofficial.gni
++++ b/src/inspector/unofficial.gni
+@@ -70,6 +70,9 @@
+
+   action_foreach("node_protocol_json") {
+     script = "$node_v8_path/third_party/inspector_protocol/convert_protocol_to_json.py"
++    # The script imports pdl.py beside it; a remote step gets only what is
++    # declared.
++    inputs = [ "$node_v8_path/third_party/inspector_protocol/pdl.py" ]
+     sources = [ "node_protocol.pdl", v8_inspector_js_protocol ]
+     outputs = [ "$node_gen_dir/src/{{source_name_part}}.json" ]
+     args = [ "{{source}}" ] + rebase_path(outputs, root_build_dir)

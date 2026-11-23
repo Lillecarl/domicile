@@ -32,7 +32,7 @@ use smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer;
 use smithay::utils::Transform;
 use tracing::debug;
 
-use crate::buffer_transform::{crop_in_buffer, upright_size, Sampled};
+use crate::buffer_transform::Sampled;
 use crate::casting::audio::Heard;
 use crate::casting::captured::{self, Kept};
 use crate::casting::captures::{Capturer, Captures, Frame};
@@ -49,6 +49,7 @@ use crate::casting::shots::{
 };
 use crate::casting::{Candidate, Consumer, Event, Listener, Region, Request, Source, StreamId};
 use crate::engine::{BrowserView, BrowserWindow, CaptureId, CapturedFrame};
+use crate::engine_session::Child;
 
 /// A window's frame, as its commit brought it.
 pub struct Committed<'a> {
@@ -102,12 +103,15 @@ pub struct Streams {
     /// Each window's last frame size, offered when a stream starts.
     sizes: HashMap<String, (u32, u32)>,
     /// How many buffer pixels span each window's surface point, for the
-    /// pointer over it.
+    /// pointer over it and its subsurfaces in a shot of it.
     densities: HashMap<String, (f64, f64)>,
     /// Each cast window's last frame.
     shots: HashMap<String, Shot>,
     /// Each window's last frame the engine shows, for a shot of it alone.
     shown: HashMap<String, Shown>,
+    /// Each surface's subsurfaces as its frames draw them, bottom to top, for
+    /// a shot of its window alone.
+    children: HashMap<String, Vec<Child>>,
     /// The window under the pointer, and where, in its box's logical pixels.
     pointer: Option<(String, (f64, f64))>,
     /// Where the engine reports the pointer.
@@ -288,6 +292,7 @@ impl Streams {
             densities: HashMap::new(),
             shots: HashMap::new(),
             shown: HashMap::new(),
+            children: HashMap::new(),
             pointer: None,
             engine_pointer: EnginePointer::default(),
             screens: Vec::new(),
@@ -353,12 +358,9 @@ impl Streams {
             Request::ShootBrowserWindow { id, developed } => {
                 self.shoot_browser_window(&id, developed, capturer);
             }
-            Request::ShootWindow { app_id, developed } => developed(
-                self.shown
-                    .get(&app_id)
-                    .ok_or_else(|| format!("window {app_id} has shown no frame"))
-                    .and_then(|shown| shots::window(shown, renderer)),
-            ),
+            Request::ShootWindow { app_id, developed } => {
+                developed(self.shoot_window(&app_id, renderer));
+            }
             Request::Stop { stream } => {
                 if self.casts.contains_key(&stream) {
                     self.send(ToPipewire::End {
@@ -368,6 +370,32 @@ impl Streams {
                 }
             }
         }
+    }
+
+    /// Window `app_id` alone, from the last frames it and its subsurfaces
+    /// showed.
+    fn shoot_window(
+        &self,
+        app_id: &str,
+        renderer: Option<&mut GlesRenderer>,
+    ) -> Result<domicile_host::screenshot::Shot, String> {
+        let shown = self
+            .shown
+            .get(app_id)
+            .ok_or_else(|| format!("window {app_id} has shown no frame"))?;
+        let pixels_a_point = self
+            .densities
+            .get(app_id)
+            .ok_or_else(|| format!("window {app_id} has committed no frame"))?;
+        let size = shots::sampled(shown).upright_size();
+        let surfaces: Vec<_> =
+            shots::stack(app_id, size, *pixels_a_point, &self.children, |child| {
+                self.shown.contains_key(child)
+            })
+            .into_iter()
+            .map(|(surface, to)| (&self.shown[&surface], to))
+            .collect();
+        shots::window(size, &surfaces, renderer)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1540,11 +1568,21 @@ impl Streams {
         self.shown.insert(app_id.to_string(), frame);
     }
 
+    /// Surface `app_id`'s subsurfaces are now `children`, bottom to top.
+    pub fn children(&mut self, app_id: &str, children: Vec<Child>) {
+        if children.is_empty() {
+            self.children.remove(app_id);
+        } else {
+            self.children.insert(app_id.to_string(), children);
+        }
+    }
+
     /// A window closed: its streams end.
     pub fn window_gone(&mut self, app_id: &str) {
         self.sizes.remove(app_id);
         self.densities.remove(app_id);
         self.shown.remove(app_id);
+        self.children.remove(app_id);
         self.shots.remove(app_id);
         let gone: Vec<_> = self
             .casts
@@ -1915,29 +1953,7 @@ fn cut(view: View<'_>, part: Rect) -> (View<'_>, Rect) {
     let layers = view
         .layers
         .into_iter()
-        .filter_map(|layer| {
-            // Relative to the part.
-            let visible = within(layer.to, shown)?;
-            let (from_width, from_height) =
-                upright_size((layer.from.2 as u32, layer.from.3 as u32), layer.transform);
-            let (across, down) = (
-                f64::from(from_width) / f64::from(layer.to.2),
-                f64::from(from_height) / f64::from(layer.to.3),
-            );
-            let upright = (
-                (f64::from(visible.0 + shown.0 - layer.to.0) * across).round() as i32,
-                (f64::from(visible.1 + shown.1 - layer.to.1) * down).round() as i32,
-                (f64::from(visible.2) * across).round() as i32,
-                (f64::from(visible.3) * down).round() as i32,
-            );
-            let (x, y, width, height) =
-                crop_in_buffer(upright, (from_width, from_height), layer.transform);
-            Some(Layer {
-                from: (layer.from.0 + x, layer.from.1 + y, width, height),
-                to: visible,
-                ..layer
-            })
-        })
+        .filter_map(|layer| layer.cut(shown))
         .collect();
     let pointer = view.pointer.and_then(|(x, y)| {
         let (x, y) = (x - f64::from(shown.0), y - f64::from(shown.1));
@@ -2091,6 +2107,7 @@ mod tests {
     use crate::engine::{
         BrowserView, BrowserWindow, CaptureId, CapturedFrame, CapturedPixels, SharedFd,
     };
+    use crate::engine_session::Child;
 
     /// An engine that numbers captures by display, captures browser windows
     /// from 100 up, and records stops and releases.
@@ -2523,6 +2540,28 @@ mod tests {
         );
 
         assert!(heard.try_recv().expect("developed").is_err());
+    }
+
+    #[test]
+    fn a_surfaces_subsurfaces_are_kept_until_it_goes() {
+        let mut streams = streams();
+        let child = Child {
+            app_id: "subsurface-1".into(),
+            position: (0.0, 0.0),
+            size: (1.0, 1.0),
+            above: true,
+        };
+
+        streams.children("app-1", vec![child.clone()]);
+        streams.children("app-2", vec![child.clone()]);
+        streams.children("app-2", Vec::new());
+        assert_eq!(
+            streams.children,
+            HashMap::from([("app-1".to_string(), vec![child])])
+        );
+
+        streams.window_gone("app-1");
+        assert!(streams.children.is_empty());
     }
 
     #[test]

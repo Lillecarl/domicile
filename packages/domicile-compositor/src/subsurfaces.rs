@@ -225,12 +225,14 @@ impl DomicileCompositor {
             .collect()
     }
 
-    /// Tell the engine `surface`'s subsurfaces, and whether they changed.
+    /// Tell the engine and the casts `surface`'s subsurfaces, and whether
+    /// they changed.
     fn set_the_children(&mut self, surface: &WlSurface) -> bool {
         let Some(app_id) = self.app_id_of(surface) else {
             return false;
         };
         let children = self.children_of(surface);
+        self.casting.children(&app_id, children.clone());
         self.engine
             .as_mut()
             .is_some_and(|session| session.set_children(&app_id, children))

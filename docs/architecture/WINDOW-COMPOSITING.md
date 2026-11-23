@@ -81,6 +81,9 @@ extension popups and other bubbles as them.
 - **Hidden:** Chromium hides a subsurface by destroying its `wl_subsurface`
   and keeping the surface. The compositor notices at the next commit of it or
   its parent.
+- **Shots:** a shot of one window (`casting/shots.rs`) draws each surface's
+  last shown frame where the parent's frames embed it, cut to the window.
+  A window cast draws the root surface alone.
 - **Check:** `guard-scrolling-bubble.sh` scrolls a window under a sync
   subsurface on `crux` and reads a monitor cast: each frame shows the
   subsurface at the window's content. Its control moves the subsurface a

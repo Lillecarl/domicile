@@ -18,9 +18,9 @@ use smithay::wayland::dmabuf::get_dmabuf;
 use smithay::wayland::shm::with_buffer_contents;
 use thiserror::Error;
 
-use crate::buffer_transform::Sampled;
+use crate::buffer_transform::{crop_in_buffer, upright_size, Sampled};
 use crate::casting::cursor::{Plan, Sprite};
-use crate::casting::pacing::Rect;
+use crate::casting::pacing::{within, Rect};
 
 /// A window's last frame, kept after its buffer is released.
 pub enum Snapshot {
@@ -55,6 +55,31 @@ impl<'a> Layer<'a> {
             to: (0, 0, width as i32, height as i32),
             transform: sampled.transform,
         }
+    }
+
+    /// What of the layer falls in `part` of the stream, placed relative to
+    /// `part`, or `None` if none of it does.
+    pub fn cut(self, part: Rect) -> Option<Self> {
+        let visible = within(self.to, part)?;
+        let (from_width, from_height) =
+            upright_size((self.from.2 as u32, self.from.3 as u32), self.transform);
+        let (across, down) = (
+            f64::from(from_width) / f64::from(self.to.2),
+            f64::from(from_height) / f64::from(self.to.3),
+        );
+        let upright = (
+            (f64::from(visible.0 + part.0 - self.to.0) * across).round() as i32,
+            (f64::from(visible.1 + part.1 - self.to.1) * down).round() as i32,
+            (f64::from(visible.2) * across).round() as i32,
+            (f64::from(visible.3) * down).round() as i32,
+        );
+        let (x, y, width, height) =
+            crop_in_buffer(upright, (from_width, from_height), self.transform);
+        Some(Self {
+            from: (self.from.0 + x, self.from.1 + y, width, height),
+            to: visible,
+            ..self
+        })
     }
 }
 

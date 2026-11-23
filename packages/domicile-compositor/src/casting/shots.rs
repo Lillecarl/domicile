@@ -6,6 +6,8 @@
 //! captures it needs and stopping them once it has its frames. See
 //! `docs/PORTALS.md`.
 
+use std::collections::HashMap;
+
 use domicile_host::screenshot::Shot;
 use domicile_protocol::{ShotArea, ShotRect, ShotWindow};
 use smithay::backend::allocator::dmabuf::Dmabuf;
@@ -23,6 +25,7 @@ use crate::casting::pacing::Rect;
 use crate::casting::paint::paint;
 use crate::casting::region::{intersection, Screen};
 use crate::engine::CapturedFrame;
+use crate::engine_session::Child;
 
 /// A frame of the whole desk, and where its monitors and windows are in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,28 +84,125 @@ pub fn compose(
     })
 }
 
-/// `shown` alone, read back through `renderer`.
-pub fn window(shown: &Shown, renderer: Option<&mut GlesRenderer>) -> Result<Shot, String> {
+/// A window `size` pixels big, read back through `renderer`: each of
+/// `surfaces`, bottom first, drawn over the rectangle beside it, and cut to
+/// the window.
+pub fn window(
+    size: (u32, u32),
+    surfaces: &[(&Shown, Rect)],
+    renderer: Option<&mut GlesRenderer>,
+) -> Result<Shot, String> {
     let renderer = renderer.ok_or("no GPU renderer to read the window's frame")?;
+    let snapshots = surfaces
+        .iter()
+        .map(|(shown, _)| {
+            renderer
+                .import_dmabuf(&shown.dmabuf, None)
+                .map(Snapshot::Texture)
+                .map_err(|why| why.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let whole = (0, 0, size.0 as i32, size.1 as i32);
+    let layers: Vec<Layer> = surfaces
+        .iter()
+        .zip(&snapshots)
+        .filter_map(|((shown, to), snapshot)| {
+            let sampled = sampled(shown);
+            Layer {
+                snapshot,
+                from: sampled.crop,
+                to: *to,
+                transform: sampled.transform,
+            }
+            .cut(whole)
+        })
+        .collect();
+    compose(size, &layers, Some(renderer)).map_err(|why| why.to_string())
+}
+
+/// The part of `shown`'s buffer that is the surface, with the whole buffer
+/// spelled out.
+pub fn sampled(shown: &Shown) -> Sampled {
     let size = shown.dmabuf.size();
-    let sampled = match shown.sampled.crop {
+    match shown.sampled.crop {
         (_, _, 0, 0) => Sampled {
             crop: (0, 0, size.w, size.h),
             ..shown.sampled
         },
         _ => shown.sampled,
-    };
-    let snapshot = Snapshot::Texture(
-        renderer
-            .import_dmabuf(&shown.dmabuf, None)
-            .map_err(|why| why.to_string())?,
+    }
+}
+
+/// Where each surface of window `app_id` goes in a shot of it, bottom first:
+/// the window over all of the shot, `size` pixels big with `pixels_a_point`
+/// of them a logical pixel, and its subsurfaces, nested ones too, as
+/// `children` stacks them. A subsurface that has not `drawn` a frame shows
+/// nothing, nor do its own, as on screen.
+pub fn stack(
+    app_id: &str,
+    size: (u32, u32),
+    pixels_a_point: (f64, f64),
+    children: &HashMap<String, Vec<Child>>,
+    drawn: impl Fn(&str) -> bool,
+) -> Vec<(String, Rect)> {
+    let mut stacked = Vec::new();
+    stack_onto(
+        &mut stacked,
+        app_id,
+        (0.0, 0.0),
+        (0, 0, size.0 as i32, size.1 as i32),
+        pixels_a_point,
+        children,
+        &drawn,
     );
-    compose(
-        sampled.upright_size(),
-        &[Layer::upright(&snapshot, sampled)],
-        Some(renderer),
-    )
-    .map_err(|why| why.to_string())
+    stacked
+}
+
+/// Pushes `app_id`, at `to` in the shot and `at` in the window's logical
+/// pixels, onto `stacked` between its subsurfaces under and over it.
+fn stack_onto(
+    stacked: &mut Vec<(String, Rect)>,
+    app_id: &str,
+    at: (f64, f64),
+    to: Rect,
+    pixels_a_point: (f64, f64),
+    children: &HashMap<String, Vec<Child>>,
+    drawn: &impl Fn(&str) -> bool,
+) {
+    let (over, under): (Vec<&Child>, Vec<&Child>) = children
+        .get(app_id)
+        .map_or(&[][..], Vec::as_slice)
+        .iter()
+        .filter(|child| drawn(&child.app_id))
+        .partition(|child| child.above);
+    let child_onto = |stacked: &mut Vec<(String, Rect)>, child: &Child| {
+        let at = (at.0 + child.position.0, at.1 + child.position.1);
+        let (across, down) = pixels_a_point;
+        let left = (at.0 * across).round() as i32;
+        let top = (at.1 * down).round() as i32;
+        let to = (
+            left,
+            top,
+            ((at.0 + child.size.0) * across).round() as i32 - left,
+            ((at.1 + child.size.1) * down).round() as i32 - top,
+        );
+        stack_onto(
+            stacked,
+            &child.app_id,
+            at,
+            to,
+            pixels_a_point,
+            children,
+            drawn,
+        );
+    };
+    for child in under {
+        child_onto(stacked, child);
+    }
+    stacked.push((app_id.to_string(), to));
+    for child in over {
+        child_onto(stacked, child);
+    }
 }
 
 /// The page in a browser window capture's `frame`, read back through
@@ -194,6 +294,8 @@ pub fn monitors(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use smithay::utils::Transform;
 
     use super::*;
@@ -297,6 +399,53 @@ mod tests {
         let blue: Vec<u8> = drawn.bgra.chunks(4).map(|pixel| pixel[0]).collect();
         assert_eq!(blue, [[2, 2, 3, 3], [2, 4, 3, 3], [1, 1, 1, 1]].concat());
         assert_eq!((drawn.width, drawn.height), (4, 3));
+    }
+
+    #[test]
+    fn a_windows_subsurfaces_are_stacked_where_its_frames_draw_them() {
+        let child = |app_id: &str, position, size, above| Child {
+            app_id: app_id.into(),
+            position,
+            size,
+            above,
+        };
+        let children = HashMap::from([
+            (
+                "app".to_string(),
+                vec![
+                    child("under", (-2.0, 0.0), (4.0, 4.0), false),
+                    child("unshown", (0.0, 0.0), (5.0, 5.0), true),
+                    child("over", (5.0, 2.0), (10.0, 4.0), true),
+                ],
+            ),
+            (
+                "over".to_string(),
+                vec![
+                    child("behind", (1.0, 1.0), (2.0, 2.0), false),
+                    child("past-the-edge", (12.0, 0.0), (4.0, 4.0), true),
+                ],
+            ),
+            (
+                "unshown".to_string(),
+                vec![child("in-unshown", (0.0, 0.0), (1.0, 1.0), true)],
+            ),
+        ]);
+
+        let stacked = stack("app", (40, 20), (2.0, 2.0), &children, |app_id| {
+            app_id != "unshown"
+        });
+
+        let at = |app_id: &str, to: Rect| (app_id.to_string(), to);
+        assert_eq!(
+            stacked,
+            [
+                at("under", (-4, 0, 8, 8)),
+                at("app", (0, 0, 40, 20)),
+                at("behind", (12, 6, 4, 4)),
+                at("over", (10, 4, 20, 8)),
+                at("past-the-edge", (34, 4, 8, 8)),
+            ]
+        );
     }
 
     #[test]

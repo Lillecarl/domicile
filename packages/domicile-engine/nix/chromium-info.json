@@ -864,6 +864,14 @@
         "version": "w9QqZ-oP3GovA-zjOawYzb5yca-t47GbT-ejPa0BQmYC"
       }
     ],
+    "src/components/variations/test_data/cipd": [
+      {
+        "package": "chromium/chrome/test/data/variations/cipd",
+        "sha256": "dfcd4832b2397f4f894009834166f1ae73827855137aef5d01b141fa450c0e5c",
+        "url": "https://chrome-infra-packages.appspot.com/dl/chromium/chrome/test/data/variations/cipd/+/381IMrI5f0-JQAmDQWbxrnOCeFUTeu9dAbFB-kUMDlwC",
+        "version": "381IMrI5f0-JQAmDQWbxrnOCeFUTeu9dAbFB-kUMDlwC"
+      }
+    ],
     "src/third_party/cpython3/host": [
       {
         "package": "infra/3pp/tools/cpython3/linux-amd64",

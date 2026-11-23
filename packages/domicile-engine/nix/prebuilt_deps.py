@@ -64,7 +64,6 @@ PLATFORM = {"${platform}": "linux-amd64", "${arch}": "amd64", "${os}": "linux"}
 # Not part of building the engine: test data, Java tooling, updaters, CI tools.
 SKIP = (
     "src/base/tracing/test/data",
-    "src/components/variations/test_data/cipd",
     "src/content/test/data/gpu/meet_effects",
     "src/content/test/data/gpu/meet_effects_videos",
     "src/third_party/apache-linux",

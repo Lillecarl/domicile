@@ -61,6 +61,9 @@ let
     import("//build/args/domicile_codecs.gn")
     import("//build/args/domicile_trim.gn")
     import("//build/args/domicile_node.gn")
+    # A non-official build links with Chromium's prebuilt mold from CIPD,
+    # which no Nix build has; nixpkgs' lld links instead.
+    use_mold = false
   '';
 
   engine = chromium.browser.overrideAttrs (old: {

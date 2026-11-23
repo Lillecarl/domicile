@@ -122,6 +122,9 @@ def main() -> None:
                         "output_file": o.get("output_file", ""),
                     }
                     for o in dep["objects"]
+                    # Each object has its own condition: clang's lists Mac and Windows builds.
+                    if not o.get("condition")
+                    or gclient_eval.EvaluateCondition(o["condition"], variables)
                 ],
             }
     json.dump({"cipd": cipd, "gcs": gcs}, sys.stdout, indent=1, sort_keys=True)

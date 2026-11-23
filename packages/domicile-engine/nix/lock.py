@@ -199,6 +199,10 @@ async def main() -> int:
     old_gn = old["deps"].get("gn")
     if old_gn and old_gn["rev"] == lock["deps"]["gn"]["rev"]:
         lock["deps"]["gn"] = old_gn
+    # npm's lock lives in src: the same src rev keeps the same npm deps.
+    old_src = old["DEPS"].get("src")
+    if old_src and old_src["rev"] == lock["DEPS"]["src"]["rev"]:
+        lock["deps"]["npmHash"] = old["deps"].get("npmHash", FAKE)
 
     async def write() -> None:
         await lock_path.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n")
@@ -244,7 +248,7 @@ async def main() -> int:
             tg.start_soon(one, fod)
 
     # npm's lock lives in src, so its hash comes last.
-    if not failures:
+    if not failures and lock["deps"]["npmHash"] == FAKE:
         try:
             lock["deps"]["npmHash"] = await prefetch(Fod("npm", f"{recipe}.npmDeps)"))
             await write()

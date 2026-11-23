@@ -230,6 +230,7 @@ let
   '';
 
   siso = "third_party/siso/cipd/siso";
+  fhs = (import ./fhs.nix { inherit pkgs; }).env;
 
   # The tree `gclient sync` and `gclient runhooks` give, then `gn gen`.
   setup = ''
@@ -299,10 +300,17 @@ let
       inherit pname installPhase;
       requiredSystemFeatures = [ "reapi" ];
       buildPhase = ''
-        HOME=$TMPDIR RBE_service_no_security=true ${siso} ninja -C out/Release \
+        # In an FHS environment: steps Chromium's config keeps local run its
+        # prebuilt tools, which need /lib64's loader (fhs.nix).
+        export HOME=$TMPDIR RBE_service_no_security=true
+        ${fhs}/bin/chromium-fhs -c '${siso} ninja -C out/Release \
           -reapi_address unix://${socket} -reapi_instance "${instance}" \
           -strict_remote -local_jobs "$NIX_BUILD_CORES" -remote_jobs ${toString remoteJobs} \
-          ${toString targets}
+          ${toString targets}' || {
+          # The build directory goes with a failed build; keep Siso's own log.
+          grep -E '^[EW]' out/Release/siso.INFO | tail -100 >&2 || true
+          exit 1
+        }
 
         jq -s '{
             remote: map(select(.is_remote and (.cached | not))) | length,

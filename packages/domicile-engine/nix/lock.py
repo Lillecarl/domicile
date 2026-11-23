@@ -11,12 +11,14 @@ recipe's own fixed-output derivations, so a hash is the one the build checks.
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import anyio
 
@@ -30,6 +32,8 @@ DEPOT_TOOLS = {
     "hash": "sha256-XcnkXK9hxAdHISWT1h37Z+kUG0tnCuOoy7t6B02iU5g=",
 }
 JOBS = 6
+# curl -f: the server answered with an HTTP error, such as 404.
+CURL_HTTP_ERROR = 22
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,19 +82,56 @@ async def resolve_deps(
     return json.loads(out)
 
 
-async def prebuilt(
-    depot_tools: str, deps_file: str
-) -> dict[str, dict[str, list[dict[str, str]]]]:
-    """The CIPD and GCS deps, each with the url and sha256 a fetchurl pins."""
+async def prebuilt_in(
+    depot_tools: str, deps_file: str, *child: str
+) -> dict[str, Any]:  # prebuilt_deps.py's JSON, shaped there
+    """`child` is a recursed dep's path and the parent DEPS file's path."""
     async with anyio.NamedTemporaryFile("w", suffix=".DEPS") as f:
         await f.write(deps_file)
         await f.flush()
         rc, out, err = await run(
-            "python3", str(HERE / "prebuilt_deps.py"), depot_tools, str(f.name)
+            "python3",
+            str(HERE / "prebuilt_deps.py"),
+            depot_tools,
+            str(f.name),
+            *child,
         )
     if rc != 0:
-        raise RuntimeError(f"prebuilt_deps.py failed:\n{err}")
-    found = json.loads(out)
+        raise RuntimeError(f"prebuilt_deps.py failed on {child or 'src'}:\n{err}")
+    return json.loads(out)
+
+
+async def prebuilt(
+    depot_tools: str, deps_file: str, resolved: dict[str, dict[str, str]]
+) -> dict[str, dict[str, list[dict[str, str]]]]:
+    """The CIPD and GCS deps, each with the url and sha256 a fetchurl pins.
+
+    As gclient, it reads each recursed DEPS file at its locked revision:
+    devtools-frontend's holds its node_modules.
+    """
+    found = await prebuilt_in(depot_tools, deps_file)
+    pending = list(found["recursedeps"])
+    async with anyio.NamedTemporaryFile("w", suffix=".DEPS") as parent:
+        await parent.write(deps_file)
+        await parent.flush()
+        while pending:
+            path = pending.pop()
+            dep = resolved.get(path)
+            if dep is None:
+                continue  # not in a Linux checkout: clank, ios_internal and the like
+            rc, encoded, err = await run(
+                "curl", "-sf", f"{dep['url']}/+/{dep['rev']}/DEPS?format=TEXT"
+            )
+            if rc == CURL_HTTP_ERROR:
+                continue  # gitiles has no DEPS file in that dep
+            if rc != 0:
+                raise RuntimeError(f"DEPS fetch for {path} failed:\n{err}")
+            more = await prebuilt_in(
+                depot_tools, base64.b64decode(encoded).decode(), path, str(parent.name)
+            )
+            found["cipd"].update(more["cipd"])
+            found["gcs"].update(more["gcs"])
+            pending.extend(more["recursedeps"])
     gcs = {
         path: [
             {
@@ -182,7 +223,7 @@ async def main() -> int:
             "gn": await gn_lock(rev, deps_file),
             "npmHash": FAKE,
         },
-        **(await prebuilt(depot_tools, deps_file)),
+        **(await prebuilt(depot_tools, deps_file, resolved)),
     }
     for path, dep in resolved.items():
         entry: dict[str, str | bool] = {

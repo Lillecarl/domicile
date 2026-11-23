@@ -888,6 +888,22 @@
         "version": "version:3@3.11.9.chromium.38"
       }
     ],
+    "src/third_party/dawn/third_party/ninja": [
+      {
+        "package": "infra/3pp/tools/ninja/linux-amd64",
+        "sha256": "3f1f1cc0f69a1bcfdf67fb6c2bc7419b1dd812bb8d0e79afa9bfa8a3553b5082",
+        "url": "https://chrome-infra-packages.appspot.com/dl/infra/3pp/tools/ninja/linux-amd64/+/version:3@1.12.1.chromium.4",
+        "version": "version:3@1.12.1.chromium.4"
+      }
+    ],
+    "src/third_party/devtools-frontend/src/third_party/esbuild": [
+      {
+        "package": "infra/3pp/tools/esbuild/linux-amd64",
+        "sha256": "784005c61a32e54c03514434e95e00816ad293fdaf88bd52f7b3bc916183bd08",
+        "url": "https://chrome-infra-packages.appspot.com/dl/infra/3pp/tools/esbuild/linux-amd64/+/version:3@0.28.2.chromium.2",
+        "version": "version:3@0.28.2.chromium.2"
+      }
+    ],
     "src/third_party/gperf/cipd": [
       {
         "package": "infra/3pp/tools/gperf/linux-amd64",
@@ -968,6 +984,20 @@
         "file": "node_modules.tar.gz",
         "sha256": "7da310bf46956828c164237a912a201d21f51220dfbe60df454188dbad75889c",
         "url": "https://storage.googleapis.com/chromium-nodejs/chromium-bidi/7da310bf46956828c164237a912a201d21f51220dfbe60df454188dbad75889c"
+      }
+    ],
+    "src/third_party/devtools-frontend/src/node_modules": [
+      {
+        "file": "node_modules.tar.gz",
+        "sha256": "c67f72622077f8d20a0d641e63f95772120577b846ace3e3d434db9f13188350",
+        "url": "https://storage.googleapis.com/chromium-nodejs/devtools-frontend/c67f72622077f8d20a0d641e63f95772120577b846ace3e3d434db9f13188350"
+      }
+    ],
+    "src/third_party/devtools-frontend/src/third_party/emscripten-releases": [
+      {
+        "file": "wasm-binaries.tbz2",
+        "sha256": "e2c43068fb1985592db42183a13f85bbd9518b3747746e0003d70c7d770a0b2f",
+        "url": "https://storage.googleapis.com/webassembly/emscripten-releases-builds/linux/ade9d780ff17c88d81aa13860361743e3c1e1396/wasm-binaries.tbz2"
       }
     ],
     "src/third_party/llvm-build/Release+Asserts": [

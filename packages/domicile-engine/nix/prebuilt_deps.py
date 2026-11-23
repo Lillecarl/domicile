@@ -1,6 +1,12 @@
 """Print the CIPD and GCS deps a Linux x64 checkout gets from DEPS, as JSON.
 
-    python3 prebuilt_deps.py DEPOT_TOOLS DEPS_FILE
+    python3 prebuilt_deps.py DEPOT_TOOLS DEPS_FILE [PREFIX PARENT_DEPS_FILE]
+
+PREFIX is where a recursed DEPS file lives, such as
+src/third_party/devtools-frontend/src: its `use_relative_paths` paths join it.
+PARENT_DEPS_FILE is Chromium's DEPS: as in gclient's `get_vars`, its vars
+override the child's, so `build_with_chromium` drops each child's own
+standalone toolchain.
 
 lock.py runs it: it needs depot_tools' gclient_eval, so it runs beside
 nixpkgs' depot_tools.py rather than inside lock.py's interpreter.
@@ -83,6 +89,12 @@ SKIP = (
     "src/tools/perf/page_sets/maps_perf_test/dataset",
     "src/tools/resultdb",
     "src/tools/skia_goldctl/linux",
+    # Recursed DEPS files' standalone tools; a Chromium build uses its own.
+    "src/third_party/dawn/tools/golang/linux-amd64",
+    "src/third_party/dawn/tools/golang/linux-arm64",
+    "src/third_party/openscreen/src/third_party/llvm-build/Release+Asserts",
+    "src/third_party/webpagereplay/third_party/golang/linux/arm64",
+    "src/third_party/webpagereplay/third_party/golang/linux/x64",
 )
 
 
@@ -94,10 +106,22 @@ def platformed(name: str) -> str:
 
 def main() -> None:
     scope = gclient_eval.Exec(Path(sys.argv[2]).read_text(), filename="DEPS")
-    variables = Checkout({**dict(scope.get("vars", {})), **CHECKOUT})
+    prefix = sys.argv[3] if len(sys.argv) > 3 else ""
+    parent = (
+        dict(
+            gclient_eval.Exec(Path(sys.argv[4]).read_text(), filename="DEPS").get(
+                "vars", {}
+            )
+        )
+        if len(sys.argv) > 4
+        else {}
+    )
+    relative = bool(scope.get("use_relative_paths")) and prefix
+    variables = Checkout({**dict(scope.get("vars", {})), **parent, **CHECKOUT})
     cipd: dict[str, list[dict[str, str]]] = {}
     gcs: dict[str, dict[str, object]] = {}
-    for path, dep in scope.get("deps", {}).items():
+    for name, dep in scope.get("deps", {}).items():
+        path = f"{prefix}/{name}" if relative else name
         if not hasattr(dep, "get") or path in SKIP:
             continue
         kind = dep.get("dep_type")
@@ -126,7 +150,13 @@ def main() -> None:
                     or gclient_eval.EvaluateCondition(o["condition"], variables)
                 ],
             }
-    json.dump({"cipd": cipd, "gcs": gcs}, sys.stdout, indent=1, sort_keys=True)
+    recursedeps = [str(r) for r in scope.get("recursedeps", [])]
+    json.dump(
+        {"cipd": cipd, "gcs": gcs, "recursedeps": recursedeps},
+        sys.stdout,
+        indent=1,
+        sort_keys=True,
+    )
 
 
 if __name__ == "__main__":

@@ -172,11 +172,11 @@ let
     )
   '';
 
-  # Chromium's main.star, renamed, with one rule first: Node's GN actions
-  # (third_party/electron_node) run locally. Node's unofficial GN leaves
-  # inputs undeclared (.pdl includes, mksnapshot's component libraries) and
-  # passes absolute paths, so they fail on a worker. Node's compiles match no
-  # action rule and stay remote.
+  # Chromium's main.star, renamed, with one rule first: Node's and
+  # Electron's GN actions (third_party/electron_node, electron) run locally.
+  # Their GN leaves inputs undeclared (.pdl includes, mksnapshot's component
+  # libraries) and passes absolute paths, so they fail on a worker. Their
+  # compiles match no action rule and stay remote.
   mainStar = pkgs.writeText "main.star" ''
     load("@builtin//encoding.star", "json")
     load("@builtin//struct.star", "module")
@@ -187,7 +187,7 @@ let
         step_config = json.decode(chromium.step_config)
         step_config["rules"].insert(0, {
             "name": "domicile/electron_node",
-            "action": "__third_party_electron_node_.*",
+            "action": "__(third_party_electron_node|electron)_.*",
             "remote": False,
         })
         return module(
@@ -306,6 +306,8 @@ let
       '';
 
       nativeBuildInputs = [
+        # Node's generate_config_gypi.py runs `gn args` from PATH.
+        gn
         pkgs.pkg-config
         pkgs.unzip
         pkgs.zstd

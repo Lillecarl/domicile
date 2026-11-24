@@ -57,6 +57,7 @@ const listed = (
   id,
   isApp: false,
   isCaptured: false,
+  isDiscarded: false,
   isHidden: false,
   isPrivate: false,
   menu: undefined,

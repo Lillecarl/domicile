@@ -355,6 +355,7 @@ export class FakeDomicileHost {
           id: this.#browsersOpened.toString(),
           isApp,
           isCaptured: false,
+          isDiscarded: false,
           isHidden,
           isPrivate,
           menu: null,

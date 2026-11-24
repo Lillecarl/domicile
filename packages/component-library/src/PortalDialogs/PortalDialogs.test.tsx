@@ -430,6 +430,7 @@ const browserWindow = (id: string, title: string) => ({
   id,
   isApp: false,
   isCaptured: false,
+  isDiscarded: false,
   isHidden: false,
   isPrivate: false,
   menu: null,

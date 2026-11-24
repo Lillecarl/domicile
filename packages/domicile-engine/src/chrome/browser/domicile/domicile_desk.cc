@@ -17,6 +17,7 @@
 #include "chrome/browser/domicile/domicile_device_chooser.h"
 #include "chrome/browser/domicile/domicile_devtools.h"
 #include "chrome/browser/domicile/domicile_electron_socket.h"
+#include "chrome/browser/domicile/domicile_extension_menus.h"
 #include "chrome/browser/domicile/domicile_external_apps.h"
 #include "chrome/browser/domicile/domicile_permissions.h"
 #include "chrome/browser/domicile/domicile_printing.h"
@@ -120,6 +121,8 @@ void StartDesk(Profile* profile) {
     // The config's spell checking, and the context menu's "Add to
     // dictionary".
     StartSpellcheck();
+    // The extension items of the shell's context menus.
+    UseChromeForGuestExtensionMenus();
     // Camera and microphone requests, asked through the shell's prompt.
     UseChromeForGuestMedia();
     // WebHID, WebUSB and Web Serial choosers, drawn by the shell.

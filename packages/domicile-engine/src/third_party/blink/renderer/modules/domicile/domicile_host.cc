@@ -1250,6 +1250,50 @@ void DomicileHost::activateExtension(ScriptState*,
   }
 }
 
+void DomicileHost::runExtensionCommand(ScriptState*,
+                                       const String& id,
+                                       const String& name,
+                                       ExceptionState& exception_state) {
+  if (id.empty() || name.empty()) {
+    exception_state.ThrowTypeError(
+        "id and name must be an extension's id and its command's name");
+    return;
+  }
+  if (Ready(exception_state)) {
+    tray_->RunCommand(id, name);
+  }
+}
+
+ScriptPromise<IDLString> DomicileHost::extensionMenu(
+    ScriptState* script_state,
+    const String& id,
+    ExceptionState& exception_state) {
+  if (id.empty()) {
+    exception_state.ThrowTypeError("id must be a non-empty extension id");
+    return EmptyPromise();
+  }
+  if (!Ready(exception_state)) {
+    return EmptyPromise();
+  }
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLString>>(
+      script_state, exception_state.GetContext());
+  auto promise = resolver->Promise();
+  tray_->ActionMenu(
+      id, BindOnce(
+              [](ScriptPromiseResolver<IDLString>* resolver,
+                 const String& menu) { resolver->Resolve(menu); },
+              WrapPersistent(resolver)));
+  return promise;
+}
+
+void DomicileHost::runExtensionMenuItem(ScriptState*,
+                                        int32_t item,
+                                        ExceptionState& exception_state) {
+  if (Ready(exception_state)) {
+    tray_->RunActionMenuItem(item);
+  }
+}
+
 // Over the tray's pipe, as activateExtension().
 void DomicileHost::setExtensionsProfile(ScriptState*,
                                         const String& profile,
@@ -2133,6 +2177,13 @@ void DomicileHost::ExtensionsChanged(
   extensions_ =
       MakeGarbageCollected<FrozenArray<DomicileExtension>>(std::move(tray));
   DispatchEvent(*Event::Create(domicile_event_names::Extensionschanged()));
+}
+
+// Held as it came: the SDK parses it, as it does a window's menu.
+void DomicileHost::CommandsChanged(const String& commands) {
+  extension_commands_ = commands;
+  DispatchEvent(
+      *Event::Create(domicile_event_names::Extensioncommandschanged()));
 }
 
 // Every installed extension, wholesale, as `extensions` is.

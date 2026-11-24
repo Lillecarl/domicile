@@ -1086,6 +1086,11 @@ declare global {
     /** The dictionary's suggestions for {@link misspelledWord}, best first. */
     readonly spellingSuggestions: readonly string[];
     /**
+     * The items extensions add to this menu, as JSON: read it with `appMenu`
+     * from `@domicile-desktop/sdk/app-menu`. `[]` for none.
+     */
+    readonly extensionItems: string;
+    /**
      * Do one of {@link WEBVIEW_CONTEXT_MENU_ACTIONS} for this menu. Throws a
      * `TypeError` for an unknown action, a `NotSupportedError` for one this
      * menu does not offer (a link action with no link), and an
@@ -1099,6 +1104,12 @@ declare global {
      * replaced this one.
      */
     replaceMisspelling(word: string): void;
+    /**
+     * Run entry `item`, the `id` of one of {@link extensionItems}, on the
+     * page. One not in this menu does nothing. Throws an `InvalidStateError`
+     * once a newer menu has replaced this one.
+     */
+    runExtensionItem(item: number): void;
   }
 
   /**

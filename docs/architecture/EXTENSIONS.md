@@ -282,7 +282,8 @@ interface DomicileExtension {
   - `extensionCommands` has every extension with commands, with an action or
     without, each with the keys `CommandService` assigned at install
     (`CommandsOf` in `domicile_extension_menus.cc`). It is JSON, as a window's
-    `menu` is, so it needs no interface per row.
+    `menu` is, so it needs no interface per row. `CommandService` keeps Chrome's
+    own accelerators from extensions, and a patch lifts that: a desk has none.
   - `runExtensionCommand` does what `ExtensionKeybindingRegistry` does for a
     key: it grants `activeTab` on the active tab, then sends
     `commands.onCommand` with that tab. The page gets its keys first

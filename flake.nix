@@ -694,7 +694,25 @@
       # The Rust binaries. Not an output: `domicile-compositor` is only started
       # by `domicile`, and `domicile` must be installed in `domicilePackage`'s
       # layout to find its siblings.
-      domicileBinaries = pkgs.rustPlatform.buildRustPackage {
+      #
+      # Built incrementally outside the sandbox, on this fork alone.
+      domicileBinaries = (import ./nix/local-build.nix { inherit pkgs; }).incrementalRust {
+        name = "cargo";
+        binaries = [
+          "domicile-compositor"
+          "domicile-recorder"
+          "domicile"
+          "domicile-open-url"
+          "domicile-xdg-open"
+          "domicile-xdg-email"
+          "domicile-history"
+          "domicile-settings"
+          "domicile-app-host"
+          "domicile-miracast"
+        ];
+      } sandboxedBinaries;
+
+      sandboxedBinaries = pkgs.rustPlatform.buildRustPackage {
         pname = "domicile-binaries";
         version = "0.0.0";
         # Include everything cargo can reach, not only `.rs` files:
@@ -783,7 +801,7 @@
 
       # `domicile-test-client`, for the VM tests that need a window which
       # prints every event it gets. Not installed by any package.
-      testClient = domicileBinaries.overrideAttrs {
+      testClient = sandboxedBinaries.overrideAttrs {
         pname = "domicile-test-client";
         cargoBuildFlags = [ "-p" "domicile-compositor" "--bin" "domicile-test-client" ];
         postFixup = "";

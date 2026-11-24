@@ -232,7 +232,7 @@ impl DomicileCompositor {
             return false;
         };
         let children = self.children_of(surface);
-        self.casting.children(&app_id, children.clone());
+        self.cast_children(&app_id, children.clone());
         self.engine
             .as_mut()
             .is_some_and(|session| session.set_children(&app_id, children))

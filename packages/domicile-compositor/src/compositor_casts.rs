@@ -15,7 +15,7 @@ use tracing::{debug, info, warn};
 
 use crate::buffer_transform::Sampled;
 use crate::client_damage::Region;
-use crate::engine_session::EngineSession;
+use crate::engine_session::{Child, EngineSession};
 use crate::surface_commit::committed_buffer;
 use crate::{casting, engine};
 use crate::{CalloopData, DomicileCompositor, Gpu};
@@ -189,6 +189,15 @@ impl DomicileCompositor {
             renderer,
             Instant::now(),
         );
+        self.arm_the_cast_deadline(due);
+    }
+
+    /// Hands a surface's subsurfaces to the casts of its window.
+    pub fn cast_children(&mut self, app_id: &str, children: Vec<Child>) {
+        let renderer = self.gpu.as_mut().map(Gpu::renderer);
+        let due = self
+            .casting
+            .children(app_id, children, renderer, Instant::now());
         self.arm_the_cast_deadline(due);
     }
 

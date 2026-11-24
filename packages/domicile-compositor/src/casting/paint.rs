@@ -5,6 +5,7 @@ use smithay::backend::renderer::gles::GlesRenderer;
 
 use crate::casting::gpu::{self, FillError, Layer, Snapshot};
 use crate::casting::negotiation::Pixel;
+use crate::casting::pacing::within;
 use crate::casting::shm_copy::{copy, Client};
 
 /// Draws `layers` over `target`, a `pixel` buffer with rows `stride` bytes
@@ -13,6 +14,9 @@ use crate::casting::shm_copy::{copy, Client};
 /// With a layer on the GPU, the GPU draws them all, scaling each, and the
 /// frame is read back in one go: reading back each source at its own size
 /// and scaling it on the CPU took longer than a frame on a desk near 4K.
+///
+/// The GPU also draws layers that overlap, which the CPU would replace rather
+/// than blend. Without a `renderer` the CPU does.
 pub fn paint(
     layers: &[Layer],
     target: &mut [u8],
@@ -20,10 +24,10 @@ pub fn paint(
     pixel: Pixel,
     renderer: Option<&mut GlesRenderer>,
 ) -> Result<(), FillError> {
-    if layers
+    let on_the_gpu = layers
         .iter()
-        .any(|layer| matches!(layer.snapshot, Snapshot::Texture(_)))
-    {
+        .any(|layer| matches!(layer.snapshot, Snapshot::Texture(_)));
+    if on_the_gpu || (renderer.is_some() && overlap(layers)) {
         let size = layers.iter().fold((0, 0), |(width, height), layer| {
             (
                 width.max((layer.to.0 + layer.to.2) as u32),
@@ -63,6 +67,15 @@ pub fn paint(
         );
     }
     Ok(())
+}
+
+/// Whether any layer is drawn over another.
+fn overlap(layers: &[Layer]) -> bool {
+    layers.iter().enumerate().any(|(at, layer)| {
+        layers[..at]
+            .iter()
+            .any(|under| within(layer.to, under.to).is_some())
+    })
 }
 
 #[cfg(test)]
@@ -171,6 +184,31 @@ mod tests {
         assert!(blue(&target)[2..]
             .iter()
             .all(|&blue| blue == 1 || blue == 2));
+    }
+
+    /// A subsurface's clear pixels show the window under them.
+    #[test]
+    fn layers_over_each_other_are_blended() {
+        let (mut renderer, _) = headless_renderer().expect("EGL: llvmpipe will do");
+        let pixels = |bytes: [u8; 8]| Snapshot::Pixels {
+            bytes: bytes.to_vec(),
+            stride: 8,
+            alpha: true,
+            size: (2, 1),
+        };
+        let (window, over) = (pixels(SIDE_BY_SIDE), pixels([0, 0, 0, 0, 9, 0, 0, 255]));
+        let whole = (0, 0, 2, 1);
+        let layers = [&window, &over].map(|snapshot| Layer {
+            snapshot,
+            from: whole,
+            to: whole,
+            transform: Transform::Normal,
+        });
+        let mut target = [0; 8];
+
+        paint(&layers, &mut target, 8, Pixel::Bgra, Some(&mut renderer)).expect("painted");
+
+        assert_eq!(blue(&target), [1, 9]);
     }
 
     /// Each pixel's blue byte.

@@ -37,7 +37,7 @@ FILTER='PinchMetadataTest.*:ScrollMetadataTest.*:FrameSinkBrokerTest.*:WindowDif
 # WebViewUrl 5, ShellFetch 22, BrowserWindowCaptureTarget 3, BrowserWindowListing 3, ShellWindowWait 4, ShellSwap 12,
 # DeskCursorThemeSource 3, XCursorTheme 5, XCursorThemeDirectory 4,
 # SyncedFrame 7, RenderProcess 3, ShellDeath 5, ProbeWait 3, ScreenCapture 7,
-# ScreenChoice 3, WebViewPartition 5, WillNavigate 4, DeskActivity 2,
+# ScreenChoice 3, WebViewPartition 5, WillNavigate 4, DeskActivity 5,
 # DeskPointer 5, PointerWarp 10, PointerConfinementBoxes 4, PageMatches 8, ForceDark 2, HiddenFromCaptures 7,
 # LocaleFallback 2, DomicileLcdTextActivation 2, Rtkit 1, DeskGestures 14,
 # NativeGestureSequence 3, EdgeSwipe 10, DeskPointerHiding 2, PointerHiding 8,
@@ -51,6 +51,8 @@ FILTER='PinchMetadataTest.*:ScrollMetadataTest.*:FrameSinkBrokerTest.*:WindowDif
 # DomicileMonitorTwinActivation 1, CursorDisplay 7, DomicileHiddenPageTiles 4,
 # ChannelDisconnectOrder 2, BrokerSocket 3.
 #
+# 1027, and it was 1025 — an input's kind and the throttle of keys' own reports
+# are two more DeskActivity cases. Before that
 # 1025, and it was 1020 — a buffer viz read on several GPU streams is one
 # more FrameSinkBroker case and one more SurfaceHolds one, and the broker
 # connection closing on exec and never blocking are three BrokerSocket cases.
@@ -368,7 +370,7 @@ FILTER='PinchMetadataTest.*:ScrollMetadataTest.*:FrameSinkBrokerTest.*:WindowDif
 # so the floor sat 12 below the truth and a whole suite could have stopped
 # linking with room to spare. That is the failure this exists to catch, so the
 # number is the real one.
-FLOOR=1025
+FLOOR=1027
 
 # From inside the out directory, because this is a component build and the
 # binary loads its own .so files from beside it.

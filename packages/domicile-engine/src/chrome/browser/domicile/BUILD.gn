@@ -150,7 +150,8 @@ source_set("domicile") {
     # Marks the renderer an Electron page with Node.js starts.
     "//components/domicile:electron_node_switches",
     "//components/domicile:common",
-    # Somebody at the desk, from ui::UserActivityDetector in //ui/base.
+    # Somebody at the desk, from ui::UserActivityDetector in //ui/base and
+    # ui::PlatformEventSource in //ui/events/platform.
     "//components/domicile:cursor_display",
     "//components/domicile:desk_activity",
     # The desk's downloads, for the shell's Downloads pipe.
@@ -309,6 +310,8 @@ source_set("domicile") {
     "//ui/display",
     # The pointer moves `StartDeskPointer` reports.
     "//ui/events",
+    "//ui/events:events_base",
+    "//ui/events/platform",
     # Names the device an input came from, for the idle clock's log.
     "//ui/events/devices",
     # `gfx::NativeView`, which `display::Screen::GetDisplayNearestView` takes.

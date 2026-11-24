@@ -14,8 +14,24 @@
 #include "base/functional/callback.h"
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
+#include "base/time/time.h"
 
 namespace domicile {
+
+// What an input came from.
+enum class ActivityKind {
+  // A keyboard.
+  kKey,
+  // A mouse, touchpad or tablet: motion, buttons, wheels and gestures.
+  kPointer,
+  // A touch screen.
+  kTouch,
+  // None of these, like activity reported with no event.
+  kOther,
+};
+
+// `kind` as the control channel names it.
+std::string_view ActivityKindName(ActivityKind kind);
 
 // Somebody using the desk, for the compositor's idle clock.
 //
@@ -41,8 +57,9 @@ class DeskActivity {
   DeskActivity& operator=(const DeskActivity&) = delete;
   ~DeskActivity();
 
-  // Hears what the input was, as `DescribeInput` names it.
-  using Listener = base::RepeatingCallback<void(const std::string& input)>;
+  // Hears what the input was, as `DescribeInput` names it, and its kind.
+  using Listener =
+      base::RepeatingCallback<void(const std::string& input, ActivityKind kind)>;
 
   // Calls `heard` on each later `Heard`.
   ListenerId AddListener(Listener heard);
@@ -50,12 +67,22 @@ class DeskActivity {
 
   // Somebody used the keyboard, the pointer or a touchpad. `input` names
   // what, for the compositor's log.
-  void Heard(const std::string& input);
+  void Heard(const std::string& input, ActivityKind kind);
 
  private:
   base::Lock lock_;
   ListenerId next_id_ GUARDED_BY(lock_) = 1;
   std::vector<std::pair<ListenerId, Listener>> listeners_ GUARDED_BY(lock_);
+};
+
+// Limits reports to one each 200 ms.
+class ActivityThrottle {
+ public:
+  // Whether an input at `now` is to be reported. Counts it as reported if so.
+  bool ShouldReport(base::TimeTicks now);
+
+ private:
+  base::TimeTicks last_;
 };
 
 // Names an input event for the compositor's log: the event's own name, and

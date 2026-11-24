@@ -6,6 +6,7 @@
 #include <string>
 
 #include "base/functional/bind.h"
+#include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace domicile {
@@ -17,21 +18,26 @@ TEST(DeskActivityTest, EveryListenerHearsSomebodyAtTheDesk) {
   int left = 0;
   int right = 0;
   std::string named;
+  ActivityKind of = ActivityKind::kOther;
   activity.AddListener(base::BindRepeating(
-      [](int* heard, std::string* named, const std::string& input) {
+      [](int* heard, std::string* named, ActivityKind* of,
+         const std::string& input, ActivityKind kind) {
         ++*heard;
         *named = input;
+        *of = kind;
       },
-      base::Unretained(&left), base::Unretained(&named)));
+      base::Unretained(&left), base::Unretained(&named),
+      base::Unretained(&of)));
   activity.AddListener(base::BindRepeating(
-      [](int* heard, const std::string&) { ++*heard; },
+      [](int* heard, const std::string&, ActivityKind) { ++*heard; },
       base::Unretained(&right)));
 
-  activity.Heard("KeyPressed");
+  activity.Heard("KeyPressed", ActivityKind::kKey);
 
   EXPECT_EQ(left, 1);
   EXPECT_EQ(right, 1);
   EXPECT_EQ(named, "KeyPressed");
+  EXPECT_EQ(of, ActivityKind::kKey);
 }
 
 // A channel that closed is not told, or it would run on a deleted page's
@@ -39,12 +45,13 @@ TEST(DeskActivityTest, EveryListenerHearsSomebodyAtTheDesk) {
 TEST(DeskActivityTest, ARemovedListenerHearsNothing) {
   DeskActivity activity;
   int heard = 0;
-  const DeskActivity::ListenerId listener = activity.AddListener(
-      base::BindRepeating([](int* count, const std::string&) { ++*count; },
-                          base::Unretained(&heard)));
+  const DeskActivity::ListenerId listener =
+      activity.AddListener(base::BindRepeating(
+          [](int* count, const std::string&, ActivityKind) { ++*count; },
+          base::Unretained(&heard)));
 
   activity.RemoveListener(listener);
-  activity.Heard("KeyPressed");
+  activity.Heard("KeyPressed", ActivityKind::kKey);
 
   EXPECT_EQ(heard, 0);
 }
@@ -55,6 +62,26 @@ TEST(DeskActivityTest, AnInputIsNamedWithTheDeviceItCameFrom) {
   EXPECT_EQ(DescribeInput("MouseMoved", "Logitech USB Receiver"),
             "MouseMoved from Logitech USB Receiver");
   EXPECT_EQ(DescribeInput("KeyPressed", ""), "KeyPressed");
+}
+
+// The compositor parses these names.
+TEST(DeskActivityTest, AKindIsNamedAsTheCompositorReadsIt) {
+  EXPECT_EQ(ActivityKindName(ActivityKind::kKey), "key");
+  EXPECT_EQ(ActivityKindName(ActivityKind::kPointer), "pointer");
+  EXPECT_EQ(ActivityKindName(ActivityKind::kTouch), "touch");
+  EXPECT_EQ(ActivityKindName(ActivityKind::kOther), "other");
+}
+
+// A held key repeats, and the compositor needs only to hear of it now and
+// then.
+TEST(DeskActivityTest, InputIsReportedAtMostEvery200Milliseconds) {
+  ActivityThrottle throttle;
+  const base::TimeTicks start = base::TimeTicks() + base::Seconds(1);
+
+  EXPECT_TRUE(throttle.ShouldReport(start));
+  EXPECT_FALSE(throttle.ShouldReport(start + base::Milliseconds(199)));
+  EXPECT_TRUE(throttle.ShouldReport(start + base::Milliseconds(200)));
+  EXPECT_FALSE(throttle.ShouldReport(start + base::Milliseconds(399)));
 }
 
 }  // namespace

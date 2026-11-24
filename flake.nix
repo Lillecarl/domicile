@@ -179,23 +179,40 @@
           let file = ./packages/domicile-engine/engine-official.nix;
           in if builtins.pathExists file then import file else null;
       };
-      domicileEngine = pkgs.stdenv.mkDerivation {
-        pname = "domicile-engine";
+      localBuild = import ./nix/local-build.nix { inherit pkgs; };
+      # The published engine, which runs none of this fork's engine changes.
+      publishedEngine = engineOf {
         version = builtins.substring 0 7 engineRelease.commit;
-
         src = pkgs.fetchurl { inherit (engineRelease) url hash; };
+        # The tarball holds one directory: the engine, with `chrome` directly
+        # inside. `DOMICILE_ENGINE` and `libexec/domicile/engine` point at it.
+        unpack = ''
+          mkdir -p unpacked
+          tar --use-compress-program=unzstd -xf "$src" -C unpacked
+          cd unpacked/*
+        '';
+      };
+      # This tree's engine, built incrementally outside the sandbox.
+      domicileEngine = engineOf {
+        version = "local";
+        src = localBuild.engineFiles;
+        unpack = ''
+          cp -r --no-preserve=ownership "$src" unpacked
+          chmod -R u+w unpacked
+          cd unpacked
+        '';
+      };
+      engineOf = { version, src, unpack }: pkgs.stdenv.mkDerivation {
+        pname = "domicile-engine";
+        inherit version src;
 
         nativeBuildInputs = [ pkgs.autoPatchelfHook pkgs.zstd pkgs.makeWrapper ];
         buildInputs = engineRuntimeLibs;
         dontStrip = true;
 
-        # The tarball holds one directory: the engine, with `chrome` directly
-        # inside. `DOMICILE_ENGINE` and `libexec/domicile/engine` point at it.
         unpackPhase = ''
           runHook preUnpack
-          mkdir -p unpacked
-          tar --use-compress-program=unzstd -xf "$src" -C unpacked
-          cd unpacked/*
+          ${unpack}
           runHook postUnpack
         '';
 
@@ -696,7 +713,7 @@
       # layout to find its siblings.
       #
       # Built incrementally outside the sandbox, on this fork alone.
-      domicileBinaries = (import ./nix/local-build.nix { inherit pkgs; }).incrementalRust {
+      domicileBinaries = localBuild.incrementalRust {
         name = "cargo";
         binaries = [
           "domicile-compositor"
@@ -1013,6 +1030,7 @@
         domicile = domicilePackage;
         # The engine alone, for setting `DOMICILE_ENGINE` yourself.
         engine = domicileEngine;
+        published-engine = publishedEngine;
         # The shell builder on its own, for `DOMICILE_BUILDER`.
         builder = domicileBuilder;
         # Domicile running examples/dioxus-shell, a shell written in Rust.

@@ -133,6 +133,18 @@ pub fn sampled(shown: &Shown) -> Sampled {
     }
 }
 
+/// `app_id` and its subsurfaces, nested ones too.
+pub fn surfaces(app_id: &str, children: &HashMap<String, Vec<Child>>) -> Vec<String> {
+    let mut found = vec![app_id.to_string()];
+    let mut next = 0;
+    while let Some(surface) = found.get(next) {
+        let own = children.get(surface).map_or(&[][..], Vec::as_slice);
+        found.extend(own.iter().map(|child| child.app_id.clone()));
+        next += 1;
+    }
+    found
+}
+
 /// Where each surface of window `app_id` goes in a shot of it, bottom first:
 /// the window over all of the shot, `size` pixels big with `pixels_a_point`
 /// of them a logical pixel, and its subsurfaces, nested ones too, as

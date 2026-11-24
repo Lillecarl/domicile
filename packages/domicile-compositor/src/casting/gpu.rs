@@ -18,7 +18,9 @@ use smithay::wayland::dmabuf::get_dmabuf;
 use smithay::wayland::shm::with_buffer_contents;
 use thiserror::Error;
 
-use crate::buffer_transform::{crop_in_buffer, upright_size, Sampled};
+#[cfg(test)]
+use crate::buffer_transform::Sampled;
+use crate::buffer_transform::{crop_in_buffer, upright_size};
 use crate::casting::cursor::{Plan, Sprite};
 use crate::casting::pacing::{within, Rect};
 
@@ -47,6 +49,7 @@ pub struct Layer<'a> {
 
 impl<'a> Layer<'a> {
     /// `sampled` of `snapshot`, upright at the stream's corner.
+    #[cfg(test)]
     pub fn upright(snapshot: &'a Snapshot, sampled: Sampled) -> Self {
         let (width, height) = sampled.upright_size();
         Self {

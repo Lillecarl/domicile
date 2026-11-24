@@ -614,6 +614,13 @@ pub struct IdleConfig {
     /// refused.
     #[schemars(range(min = 1))]
     pub lock_after_seconds: Option<u64>,
+    /// Whether the pointer is ignored as a sign of somebody at the desktop.
+    ///
+    /// Pointer motion, buttons, wheels and touchpad gestures then hold off
+    /// neither timeout and light no dark screen. Keys, touch screens, unlock
+    /// attempts and `domicile wake-displays` still do. For a mouse that
+    /// reports motion by itself.
+    pub ignore_pointer: bool,
 }
 
 impl IdleConfig {

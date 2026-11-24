@@ -24,7 +24,7 @@
 use std::time::{Duration, Instant};
 
 use domicile_host::system::DisplayPower;
-use domicile_protocol::HostMessage;
+use domicile_protocol::{ActivityKind, HostMessage};
 
 use crate::client_requests::ClientRequest;
 use crate::engine::{Connector, Display};
@@ -66,6 +66,8 @@ pub struct Idle<S> {
     blank_after: Option<Duration>,
     /// `None` for a desktop that locks only when its shell asks.
     lock_after: Option<Duration>,
+    /// Whether the pointer is no sign of somebody here.
+    ignore_pointer: bool,
     /// When [`Idle::lock_due`] fired, if it has since the last input.
     locked_at: Option<Instant>,
     /// The last input, or creation time if there has been none.
@@ -86,6 +88,7 @@ impl<S: StillThere + PartialEq> Idle<S> {
         Idle {
             blank_after: idle.blank_after(),
             lock_after: idle.lock_after(),
+            ignore_pointer: idle.ignore_pointer,
             locked_at: None,
             stirred_at: now,
             stage: Stage::Lit,
@@ -98,6 +101,11 @@ impl<S: StillThere + PartialEq> Idle<S> {
     /// timer. See [`Idle::next_check`].
     pub fn times_out(&self) -> bool {
         self.blank_after.is_some() || self.lock_after.is_some()
+    }
+
+    /// Whether the pointer does not count as input. See [`somebody_is_here`].
+    pub fn ignores_pointer(&self) -> bool {
+        self.ignore_pointer
     }
 
     /// How long the desk has gone without input as of `now`, or `None` while
@@ -368,16 +376,27 @@ fn holds<S: StillThere + PartialEq>(inhibitor: &S, on_the_desktop: &[S]) -> bool
 /// move: see [`ClientRequest::PointerMotion`]'s `moved`. Requests the shell makes on its
 /// own behalf do not count either, or a repainting clock would keep the
 /// screens on.
-pub fn somebody_is_here(request: &ClientRequest) -> Option<&'static str> {
+///
+/// With `ignore_pointer` (`idle.ignore_pointer`) the pointer does not count
+/// either. Nor does browser input that is not known to be a key or a touch, as
+/// from an engine that names no kind: the pointer may have made it.
+pub fn somebody_is_here(request: &ClientRequest, ignore_pointer: bool) -> Option<&'static str> {
+    let pointer = |named| (!ignore_pointer).then_some(named);
     match request {
         ClientRequest::Key { .. } => Some("a key"),
-        // The browser's own input, which names no device.
-        ClientRequest::Activity { .. } => Some("input the browser saw"),
-        ClientRequest::PointerButton { .. } => Some("a click"),
-        ClientRequest::PointerAxis { .. } => Some("a scroll"),
-        ClientRequest::PointerPinch { .. } => Some("a pinch"),
-        ClientRequest::PointerSwipe { .. } => Some("a swipe"),
-        ClientRequest::PointerHold { .. } => Some("a hold"),
+        // The browser's own input.
+        ClientRequest::Activity { kind, .. } => {
+            const NAMED: &str = "input the browser saw";
+            match kind {
+                Some(ActivityKind::Key | ActivityKind::Touch) => Some(NAMED),
+                Some(ActivityKind::Pointer | ActivityKind::Other) | None => pointer(NAMED),
+            }
+        }
+        ClientRequest::PointerButton { .. } => pointer("a click"),
+        ClientRequest::PointerAxis { .. } => pointer("a scroll"),
+        ClientRequest::PointerPinch { .. } => pointer("a pinch"),
+        ClientRequest::PointerSwipe { .. } => pointer("a swipe"),
+        ClientRequest::PointerHold { .. } => pointer("a hold"),
         ClientRequest::Touch { .. } => Some("a touch"),
         ClientRequest::PointerLeave
         | ClientRequest::GestureOwnerGone { .. }
@@ -433,9 +452,10 @@ pub fn somebody_is_here(request: &ClientRequest) -> Option<&'static str> {
         | ClientRequest::IdleWatched => None,
         // The browser restates a still pointer after a window changes, and
         // turning the screens off changes them.
-        ClientRequest::PointerMotion { moved, .. } => moved.then_some("the pointer moving"),
+        ClientRequest::PointerMotion { moved: false, .. } => None,
+        ClientRequest::PointerMotion { moved: true, .. } => pointer("the pointer moving"),
         // Sent only for a hand on the mouse, never for a still pointer.
-        ClientRequest::PointerRelative { .. } => Some("the pointer moving"),
+        ClientRequest::PointerRelative { .. } => pointer("the pointer moving"),
         // The page answering a game's ask, not a hand.
         ClientRequest::PointerConstrained { .. } => None,
         // The lock screen's own field forwards no `Key`s, so an unlock attempt
@@ -505,7 +525,10 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use domicile_host::system::DisplayPower;
-    use domicile_protocol::{HostMessage, PortalAnswer, TrayAction};
+    use domicile_protocol::pinch::Pinch;
+    use domicile_protocol::swipe::{Hold, Swipe};
+    use domicile_protocol::touch::Touch;
+    use domicile_protocol::{ActivityKind, HostMessage, Passphrase, PortalAnswer, TrayAction};
 
     use super::{announced, darkened, somebody_is_here, Blanking, Idle, StillThere};
     use crate::client_requests::ClientRequest;
@@ -554,7 +577,7 @@ mod tests {
         Idle::after(
             &IdleConfig {
                 blank_after_seconds: Some(AFTER.as_secs()),
-                lock_after_seconds: None,
+                ..IdleConfig::default()
             },
             start,
         )
@@ -571,6 +594,7 @@ mod tests {
             &IdleConfig {
                 blank_after_seconds: blank_after.map(|after| after.as_secs()),
                 lock_after_seconds: Some(lock_after.as_secs()),
+                ..IdleConfig::default()
             },
             start,
         )
@@ -1202,6 +1226,7 @@ mod tests {
                 "input the browser saw",
                 ClientRequest::Activity {
                     input: Some("KeyPressed".into()),
+                    kind: None,
                 },
             ),
             (
@@ -1219,11 +1244,141 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                somebody_is_here(&request),
+                somebody_is_here(&request, false),
                 Some(named),
                 "{what} is somebody at the desk"
             );
         }
+    }
+
+    /// What the browser saw, with a log string that names another kind, which
+    /// must decide nothing.
+    fn browser_saw(kind: Option<ActivityKind>) -> ClientRequest {
+        ClientRequest::Activity {
+            input: Some(
+                if kind == Some(ActivityKind::Key) {
+                    "MouseMoved from Logitech USB Receiver"
+                } else {
+                    "KeyPressed"
+                }
+                .into(),
+            ),
+            kind,
+        }
+    }
+
+    #[test]
+    fn a_desk_that_ignores_its_pointer_counts_no_pointer_input() {
+        for request in [
+            ClientRequest::PointerButton {
+                button: 272,
+                pressed: true,
+            },
+            ClientRequest::PointerAxis {
+                dx: 0.0,
+                dy: 1.0,
+                v120_x: 0,
+                v120_y: 120,
+                source: domicile_protocol::PointerAxisSource::Wheel,
+                stop_x: false,
+                stop_y: false,
+            },
+            ClientRequest::PointerPinch {
+                owner: 1,
+                app_id: "app-1".into(),
+                pinch: Pinch::Update {
+                    device: 1,
+                    time: 1,
+                    dx: 0.0,
+                    dy: 0.0,
+                    scale: 1.1,
+                    rotation: 0.0,
+                },
+            },
+            ClientRequest::PointerSwipe {
+                owner: 1,
+                swipe: Swipe::Update { dx: 1.0, dy: 0.0 },
+            },
+            ClientRequest::PointerHold {
+                owner: 1,
+                hold: Hold::End { canceled: false },
+            },
+            ClientRequest::PointerMotion {
+                app_id: "app-1".into(),
+                x: 4.0,
+                y: 8.0,
+                moved: true,
+            },
+            ClientRequest::PointerRelative {
+                app_id: "app-1".into(),
+                dx: 2.0,
+                dy: 1.0,
+                dx_unaccel: 1.0,
+                dy_unaccel: 0.5,
+            },
+            browser_saw(Some(ActivityKind::Pointer)),
+            browser_saw(Some(ActivityKind::Other)),
+            // An engine that names no kind: the pointer may have made it.
+            browser_saw(None),
+        ] {
+            assert_eq!(somebody_is_here(&request, true), None, "{request:?}");
+            assert!(
+                somebody_is_here(&request, false).is_some(),
+                "{request:?} counts where the pointer does"
+            );
+        }
+    }
+
+    #[test]
+    fn a_desk_that_ignores_its_pointer_counts_everything_else() {
+        for request in [
+            ClientRequest::Key {
+                keycode: 30,
+                pressed: true,
+            },
+            ClientRequest::Touch {
+                owner: 1,
+                app_id: "app-1".into(),
+                touch: Touch::Down {
+                    id: 1,
+                    time: 1,
+                    x: 4.0,
+                    y: 8.0,
+                },
+            },
+            browser_saw(Some(ActivityKind::Key)),
+            browser_saw(Some(ActivityKind::Touch)),
+            // The way back in whichever engine runs.
+            ClientRequest::Unlock {
+                passphrase: Passphrase::from("friend"),
+            },
+            ClientRequest::PowerDisplays {
+                power: DisplayPower::Awake,
+                display: None,
+            },
+        ] {
+            assert!(somebody_is_here(&request, true).is_some(), "{request:?}");
+            assert_eq!(
+                somebody_is_here(&request, true),
+                somebody_is_here(&request, false)
+            );
+        }
+    }
+
+    #[test]
+    fn a_reloaded_clock_takes_up_whether_the_pointer_counts() {
+        let start = Instant::now();
+        let mut counting = desk(start);
+        assert!(!counting.ignores_pointer());
+        let ignoring = Idle::after(
+            &IdleConfig {
+                ignore_pointer: true,
+                ..IdleConfig::default()
+            },
+            start,
+        )
+        .takes_over_from(&mut counting);
+        assert!(ignoring.ignores_pointer());
     }
 
     #[test]
@@ -1372,7 +1527,7 @@ mod tests {
             ("the shell locking the desk", ClientRequest::Lock),
         ] {
             assert_eq!(
-                somebody_is_here(&request),
+                somebody_is_here(&request, false),
                 None,
                 "{what} would keep every desktop awake forever"
             );

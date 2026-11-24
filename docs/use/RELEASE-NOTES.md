@@ -56,6 +56,7 @@ Keep work and personal apart: each profile has its own sign-ins and extensions, 
 - Type `!g` in the launcher to search Google straight away, without other matches. [Launcher](LAUNCHER.md)
 - Terminal apps in the launcher. [#2069](https://github.com/cprussin/domicile/pull/2069)
 - Per-monitor mode, refresh rate and adaptive sync. [Monitors](MONITORS.md) · [#2031](https://github.com/cprussin/domicile/pull/2031) · [#2048](https://github.com/cprussin/domicile/pull/2048)
+- A mouse that moves by itself need not keep the screens on or the desk unlocked: set `idle.ignore_pointer`. [Locking and sleep](LOCK-AND-IDLE.md#blank-and-lock-when-away)
 - Key repeat settings. [#2024](https://github.com/cprussin/domicile/pull/2024)
 - Firefox animates with the desktop. [#2087](https://github.com/cprussin/domicile/pull/2087) · [#2089](https://github.com/cprussin/domicile/pull/2089)
 - Windows no longer freeze at their old size after you move or resize them on monitors of different sharpness.

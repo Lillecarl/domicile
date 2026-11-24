@@ -35,6 +35,20 @@ pub enum PointerAxisSource {
     WheelTilt,
 }
 
+/// What an input the browser saw came from. See [`ChromeMessage::Activity`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityKind {
+    /// A keyboard.
+    Key,
+    /// A mouse, touchpad or tablet: motion, buttons, wheels and gestures.
+    Pointer,
+    /// A touch screen.
+    Touch,
+    /// None of these, like activity reported with no event.
+    Other,
+}
+
 /// A passphrase typed at the lock screen.
 ///
 /// A newtype so that its [`Debug`] never prints the secret: a `debug!` of a
@@ -532,14 +546,19 @@ pub enum ChromeMessage {
 
     /// Somebody used the keyboard, pointer or touchpad, wherever it went.
     ///
-    /// The browser sends it for its own input, at most every 200 ms. Input to
-    /// a browser window or the shell's page reaches the compositor no other
-    /// way, and the idle clock must hear it.
+    /// The browser sends it for its own input: keys and touches at most every
+    /// 200 ms, and all else at most every 200 ms. Input to a browser window or
+    /// the shell's page reaches the compositor no other way, and the idle clock
+    /// must hear it.
     Activity {
         /// What the input was, for the log: the event, and the device it came
         /// from when known, e.g. `"MouseMoved from Logitech USB Receiver"`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         input: Option<String>,
+        /// What the input came from, for `idle.ignore_pointer`. `None` from an
+        /// engine that does not say.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<ActivityKind>,
     },
 
     /// The engine caught itself in a bug: a page it took out of fullscreen

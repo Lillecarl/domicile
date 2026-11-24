@@ -1124,7 +1124,10 @@ mod tests {
             ),
             (
                 "a key on the lock screen",
-                ClientRequest::Activity { input: None },
+                ClientRequest::Activity {
+                    input: None,
+                    kind: None,
+                },
             ),
             (
                 "the pointer moving over the lock screen",

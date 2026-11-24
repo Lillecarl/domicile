@@ -138,6 +138,11 @@ in
       ${syncByContent}
       umask 002
       claim ${root}/${name}
+      # rustc's incremental locks are private to this build's user, and the
+      # next one could not copy them. On a failed build too.
+      shareTree() { chmod -R g+rwX ${root}/${name}; }
+      exitHooks+=(shareTree)
+      failureHooks+=(shareTree)
       sync_by_content "$PWD" ${root}/${name} --exclude=/target --exclude=/.cargo
       # The vendored crates from the store, not the copy in this build's own
       # directory: cargo rebuilds a crate whose path changed.

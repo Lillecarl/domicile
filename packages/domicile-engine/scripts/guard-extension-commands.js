@@ -10,7 +10,8 @@
 //                              many extensions it had
 //   GUARD row fill=… action=…  the `?expect=` extension's keys, the first time
 //                              it arrives
-//   GUARD ran badge=…          its service worker heard the command
+//   GUARD ready                its service worker has its listeners
+//   GUARD ran badge=…        its service worker heard the command
 //   GUARD menu type=… label=…  the item it adds to its action's menu
 //   GUARD clicked badge=…      its service worker heard the click
 //   GUARD popup url=…          its action's own command asked for its popup
@@ -46,18 +47,20 @@ export const HostShell = (_root, desktop) => {
     say(`failed error=${error.name} ${error.message}`);
   };
 
-  // The badge a step waits for, which each `extensionschanged` checks.
+  // The badge a step waits for, checked now and at each `extensionschanged`.
   let waiting = undefined;
-  const when = (prefix, then) => {
-    waiting = { prefix, then };
-  };
-  host.addEventListener("extensionschanged", () => {
+  const check = () => {
     if (waiting !== undefined && badge().startsWith(waiting.prefix)) {
       const { then } = waiting;
       waiting = undefined;
       then();
     }
-  });
+  };
+  const when = (prefix, then) => {
+    waiting = { prefix, then };
+    check();
+  };
+  host.addEventListener("extensionschanged", check);
 
   host.addEventListener("extensionpopuprequested", ({ popup }) => {
     say(`popup url=${popup}`);
@@ -107,11 +110,14 @@ export const HostShell = (_root, desktop) => {
       const keys = (name) =>
         row.commands.find((command) => command.name === name)?.keys;
       say(`row fill=${keys("fill")} action=${keys("_execute_action")}`);
-      when("c:", () => {
-        say(`ran badge=${badge()}`);
-        readMenu();
+      when("ready", () => {
+        say("ready");
+        when("c:", () => {
+          say(`ran badge=${badge()}`);
+          readMenu();
+        });
+        host.runExtensionCommand(expected, "fill");
       });
-      host.runExtensionCommand(expected, "fill");
     }
   });
   say("listening");

@@ -189,7 +189,8 @@ lines above say what did arrive"
   ;;
 "commands 1 1 1 0 "*)
   FAILURE="runExtensionCommand() did not reach the fixture's \
-commands.onCommand: RunCommand, or SendCommand's event"
+commands.onCommand: RunCommand, or SendCommand's event. With no GUARD ready \
+above, its service worker never ran, or its badge never came"
   ;;
 "commands 1 1 1 1 0 "*)
   FAILURE="extensionMenu() never had the fixture's checkbox: ActionMenuOf, or \

@@ -9,13 +9,20 @@ const say = (text) => {
   action.setBadgeText({ text });
 };
 
+// `ready` once the listeners below are registered: a command sent before the
+// worker's first run reaches nothing.
 contextMenus.removeAll(() => {
-  contextMenus.create({
-    contexts: ["action"],
-    id: "remember",
-    title: "Remember",
-    type: "checkbox",
-  });
+  contextMenus.create(
+    {
+      contexts: ["action"],
+      id: "remember",
+      title: "Remember",
+      type: "checkbox",
+    },
+    () => {
+      say("ready");
+    },
+  );
 });
 
 commands.onCommand.addListener((name) => {

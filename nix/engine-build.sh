@@ -9,6 +9,11 @@ chromium="$(dirname "$src")"
 pin="$(grep -v '^#' "$fork/packages/domicile-engine/CHROMIUM_PIN" | tr -d '[:space:]')"
 cd "$fork"
 
+# Git knows a file by its inode, ctime and owner too, all new in a tree that
+# `claim` copied: the reset would rewrite every file, and rebuild everything.
+# A killed build's lock would stop the refresh; this one holds the tree.
+rm -f "$src/.git/index.lock"
+git -C "$src" update-index -q --refresh || true
 # The scripts give unchanged files their old mtimes back, so a rebuild compiles
 # what the series changed and no more.
 .github/scripts/engine-reset.sh "$src"

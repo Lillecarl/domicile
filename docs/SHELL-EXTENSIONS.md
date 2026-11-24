@@ -131,6 +131,45 @@ panel.append(view);
   Unclaimed, the extension gets nothing. A choice is stored for the
   extension's `chrome-extension://` origin, so it holds in all its pages.
 
+## Commands
+
+`extensions.commands` lists every extension with commands (`chrome.commands`)
+and the keys bound to them, for example Bitwarden's `autofill_login` on
+Ctrl+Shift+L. `extensions.on("commands")` reports changes. Match the keys
+yourself in browser windows, after the page has had them:
+
+```js
+import { pressesAccelerator } from "@domicile-desktop/sdk/app-menu";
+
+view.addEventListener("domicile-guest-keydown", (event) => {
+  for (const { id, commands } of domicile.extensions.commands ?? []) {
+    for (const { keys, name } of commands) {
+      if (keys !== undefined && pressesAccelerator(keys, event)) {
+        event.preventDefault();
+        domicile.extensions.runCommand(id, name);
+        return;
+      }
+    }
+  }
+});
+```
+
+- `runCommand` acts on the active tab, as a key does in Chrome.
+- `_execute_action` clicks the action. For one with a popup the shell also
+  hears `extensions.on("popup")`.
+- An extension with commands and no action is listed too.
+
+## Menus
+
+- **The action's menu:** `await extensions.menu(id)` gives the items the
+  extension adds to it, as `appMenu` gives a menu bar's entries: submenus,
+  checkboxes, radio items and separators. `extensions.runMenuItem(entry.id)`
+  runs one on the active tab. Ask again for each menu you open: the items and
+  ids change.
+- **A page's menu:** `domicile-context-menu` carries the items that match the
+  click. `appMenu(event.extensionItems)` reads them, and
+  `event.runExtensionItem(entry.id)` runs one.
+
 ## Tabs and windows
 
 Every `<webview>` is a tab, and the desktop is one `chrome.windows` window.

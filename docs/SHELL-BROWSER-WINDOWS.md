@@ -435,6 +435,8 @@ Draw the context menu yourself:
   `save-link-as`, `copy-image`, `copy-media-address`, `save-media-as`,
   `picture-in-picture` (enters, or leaves when in), the edit commands (`cut`,
   `paste`, …), `add-to-dictionary` and `inspect`. A save asks `domicile-file-chooser` where. See `WEBVIEW_CONTEXT_MENU_ACTIONS`.
+- `event.extensionItems` is the items extensions add, as JSON for `appMenu`,
+  and `event.runExtensionItem(id)` runs one ([Menus](SHELL-EXTENSIONS.md#menus)).
 - Back, reload and "open in new window" (`browser.open`) need no menu
   action.
 - `view.inspect()` opens DevTools for the page in a new browser window. It

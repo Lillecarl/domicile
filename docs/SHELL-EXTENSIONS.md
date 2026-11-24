@@ -135,8 +135,8 @@ panel.append(view);
 
 `extensions.commands` lists every extension with commands (`chrome.commands`)
 and the keys bound to them, for example Bitwarden's `autofill_login` on
-Ctrl+Shift+L. `extensions.on("commands")` reports changes. Match the keys
-yourself in browser windows, after the page has had them:
+Ctrl+Shift+L. `extensions.on("commands")` reports changes. Both follow the
+focused page's profile. Match the keys yourself in browser windows:
 
 ```js
 import { pressesAccelerator } from "@domicile-desktop/sdk/app-menu";
@@ -156,6 +156,8 @@ view.addEventListener("domicile-guest-keydown", (event) => {
 
 - An extension may have any key, Ctrl+T and Ctrl+L too: Chrome's own shortcuts
   are not kept from it. Match your shell's keys first.
+- As in Chrome, a page does not get the keys of its profile's extensions:
+  `domicile-guest-keydown` has them at once.
 - `runCommand` acts on the active tab, as a key does in Chrome.
 - `_execute_action` clicks the action. For one with a popup the shell also
   hears `extensions.on("popup")`.

@@ -49,6 +49,7 @@
 #include "components/domicile/browser/shortcut_registry.h"
 #include "components/domicile/browser/site_permissions.h"
 #include "components/domicile/browser/unfocused_web_views.h"
+#include "components/permissions/permission_decision_auto_blocker.h"
 #include "components/permissions/permissions_client.h"
 #include "components/domicile/browser/web_view_url.h"
 #include "components/security_interstitials/content/security_interstitial_page.h"
@@ -265,6 +266,12 @@ ExtensionMenusCallback& ExtensionMenusSlot() {
   return *menus;
 }
 
+// Storage for SetExtensionKeys's callback.
+ExtensionKeysCallback& ExtensionKeysSlot() {
+  static base::NoDestructor<ExtensionKeysCallback> keys;
+  return *keys;
+}
+
 // The guests' camera and microphone. See SetMediaAccess.
 MediaAccess* g_media_access = nullptr;
 
@@ -300,6 +307,13 @@ const ExtensionMenusCallback& ExtensionMenus() {
   // //chrome sets it in StartDesk, with the window host.
   CHECK(!ExtensionMenusSlot().is_null());
   return ExtensionMenusSlot();
+}
+
+// Finds an extension's key. See SetExtensionKeys.
+const ExtensionKeysCallback& ExtensionKeys() {
+  // //chrome sets it in StartDesk, with the window host.
+  CHECK(!ExtensionKeysSlot().is_null());
+  return ExtensionKeysSlot();
 }
 
 // Serves WebViewGuestHost for one document.
@@ -1094,6 +1108,12 @@ void WebViewGuest::SetExtensionMenus(ExtensionMenusCallback menus) {
 }
 
 // static
+void WebViewGuest::SetExtensionKeys(ExtensionKeysCallback keys) {
+  CHECK(ExtensionKeysSlot().is_null());
+  ExtensionKeysSlot() = std::move(keys);
+}
+
+// static
 void WebViewGuest::SetMediaAccess(MediaAccess* access) {
   CHECK(!g_media_access);
   g_media_access = access;
@@ -1845,8 +1865,13 @@ content::KeyboardEventProcessingResult WebViewGuest::PreHandleKeyboardEvent(
   const bool pressed =
       event.GetType() == blink::WebInputEvent::Type::kRawKeyDown ||
       event.GetType() == blink::WebInputEvent::Type::kKeyDown;
+  // An Electron app has no extensions.
+  const bool extension_key = pressed && !app_page_ &&
+                             (held.alt || held.ctrl || held.meta) &&
+                             ExtensionKeys().Run(*guest_contents_, event);
   if (!pressed || (modifiers & blink::WebInputEvent::kIsAutoRepeat) != 0) {
-    return content::KeyboardEventProcessingResult::NOT_HANDLED;
+    return extension_key ? content::KeyboardEventProcessingResult::HANDLED
+                         : content::KeyboardEventProcessingResult::NOT_HANDLED;
   }
 
   // Escape leaves page fullscreen before the page sees it, as in Chrome, so a
@@ -1861,10 +1886,29 @@ content::KeyboardEventProcessingResult WebViewGuest::PreHandleKeyboardEvent(
   if (ShortcutRegistry::Get().Press(chord, page)) {
     return content::KeyboardEventProcessingResult::HANDLED;
   }
+  // Before the page, as in Chrome, so a page's own use of the keys does not
+  // keep them from the extension. The shell runs it.
+  if (extension_key) {
+    SendKeyDown(event);
+    return content::KeyboardEventProcessingResult::HANDLED;
+  }
   if (!ui::KeycodeConverter::IsDomKeyForModifier(key)) {
     client_->KeyDelivered();
   }
   return content::KeyboardEventProcessingResult::NOT_HANDLED;
+}
+
+void WebViewGuest::SendKeyDown(const input::NativeWebKeyboardEvent& event) {
+  const int modifiers = event.GetModifiers();
+  client_->UnhandledKeyDown(
+      ui::KeycodeConverter::DomKeyToKeyString(ui::DomKey(event.dom_key)),
+      ui::KeycodeConverter::DomCodeToCodeString(
+          static_cast<ui::DomCode>(event.dom_code)),
+      (modifiers & blink::WebInputEvent::kAltKey) != 0,
+      (modifiers & blink::WebInputEvent::kControlKey) != 0,
+      (modifiers & blink::WebInputEvent::kShiftKey) != 0,
+      (modifiers & blink::WebInputEvent::kMetaKey) != 0,
+      (modifiers & blink::WebInputEvent::kIsAutoRepeat) != 0);
 }
 
 bool WebViewGuest::HandleKeyboardEvent(
@@ -1886,15 +1930,7 @@ bool WebViewGuest::HandleKeyboardEvent(
                     blink::WebInputEvent::kMetaKey)) != 0;
 
   if (pressed && chord) {
-    client_->UnhandledKeyDown(
-        ui::KeycodeConverter::DomKeyToKeyString(ui::DomKey(event.dom_key)),
-        ui::KeycodeConverter::DomCodeToCodeString(
-            static_cast<ui::DomCode>(event.dom_code)),
-        (modifiers & blink::WebInputEvent::kAltKey) != 0,
-        (modifiers & blink::WebInputEvent::kControlKey) != 0,
-        (modifiers & blink::WebInputEvent::kShiftKey) != 0,
-        (modifiers & blink::WebInputEvent::kMetaKey) != 0,
-        (modifiers & blink::WebInputEvent::kIsAutoRepeat) != 0);
+    SendKeyDown(event);
   } else if (event.GetType() == blink::WebInputEvent::Type::kKeyUp &&
              ui::KeycodeConverter::IsDomKeyForModifier(
                  ui::DomKey(event.dom_key))) {
@@ -2181,6 +2217,23 @@ void WebViewGuest::Print() {
   Printer().Run(*guest_contents_);
 }
 
+void StoreSitePermission(content::BrowserContext& context,
+                         const GURL& site,
+                         mojom::WebViewPermission permission,
+                         mojom::WebViewPermissionSetting setting) {
+  permissions::PermissionsClient* client =
+      permissions::PermissionsClient::Get();
+  HostContentSettingsMap* map = client->GetSettingsMap(&context);
+  const ContentSettingsType type = SettingsTypeFor(permission);
+  map->SetContentSettingDefaultScope(
+      site, site, type,
+      StoredSetting(setting, map->GetDefaultContentSetting(type)));
+  // Chrome stops a site from asking once it was ignored or dismissed some
+  // times, over a setting of ask. The user just chose, so it counts anew.
+  client->GetPermissionDecisionAutoBlocker(&context)
+      ->RemoveEmbargoAndResetCounts(site, type);
+}
+
 void WebViewGuest::SetSitePermission(
     mojom::WebViewPermission permission,
     mojom::WebViewPermissionSetting setting) {
@@ -2193,13 +2246,8 @@ void WebViewGuest::SetSitePermission(
                     "with no site; it is dropped.";
     return;
   }
-  HostContentSettingsMap* map =
-      permissions::PermissionsClient::Get()->GetSettingsMap(
-          guest_contents_->GetBrowserContext());
-  const ContentSettingsType type = SettingsTypeFor(permission);
-  map->SetContentSettingDefaultScope(
-      site, site, type,
-      StoredSetting(setting, map->GetDefaultContentSetting(type)));
+  StoreSitePermission(*guest_contents_->GetBrowserContext(), site, permission,
+                      setting);
 }
 
 void WebViewGuest::ListMediaDevices(ListMediaDevicesCallback callback) {

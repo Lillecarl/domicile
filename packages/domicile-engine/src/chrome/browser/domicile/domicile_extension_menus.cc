@@ -45,6 +45,7 @@
 #include "ui/base/accelerators/command.h"
 #include "ui/base/models/image_model.h"
 #include "ui/base/models/menu_model.h"
+#include "ui/content_accelerators/accelerator_util.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/image/image.h"
 #include "ui/menus/simple_menu_model.h"
@@ -196,6 +197,32 @@ class PageMenu final : public GuestExtensionMenu {
   ExtensionMenu menu_;
   content::ContextMenuParams params_;
 };
+
+// Whether `event` in `page` presses the keys of an extension's command, in the
+// page's own profile.
+bool TakesKey(content::WebContents& page,
+              const input::NativeWebKeyboardEvent& event) {
+  // Only a tab's, as PageMenuOf's items.
+  if (sessions::SessionTabHelper::FromWebContents(&page) == nullptr) {
+    return false;
+  }
+  const ui::Accelerator pressed =
+      ui::GetAcceleratorFromNativeWebKeyboardEvent(event);
+  content::BrowserContext& context = *page.GetBrowserContext();
+  CommandService* service = CommandService::Get(&context);
+  for (const scoped_refptr<const Extension>& extension :
+       extensions::ExtensionRegistry::Get(&context)->enabled_extensions()) {
+    for (const ExtensionCommand& command :
+         CommandsOf(context, *extension, std::string()).commands) {
+      if (!command.keys.empty() &&
+          service->FindCommandByName(extension->id(), command.name)
+                  .accelerator() == pressed) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
 
 std::unique_ptr<GuestExtensionMenu> PageMenuOf(
     content::WebContents& page,
@@ -355,6 +382,7 @@ void SendCommand(content::BrowserContext& context,
 
 void UseChromeForGuestExtensionMenus() {
   WebViewGuest::SetExtensionMenus(base::BindRepeating(&PageMenuOf));
+  WebViewGuest::SetExtensionKeys(base::BindRepeating(&TakesKey));
 }
 
 }  // namespace domicile

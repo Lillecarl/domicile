@@ -221,6 +221,7 @@ source_set("domicile") {
     # Extensions' menus and commands, which the shell draws and runs.
     "//components/domicile:extension_menu",
     "//ui/base",
+    "//ui/content_accelerators",
     "//ui/events:events_base",
     "//ui/menus",
     # The shell's tray: extension actions and their icons as PNGs.

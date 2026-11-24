@@ -243,6 +243,19 @@ using ExtensionMenusCallback =
         content::WebContents& page,
         const content::ContextMenuParams& params)>;
 
+// Whether a key press in `page` is bound to a command of an extension in the
+// page's profile. Provided by //chrome, which owns extensions' keys.
+using ExtensionKeysCallback =
+    base::RepeatingCallback<bool(content::WebContents& page,
+                                 const input::NativeWebKeyboardEvent& event)>;
+
+// Stores `site`'s `setting` for `permission`, and lets the site ask again if
+// Chrome stopped it for requests left unanswered.
+void StoreSitePermission(content::BrowserContext& context,
+                         const GURL& site,
+                         mojom::WebViewPermission permission,
+                         mojom::WebViewPermissionSetting setting);
+
 // Prints `guest`'s page through the desktop's print dialog. Provided by
 // //chrome, which owns printing: see
 // //chrome/browser/domicile/domicile_printing.h.
@@ -417,6 +430,10 @@ class WebViewGuest : public mojom::WebViewGuest,
   // Set once by //chrome, before any guest exists. Runs for each context menu
   // the shell draws. See ExtensionMenusCallback.
   static void SetExtensionMenus(ExtensionMenusCallback menus);
+
+  // Set once by //chrome, before any guest exists. Runs for each chord pressed
+  // in a page. See ExtensionKeysCallback.
+  static void SetExtensionKeys(ExtensionKeysCallback keys);
 
   // Set once by //chrome, before any guest exists. See MediaAccess.
   static void SetMediaAccess(MediaAccess* access);
@@ -866,10 +883,15 @@ class WebViewGuest : public mojom::WebViewGuest,
   // A match is swallowed and sent down the control channel. Modifier state is
   // always sent, since the shell needs it (e.g. Alt to drag a window).
   //
-  // Unclaimed chords the page ignores arrive later at HandleKeyboardEvent.
+  // An extension's key goes to the shell at once, and never to the page.
+  // Other unclaimed chords the page ignores arrive later at
+  // HandleKeyboardEvent.
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
       content::WebContents* source,
       const input::NativeWebKeyboardEvent& event) override;
+
+  // Sends the shell a key press, as UnhandledKeyDown.
+  void SendKeyDown(const input::NativeWebKeyboardEvent& event);
 
   // Forwards chords the page did not preventDefault to the shell, matching
   // Chrome's order (site first, browser second), and modifiers let go of.

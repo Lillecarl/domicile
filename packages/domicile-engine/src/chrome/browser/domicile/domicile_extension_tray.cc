@@ -30,10 +30,13 @@
 #include "chrome/browser/domicile/domicile_browser_profiles.h"
 #include "chrome/browser/domicile/domicile_desk.h"
 #include "chrome/browser/domicile/domicile_extension_installer.h"
+#include "chrome/browser/domicile/domicile_extension_menus.h"
 #include "chrome/browser/domicile/domicile_extension_settings.h"
+#include "chrome/browser/extensions/commands/command_service.h"
 #include "chrome/browser/extensions/extension_action_dispatcher.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/domicile/browser/command_protocol.h"
+#include "components/domicile/browser/extension_menu.h"
 #include "components/domicile/browser/extension_settings.h"
 #include "components/domicile/browser/extension_tray_entry.h"
 #include "components/prefs/pref_change_registrar.h"
@@ -56,6 +59,7 @@
 #include "extensions/browser/ui_util.h"
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/common/api/extension_action/action_info.h"
+#include "extensions/common/command.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
@@ -210,6 +214,9 @@ std::set<ExtensionTray*>& Trays() {
 //   BrowserProfileRegistry      the profile SetProfile named loaded, or left
 //                               the config
 //
+// The commands go with the actions, when they changed, and also when
+// CommandService says a key was bound or let go.
+//
 // The actions are those of one browser profile's extensions, the one the
 // shell names with SetProfile, as Chrome's toolbar shows those of its
 // window's profile. The installed list is always the shell's profile's.
@@ -229,6 +236,7 @@ class ExtensionTray final
       public extensions::ExtensionPrefsObserver,
       public extensions::ExtensionActionDispatcher::Observer,
       public extensions::IconImage::Observer,
+      public extensions::CommandService::Observer,
       public DeskObserver,
       public BrowserProfileRegistry::Observer {
  public:
@@ -241,6 +249,7 @@ class ExtensionTray final
     registries_.AddObservation(extensions::ExtensionRegistry::Get(context_));
     dispatcher_observation_.Observe(
         extensions::ExtensionActionDispatcher::Get(context_));
+    commands_observation_.Observe(extensions::CommandService::Get(context_));
     prefs_observation_.Observe(extensions::ExtensionPrefs::Get(context_));
     config_.Init(profile().GetPrefs());
     WatchConfigExtensions(config_,
@@ -392,6 +401,78 @@ class ExtensionTray final
     }
   }
 
+  void RunCommand(const std::string& id, const std::string& name) override {
+    const Extension* extension = extensions::ExtensionRegistry::Get(actions_)
+                                     ->enabled_extensions()
+                                     .GetByID(id);
+    // The key raced an uninstall.
+    if (extension == nullptr || !HasCommand(*extension, name)) {
+      LOG(WARNING) << "domicile: the tray ran command " << name << " of " << id
+                   << ", which has none such now.";
+      return;
+    }
+    if (OverAPageHiddenFrom(*extension)) {
+      return;
+    }
+    content::WebContents* tab = TabFor(*extension);
+    if (!extensions::Command::IsActionRelatedCommand(name)) {
+      SendCommand(tab == nullptr ? *actions_ : *tab->GetBrowserContext(),
+                  *extension, name, tab);
+      return;
+    }
+    ExtensionAction* action =
+        extensions::ExtensionActionManager::Get(actions_)->GetExtensionAction(
+            *extension);
+    // A disabled action does nothing, as ExtensionActionRunner has it.
+    if (action == nullptr || !action->GetIsVisible(TabIdOf(tab))) {
+      return;
+    }
+    const GURL popup = action->GetPopupUrl(TabIdOf(tab));
+    Activate(id);
+    if (!popup.is_empty()) {
+      RequestPopup(actions_, id, popup);
+    }
+  }
+
+  void ActionMenu(const std::string& id, ActionMenuCallback answer) override {
+    const Extension* extension = extensions::ExtensionRegistry::Get(actions_)
+                                     ->enabled_extensions()
+                                     .GetByID(id);
+    // Right-clicked as it was uninstalled, or over a page it may not see.
+    if (extension == nullptr || OverAPageHiddenFrom(*extension)) {
+      menu_ = ExtensionMenu();
+    } else {
+      content::WebContents* tab = TabFor(*extension);
+      menu_ = ActionMenuOf(
+          tab == nullptr ? *actions_ : *tab->GetBrowserContext(), *extension,
+          next_menu_item_);
+      if (!menu_.items.empty()) {
+        next_menu_item_ = menu_.items.rbegin()->first + 1;
+      }
+    }
+    std::move(answer).Run(menu_.json);
+  }
+
+  void RunActionMenuItem(int32_t item) override {
+    const auto found = menu_.items.find(item);
+    if (found == menu_.items.end()) {
+      LOG(WARNING) << "domicile: the tray ran menu item " << item
+                   << ", which its newest menu does not have.";
+      return;
+    }
+    const Extension* extension = extensions::ExtensionRegistry::Get(actions_)
+                                     ->enabled_extensions()
+                                     .GetByID(found->second.extension_key
+                                                  .extension_id);
+    if (extension == nullptr || OverAPageHiddenFrom(*extension)) {
+      return;
+    }
+    content::WebContents* tab = TabFor(*extension);
+    domicile::RunActionMenuItem(
+        tab == nullptr ? *actions_ : *tab->GetBrowserContext(), found->second,
+        tab);
+  }
+
   void SetEnabled(const std::string& id,
                   bool enabled,
                   SetEnabledCallback answer) override {
@@ -410,6 +491,26 @@ class ExtensionTray final
   void Uninstall(const std::string& id, UninstallCallback answer) override {
     LOG(INFO) << "domicile: the tray uninstalls " << id << ".";
     std::move(answer).Run(ErrorOf(UninstallFrom(profile(), id)));
+  }
+
+  // The active tab, or null for none or a private page `extension` is not
+  // allowed in.
+  content::WebContents* TabFor(const Extension& extension) {
+    return ActiveDeskTab(
+        actions_, extensions::util::IsIncognitoEnabled(&extension, actions_));
+  }
+
+  // Whether the active tab is a private page `extension` is not allowed in.
+  // Chrome gives it no keys and no menus there.
+  bool OverAPageHiddenFrom(const Extension& extension) {
+    return TabFor(extension) == nullptr &&
+           ActiveDeskTab(actions_, /*include_private=*/true) != nullptr;
+  }
+
+  bool HasCommand(const Extension& extension, const std::string& name) {
+    return std::ranges::contains(
+        CommandsOf(*actions_, extension, std::string()).commands, name,
+        &ExtensionCommand::name);
   }
 
   // Sets `wanted` on extension `id`. Returns why not, or an empty string.
@@ -486,6 +587,17 @@ class ExtensionTray final
     }
   }
   void OnShuttingDown() override { dispatcher_observation_.Reset(); }
+
+  // extensions::CommandService::Observer:
+  void OnExtensionCommandAdded(const extensions::ExtensionId& extension_id,
+                               const std::string& command_name) override {
+    SendCommands();
+  }
+  void OnExtensionCommandRemoved(const extensions::ExtensionId& extension_id,
+                                 const std::string& command_name) override {
+    SendCommands();
+  }
+  void OnCommandServiceDestroying() override { commands_observation_.Reset(); }
 
   // DeskObserver:
   void OnActiveTabChanged() override { Send(); }
@@ -570,6 +682,8 @@ class ExtensionTray final
     }
     dispatcher_observation_.Observe(
         extensions::ExtensionActionDispatcher::Get(actions_));
+    commands_observation_.Reset();
+    commands_observation_.Observe(extensions::CommandService::Get(actions_));
     observing_desk_ = AddDeskObserver(actions_, this);
     Send();
   }
@@ -682,6 +796,35 @@ class ExtensionTray final
       tray.push_back(EntryFor(*extension, *action, tab, scale, in));
     }
     client_->ExtensionsChanged(std::move(tray));
+    SendCommands();
+  }
+
+  // Sends every extension's commands, unless the client has them already.
+  void SendCommands() {
+    if (!client_.is_bound()) {
+      return;
+    }
+    BrowserProfileRegistry& registry = BrowserProfileRegistry::Get();
+    std::string in = registry.IdOf(*actions_);
+    if (in.empty()) {
+      in = registry.profiles().default_profile;
+    }
+    std::vector<ExtensionCommands> all;
+    for (const scoped_refptr<const Extension>& extension :
+         extensions::ExtensionRegistry::Get(actions_)->enabled_extensions()) {
+      if (!extensions::ui_util::ShouldDisplayInExtensionSettings(*extension)) {
+        continue;
+      }
+      ExtensionCommands commands = CommandsOf(*actions_, *extension, in);
+      if (!commands.commands.empty()) {
+        all.push_back(std::move(commands));
+      }
+    }
+    std::string json = ExtensionCommandsAsJson(all);
+    if (json != sent_commands_) {
+      sent_commands_ = std::move(json);
+      client_->CommandsChanged(sent_commands_);
+    }
   }
 
   // Observes `action`'s manifest icon, once per icon.
@@ -712,6 +855,9 @@ class ExtensionTray final
   base::ScopedObservation<extensions::ExtensionActionDispatcher,
                           extensions::ExtensionActionDispatcher::Observer>
       dispatcher_observation_{this};
+  base::ScopedObservation<extensions::CommandService,
+                          extensions::CommandService::Observer>
+      commands_observation_{this};
   base::ScopedObservation<extensions::ExtensionPrefs,
                           extensions::ExtensionPrefsObserver>
       prefs_observation_{this};
@@ -725,6 +871,14 @@ class ExtensionTray final
 
   // The config's extensions and settings, which the installed list shows.
   PrefChangeRegistrar config_;
+
+  // The commands last sent; empty before any were.
+  std::string sent_commands_;
+
+  // The newest ActionMenu, and the first id of the next one, so an entry of
+  // an older menu is never taken for one of the newest.
+  ExtensionMenu menu_;
+  int next_menu_item_ = 1;
 
   // Whether SendInstalled is posted.
   bool installed_pending_ = false;

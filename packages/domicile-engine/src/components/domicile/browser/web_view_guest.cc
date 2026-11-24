@@ -260,6 +260,12 @@ AddToDictionaryCallback& AddToDictionarySlot() {
   return *add;
 }
 
+// Storage for SetExtensionMenus's callback.
+ExtensionMenusCallback& ExtensionMenusSlot() {
+  static base::NoDestructor<ExtensionMenusCallback> menus;
+  return *menus;
+}
+
 // The guests' camera and microphone. See SetMediaAccess.
 MediaAccess* g_media_access = nullptr;
 
@@ -288,6 +294,13 @@ const AddToDictionaryCallback& DictionaryAdder() {
   // //chrome sets it in StartDesk, with the window host.
   CHECK(!AddToDictionarySlot().is_null());
   return AddToDictionarySlot();
+}
+
+// Finds a menu's extension items. See SetExtensionMenus.
+const ExtensionMenusCallback& ExtensionMenus() {
+  // //chrome sets it in StartDesk, with the window host.
+  CHECK(!ExtensionMenusSlot().is_null());
+  return ExtensionMenusSlot();
 }
 
 // Serves WebViewGuestHost for one document.
@@ -1073,6 +1086,12 @@ void WebViewGuest::SetPrint(PrintCallback print) {
 void WebViewGuest::SetAddToDictionary(AddToDictionaryCallback add) {
   CHECK(AddToDictionarySlot().is_null());
   AddToDictionarySlot() = std::move(add);
+}
+
+// static
+void WebViewGuest::SetExtensionMenus(ExtensionMenusCallback menus) {
+  CHECK(ExtensionMenusSlot().is_null());
+  ExtensionMenusSlot() = std::move(menus);
 }
 
 // static
@@ -1947,12 +1966,15 @@ bool WebViewGuest::HandleContextMenu(
   context_menu_id_ += 1;
   context_menu_frame_ = render_frame_host.GetGlobalId();
   context_menu_params_ = params;
+  context_menu_extensions_ = ExtensionMenus().Run(*guest_contents_, params);
 
   // The context menu guard greps for this line.
   LOG(INFO) << "domicile: a <webview>'s page asked for a context menu; "
                "asking the shell to draw it.";
-  client_->ContextMenuRequested(
-      AsWebViewContextMenu(context_menu_id_, params, in_page));
+  mojom::WebViewContextMenuPtr menu =
+      AsWebViewContextMenu(context_menu_id_, params, in_page);
+  menu->extension_items = context_menu_extensions_->json();
+  client_->ContextMenuRequested(std::move(menu));
   return true;
 }
 
@@ -2083,6 +2105,21 @@ void WebViewGuest::ReplaceMisspelling(int32_t menu, const std::string& word) {
           },
           base::UTF8ToUTF16(word)),
       kEditTries);
+}
+
+void WebViewGuest::RunContextMenuExtensionItem(int32_t menu, int32_t item) {
+  CHECK(guest_contents_);
+  if (!IsNewestContextMenu(menu)) {
+    return;
+  }
+  content::RenderFrameHost* frame =
+      content::RenderFrameHost::FromID(context_menu_frame_);
+  if (frame == nullptr) {
+    LOG(INFO) << "domicile: the page a <webview>'s context menu was for is "
+                 "gone; dropping the extension item.";
+    return;
+  }
+  context_menu_extensions_->Run(item, *guest_contents_, *frame);
 }
 
 bool WebViewGuest::IsNewestContextMenu(int32_t menu) {

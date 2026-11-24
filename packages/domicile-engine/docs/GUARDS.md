@@ -205,6 +205,7 @@ Headless.
 | `guard-extension-reload.sh` | `load_unpacked` on the command socket reloads an extension in both of two browser profiles, after an edit and from another directory; an edit it is not sent for runs in neither |
 | `guard-extension-tray.sh` | the tray event, popup, its auto-resized size and `window.close()` (patch 0056) |
 | `guard-extension-menu.sh` | `installedExtensions` lists every extension with its settings; `configureExtension()`, `setExtensionEnabled()` and `uninstallExtension()` change it, and refuse what the config owns |
+| `guard-extension-commands.sh` | `extensionCommands` has an extension's keys; `runExtensionCommand()`, `extensionMenu()` and `runExtensionMenuItem()` reach its service worker, and `_execute_action` asks for its popup |
 | `guard-extension-open-popup.sh` | `action.openPopup()` reaches the shell as `extensionpopuprequested` |
 | `guard-extension-side-panel.sh` | `sidePanel.open()` opens the side panel's page as a popup window with no size, which the shell tiles |
 | `guard-webview-tabs.sh` | `tabs.query` and `tabs.setZoom` target the focused `<webview>` (patch 0057), `webNavigation.getAllFrames` lists its page, and `tabs.detectLanguage` is refused |

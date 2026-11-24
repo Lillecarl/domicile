@@ -4,6 +4,8 @@
 
 import { z } from "zod";
 
+import type { AppMenuEntry } from "../app-menu";
+import { appMenu } from "../app-menu";
 import type {
   DomicileExtension,
   DomicileHost,
@@ -11,11 +13,13 @@ import type {
 } from "../domicile-host";
 import type {
   Extension,
+  ExtensionCommands,
   ExtensionPopup,
   ExtensionSettings,
   InstalledExtension,
 } from "../extension";
 import {
+  extensionCommandsSchema,
   extensionPopupSchema,
   extensionSchema,
   installedExtensionSchema,
@@ -26,6 +30,8 @@ import { hostEvent, on } from "./subscribe";
 
 export type ExtensionsListeners = {
   change: () => void;
+  /** `commands` changed. */
+  commands: () => void;
   /** `installed` changed. */
   installed: () => void;
   /**
@@ -46,6 +52,13 @@ export type Extensions = {
    * engine says. Parsed: throws on a row a shell cannot draw.
    */
   readonly installed: readonly InstalledExtension[] | undefined;
+  /**
+   * Every extension with commands (`chrome.commands`), with an action or
+   * without, and the keys bound to each. Those of the profile `setProfile`
+   * named. `undefined` until the engine says. Parsed: throws on one a shell
+   * cannot run.
+   */
+  readonly commands: readonly ExtensionCommands[] | undefined;
   /** Click extension `id`'s action. One with a popup is the shell's to open. */
   activate: (id: string) => void;
   /**
@@ -53,7 +66,20 @@ export type Extensions = {
    * for a setting the desk's config sets, or an extension not installed.
    */
   configure: (id: string, settings: ExtensionSettings) => Promise<void>;
+  /**
+   * The items extension `id` adds to its action's menu, matched now. Throws on
+   * a menu a shell cannot draw.
+   */
+  menu: (id: string) => Promise<readonly AppMenuEntry[]>;
   on: On<ExtensionsListeners>;
+  /**
+   * Runs command `name` of extension `id` on the active page, as its keys do
+   * in Chrome. The action's own, `_execute_action`, is `activate`, and a
+   * `popup` event when the action has a popup.
+   */
+  runCommand: (id: string, name: string) => void;
+  /** Runs entry `item` of the newest `menu` on the active page. */
+  runMenuItem: (item: number) => void;
   /** Switches extension `id` on or off. Rejects for one not installed. */
   setEnabled: (id: string, enabled: boolean) => Promise<void>;
   /**
@@ -75,9 +101,13 @@ export type ExtensionsHost = Pick<
   | "activateExtension"
   | "addEventListener"
   | "configureExtension"
+  | "extensionCommands"
+  | "extensionMenu"
   | "extensions"
   | "installedExtensions"
   | "removeEventListener"
+  | "runExtensionCommand"
+  | "runExtensionMenuItem"
   | "setExtensionEnabled"
   | "setExtensionsProfile"
   | "uninstallExtension"
@@ -87,6 +117,11 @@ export const extensions = (host: ExtensionsHost): Extensions => {
   const listOf = memoizeLast((list: readonly DomicileExtension[] | null) =>
     list === null ? undefined : z.array(extensionSchema).parse(list),
   );
+  const commandsOf = memoizeLast((commands: string | null) =>
+    commands === null
+      ? undefined
+      : z.array(extensionCommandsSchema).parse(JSON.parse(commands)),
+  );
   const installedOf = memoizeLast(
     (list: readonly DomicileInstalledExtension[] | null) =>
       list === null ? undefined : z.array(installedExtensionSchema).parse(list),
@@ -95,6 +130,9 @@ export const extensions = (host: ExtensionsHost): Extensions => {
     activate: (id) => {
       host.activateExtension(id);
     },
+    get commands() {
+      return commandsOf(host.extensionCommands);
+    },
     configure: (id, settings) => host.configureExtension(id, settings),
     get installed() {
       return installedOf(host.installedExtensions);
@@ -102,9 +140,12 @@ export const extensions = (host: ExtensionsHost): Extensions => {
     get list() {
       return listOf(host.extensions);
     },
+    menu: async (id) => appMenu(await host.extensionMenu(id)),
     on: on<ExtensionsListeners>({
       change: (listener) =>
         hostEvent(host, "extensionschanged", () => listener()),
+      commands: (listener) =>
+        hostEvent(host, "extensioncommandschanged", () => listener()),
       installed: (listener) =>
         hostEvent(host, "installedextensionschanged", () => listener()),
       popup: (listener) =>
@@ -117,6 +158,12 @@ export const extensions = (host: ExtensionsHost): Extensions => {
             ),
         ),
     }),
+    runCommand: (id, name) => {
+      host.runExtensionCommand(id, name);
+    },
+    runMenuItem: (item) => {
+      host.runExtensionMenuItem(item);
+    },
     setEnabled: (id, enabled) => host.setExtensionEnabled(id, enabled),
     setProfile: (profile) => {
       host.setExtensionsProfile(profile);

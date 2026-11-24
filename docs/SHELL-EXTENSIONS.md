@@ -157,6 +157,8 @@ view.addEventListener("domicile-guest-keydown", (event) => {
 });
 ```
 
+- An extension may have any key, Ctrl+T and Ctrl+L too: Chrome's own shortcuts
+  are not kept from it. Match your shell's keys first.
 - `runCommand` acts on the active tab, as a key does in Chrome.
 - `_execute_action` clicks the action. For one with a popup the shell also
   hears `extensions.on("popup")`.

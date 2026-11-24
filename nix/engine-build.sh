@@ -24,6 +24,9 @@ fi
 .github/scripts/engine-apply.sh "$src"
 
 cd "$src"
+# Siso, rustc and jinja2 write files private to this build's user, and the next
+# one could not copy them. On a failed build too. Modes leave mtimes alone.
+trap 'chmod -R g+rwX "$src/out"' EXIT
 # Neither of CI's builds. Like the official one it has no DCHECKs, but no
 # ThinLTO or PGO: their link needs more memory than a desktop has, and a
 # rebuild would repeat all of it.

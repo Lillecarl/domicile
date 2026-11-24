@@ -67,9 +67,10 @@ impl DomicileCompositor {
     /// Record user activity, and wake the screens if they were dark.
     ///
     /// All input passes through the page and arrives here.
-    /// [`crate::idle::somebody_is_here`] decides which requests count.
+    /// [`crate::idle::somebody_is_here`] decides which requests count, for the
+    /// screens, the clock, the shell's watches and the hub's idle time alike.
     pub fn keep_the_desktop_awake(&mut self, request: &ClientRequest) {
-        let Some(input) = somebody_is_here(request) else {
+        let Some(input) = somebody_is_here(request, self.idle.ignores_pointer()) else {
             return;
         };
         if self.display_sleep.stirred(Instant::now()) {
@@ -84,7 +85,7 @@ impl DomicileCompositor {
         if idle.worth_noting(still) {
             // The browser names its own input, and the device it came from.
             let detail = match request {
-                ClientRequest::Activity { input } => input.as_deref(),
+                ClientRequest::Activity { input, .. } => input.as_deref(),
                 _ => None,
             };
             debug!(

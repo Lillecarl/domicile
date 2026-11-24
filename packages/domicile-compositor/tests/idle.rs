@@ -8,7 +8,9 @@
 
 mod running;
 
-use domicile_protocol::{ChromeMessage, HostMessage, SystemEvent, SystemReply, SystemRequest};
+use domicile_protocol::{
+    ActivityKind, ChromeMessage, HostMessage, SystemEvent, SystemReply, SystemRequest,
+};
 
 use crate::running::bus::Bus;
 use crate::running::Compositor;
@@ -35,6 +37,14 @@ const A_DESK_THAT_BLANKS_LATER: &str = r#"
 {
   "output": { "displays": [{ "name": "left", "size": [1920, 1080] }] },
   "idle": { "blank_after_seconds": 30 }
+}
+"#;
+
+/// A desk that blanks after one second, whatever its pointer does.
+const A_DESK_THAT_IGNORES_ITS_POINTER: &str = r#"
+{
+  "output": { "displays": [{ "name": "left", "size": [1920, 1080] }] },
+  "idle": { "blank_after_seconds": 1, "ignore_pointer": true }
 }
 "#;
 
@@ -183,6 +193,45 @@ fn a_timeout_added_on_disk_blanks_a_desk_that_had_no_clock() {
     compositor.reconfigure(A_DESK_THAT_BLANKS);
 
     compositor.wait_for_log("nobody is at this desktop; its screens go dark");
+}
+
+/// A pointer ignored by reload ends no idle spell, and a key still does.
+#[test]
+fn a_pointer_ignored_on_disk_leaves_a_dark_desk_to_its_keys() {
+    let compositor = Compositor::started_with(NOBODY_MENTIONED_IDLE);
+    let mut chrome = compositor.chrome();
+    compositor.reconfigure(A_DESK_THAT_IGNORES_ITS_POINTER);
+    let dark = |message: &HostMessage| matches!(message, HostMessage::Idle { idle: true });
+    let lit = |message: &HostMessage| matches!(message, HostMessage::Idle { idle: false });
+    chrome.wait_for(dark).expect("the desk goes dark");
+
+    for kind in [Some(ActivityKind::Pointer), None] {
+        chrome
+            .say(&ChromeMessage::Activity { input: None, kind })
+            .expect("the chrome socket takes activity");
+    }
+    // Answered after the activity, which would have lit the desk first.
+    chrome
+        .say(&ChromeMessage::SystemRequest {
+            id: 3,
+            request: SystemRequest::IdleHolds,
+        })
+        .expect("the chrome socket takes a system call");
+    let heard = chrome
+        .wait_for(|message| {
+            lit(message) || matches!(message, HostMessage::SystemReply { id: 3, .. })
+        })
+        .expect("the page hears something");
+    assert!(!lit(&heard), "the pointer lit the desk");
+
+    chrome
+        .say(&ChromeMessage::Activity {
+            input: None,
+            kind: Some(ActivityKind::Key),
+        })
+        .expect("the chrome socket takes activity");
+    let heard = chrome.wait_for(lit);
+    heard.expect("the key lights the desk");
 }
 
 /// Changing the timeout while the screens are off turns them back on.

@@ -14,10 +14,33 @@ cd "$fork"
 # A killed build's lock would stop the refresh; this one holds the tree.
 rm -f "$src/.git/index.lock"
 git -C "$src" update-index -q --refresh || true
+
+# A rebuild of everything takes hours, so nothing starts one unasked. To ask,
+# `touch` this; the build that uses it removes it.
+allowed="$(dirname "$chromium")/allow-full-build"
+refuse_unless_allowed() { # $1 how many, $2 of what, $3 the most an edit explains
+  if [ "$1" -gt "$3" ]; then
+    if [ ! -e "$allowed" ]; then
+      echo "error: $1 $2, so this would rebuild most of Chromium; touch $allowed to let it" >&2
+      exit 1
+    fi
+    echo "$1 $2; $allowed lets it"
+    rebuilt=1
+  fi
+}
+rebuilt=0
+synced="$(cat "$chromium/.domicile-synced-pin" 2>/dev/null || true)"
+if [ "$synced" = "$pin" ]; then
+  # Before the reset, which would give each of them a new mtime.
+  refuse_unless_allowed "$(git -C "$src" diff-files --name-only --ignore-submodules | wc -l)" \
+    "files differ from git's index" 5000
+else
+  refuse_unless_allowed 1 "Chromium pin moved" 0
+fi
 # The scripts give unchanged files their old mtimes back, so a rebuild compiles
 # what the series changed and no more.
 .github/scripts/engine-reset.sh "$src"
-if [ "$(cat "$chromium/.domicile-synced-pin" 2>/dev/null || true)" != "$pin" ]; then
+if [ "$synced" != "$pin" ]; then
   # The pin moved: gclient brings every dependency to it.
   (cd "$chromium" && gclient sync --revision "src@$pin" --no-history --shallow \
     --reset --delete_unversioned_trees)
@@ -54,7 +77,15 @@ gn gen out/Local --args='
   import("//build/args/domicile_trim.gn")
   import("//build/args/domicile_node.gn")
 '
-autoninja -C out/Local chrome domicile_engine third_party/electron_node:node
+targets=(chrome domicile_engine third_party/electron_node:node)
+# The plan, with nothing compiled. One that cannot be read stops the build.
+plan="$(autoninja -n -C out/Local "${targets[@]}" 2>&1 | tr '\r' '\n')"
+steps="$(grep -oE 'Build Succeeded: [0-9]+ steps' <<<"$plan" | grep -oE '[0-9]+' | tail -1)" ||
+  { echo "error: cannot tell how much this would build:" >&2; tail -20 <<<"$plan" >&2; exit 1; }
+echo "to build: $steps steps"
+refuse_unless_allowed "$steps" "steps to build" 5000
+if [ "$rebuilt" = 1 ]; then rm -f "$allowed"; fi
+autoninja -C out/Local "${targets[@]}"
 
 # What engine-release-package.sh puts in a release tarball.
 mkdir -p "$stage/locales" "$stage/dictionaries"

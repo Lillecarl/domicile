@@ -2458,6 +2458,7 @@ describe("Shell", () => {
       clientAppears("term");
       press("braceright");
       clientAppears("editor");
+      motionsPlayOut(container);
 
       press("parenleft");
 
@@ -2473,6 +2474,7 @@ describe("Shell", () => {
       press("e");
       press("braceright");
       clientAppears("editor");
+      motionsPlayOut(container);
 
       press("parenleft");
 

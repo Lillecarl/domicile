@@ -391,7 +391,18 @@ void LoadUnpackedIntoTheShellProfile(const base::FilePath& directory,
     std::move(loaded).Run(base::unexpected(kNoProfile));
     return;
   }
-  LoadUnpackedInto(*profile, directory, std::move(loaded));
+  LoadUnpackedInto(
+      *profile, directory,
+      base::BindOnce(
+          [](base::WeakPtr<Profile> profile, UnpackedLoaded loaded,
+             base::expected<std::string, std::string> result) {
+            if (profile && result.has_value()) {
+              BrowserProfileRegistry::Get().ReloadUnpackedElsewhere(
+                  *profile, result.value());
+            }
+            std::move(loaded).Run(std::move(result));
+          },
+          profile->GetWeakPtr(), std::move(loaded)));
 }
 
 base::expected<void, std::string> UninstallFromTheShellProfile(

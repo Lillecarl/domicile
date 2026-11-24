@@ -552,7 +552,7 @@ abcdefghijklmnopabcdefghijklmnop
 ```
 
 - An extension already loaded from that directory reloads in place and keeps
-  its id. Run it again after each edit.
+  its id, in every browser profile. Run it again after each edit.
 - A relative directory is relative to where the command runs.
 - It stays across restarts until it is uninstalled, as one loaded from the
   Settings app does ([Extensions](architecture/EXTENSIONS.md#from-the-settings-app)).

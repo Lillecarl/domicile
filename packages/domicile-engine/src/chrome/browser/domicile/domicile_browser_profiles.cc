@@ -663,6 +663,35 @@ void BrowserProfileRegistry::OnMirroredUnpackedLoaded(
   }
 }
 
+void BrowserProfileRegistry::ReloadUnpackedElsewhere(Profile& from,
+                                                     const std::string& id) {
+  for (Profile* profile : ReadyExtensionProfiles()) {
+    const extensions::Extension* extension =
+        extensions::ExtensionRegistry::Get(profile)->GetInstalledExtension(id);
+    // Where it is missing, MirrorUserExtensions installs it.
+    if (profile == &from || extension == nullptr ||
+        extension->location() !=
+            extensions::mojom::ManifestLocation::kUnpacked) {
+      continue;
+    }
+    const BrowserProfile* as = AsBrowserProfile(*profile);
+    // A copy: the reload frees the extension.
+    const base::FilePath directory = extension->path();
+    LoadUnpackedInto(
+        *profile, directory,
+        base::BindOnce(
+            [](const std::string& name, const std::string& id,
+               base::expected<std::string, std::string> loaded) {
+              if (!loaded.has_value()) {
+                LOG(ERROR) << "domicile: the unpacked extension " << id
+                           << " did not reload in browser profile " << name
+                           << ": " << loaded.error();
+              }
+            },
+            as == nullptr ? std::string() : as->id, id));
+  }
+}
+
 void BrowserProfileRegistry::UninstallEverywhere(Profile& from,
                                                  const std::string& id) {
   for (Profile* profile : ReadyExtensionProfiles()) {

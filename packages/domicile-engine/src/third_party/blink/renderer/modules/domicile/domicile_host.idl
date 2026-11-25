@@ -273,6 +273,13 @@
   [CallWith=ScriptState, RaisesException] undefined activateExtension(
       DOMString id);
 
+  // Keep `keys`, each as `Ctrl+T`, from extensions, in place of those given
+  // before: a command bound to one has no keys, and the page gets them, then
+  // the shell. None are kept by default. Over the tray's pipe, as
+  // activateExtension().
+  [CallWith=ScriptState, RaisesException] undefined reserveExtensionKeys(
+      sequence<DOMString> keys);
+
   // Run command `name` of extension `id`, one of `extensionCommands`, as its
   // keys do in Chrome: the extension is granted activeTab on the active tab
   // and hears `commands.onCommand`. The action's own command,

@@ -16,7 +16,8 @@
 # fixture's keys; that runExtensionCommand() reached `commands.onCommand`; that
 # extensionMenu() has the fixture's checkbox and runExtensionMenuItem() reached
 # `contextMenus.onClicked` with it checked; and that running
-# `_execute_action` asked the shell for the fixture's popup.
+# `_execute_action` asked the shell for the fixture's popup. Then that a key the
+# shell reserves is no longer the fixture's.
 #
 # Not here: keys pressed in a page, and the items of its own context menu
 # (guard-extension-page.sh).
@@ -131,10 +132,10 @@ TRIES=$((FOR_SECONDS * 4))
 wait_for_line "$TRIES" '"GUARD listening"' "$ENGINE_LOG" ||
   echo "the shell module never said it was listening; the verdict below says what that means" >&2
 
-# 3. The wait: the claim ends on the popup, the control on its empty menu.
+# 3. The wait: the claim ends on the reserved key, the control on its empty menu.
 #    Either stops at a failed call.
 for _ in $(seq 1 "$TRIES"); do
-  grep -qE '"GUARD (popup|none|failed )' "$ENGINE_LOG" 2>/dev/null && break
+  grep -qE '"GUARD (reserved|none|failed )' "$ENGINE_LOG" 2>/dev/null && break
   sleep 0.25
 done
 
@@ -154,7 +155,7 @@ if [ "$NEGATIVE" = "1" ]; then
   # Any row for the fixture at all: an empty list must leave none.
   MEASURED="control $SENT $HEARD $(saw '"GUARD row ') $(saw '"GUARD none"') $(saw 'domicile: ran command')"
 else
-  MEASURED="commands $SENT $HEARD $(saw "\"GUARD row fill=$FILL action=$ACTION\"") $(saw '"GUARD ran badge=c:fill"') $(saw '"GUARD menu type=checkbox label=Remember"') $(saw '"GUARD clicked badge=m:remember:true"') $(saw "\"GUARD popup url=chrome-extension://$ID/popup.html\"")"
+  MEASURED="commands $SENT $HEARD $(saw "\"GUARD row fill=$FILL action=$ACTION\"") $(saw '"GUARD ran badge=c:fill"') $(saw '"GUARD menu type=checkbox label=Remember"') $(saw '"GUARD clicked badge=m:remember:true"') $(saw "\"GUARD popup url=chrome-extension://$ID/popup.html\"") $(saw '"GUARD reserved fill=."')"
 fi
 
 echo
@@ -164,14 +165,14 @@ grep -F '"GUARD ' "$ENGINE_LOG" | tail -12 || true
 
 # WHICH END TO BLAME. `packages/domicile-engine/tests/test-extension-commands-guard.sh` runs this
 # block directly. MEASURED is "commands <sent> <heard> <row> <ran> <menu>
-# <clicked> <popup>", or "control <sent> <heard> <row> <none> <ran>".
+# <clicked> <popup> <reserved>", or "control <sent> <heard> <row> <none> <ran>".
 FAILURE=""
 PASSED=""
 case "$MEASURED" in
-"commands 1 1 1 1 1 1 1")
+"commands 1 1 1 1 1 1 1 1")
   PASSED="the shell heard the fixture's keys, its service worker heard the \
-command and the menu item the shell ran, and its action's own command asked \
-for its popup"
+command and the menu item the shell ran, its action's own command asked for its \
+popup, and a key the shell reserved is no longer the fixture's"
   ;;
 "commands 0 "*)
   FAILURE="the list was never sent: the browser did not connect to the \
@@ -201,7 +202,11 @@ MenuReader"
 contextMenus.onClicked with the box checked: RunActionMenuItem, or an id the \
 newest menu does not have"
   ;;
-"commands 1 1 1 1 1 1 0")
+"commands 1 1 1 1 1 1 1 0")
+  FAILURE="a key the shell reserved is still the fixture's: \
+reserveExtensionKeys(), ReserveKeys, or IsReservedByShell"
+  ;;
+"commands 1 1 1 1 1 1 0 "*)
   FAILURE="running _execute_action did not ask the shell for the fixture's \
 popup"
   ;;

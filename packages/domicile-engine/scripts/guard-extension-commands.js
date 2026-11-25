@@ -15,6 +15,8 @@
 //   GUARD menu type=… label=…  the item it adds to its action's menu
 //   GUARD clicked badge=…      its service worker heard the click
 //   GUARD popup url=…          its action's own command asked for its popup
+//   GUARD reserved fill=…         (after the popup) its keys once the shell kept
+//                              Ctrl+Shift+L for itself
 //   GUARD none                 (the control) its menu is empty
 //
 // Everything is inside `HostShell`, which the document Domicile writes calls once
@@ -62,8 +64,11 @@ export const HostShell = (_root, desktop) => {
   };
   host.addEventListener("extensionschanged", check);
 
+  let reserving = false;
   host.addEventListener("extensionpopuprequested", ({ popup }) => {
     say(`popup url=${popup}`);
+    reserving = true;
+    host.reserveExtensionKeys(["Ctrl+Shift+L"]);
   });
 
   // The service worker adds its item after it starts, so asked again until it
@@ -96,6 +101,10 @@ export const HostShell = (_root, desktop) => {
       const keys = (name) =>
         row.commands.find((command) => command.name === name)?.keys;
       say(`row fill=${keys("fill")} action=${keys("_execute_action")}`);
+    }
+    if (reserving && row !== undefined) {
+      const { keys } = row.commands.find(({ name }) => name === "fill");
+      say(`reserved fill=${keys}.`);
     }
     if (started) {
       return;

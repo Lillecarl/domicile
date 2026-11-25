@@ -270,17 +270,19 @@ std::unique_ptr<GuestExtensionMenu> PageMenuOf(
   return std::make_unique<PageMenu>(reader.Read(/*first_id=*/1), params);
 }
 
-ExtensionCommand CommandAsEntry(CommandService& service,
+ExtensionCommand CommandAsEntry(content::BrowserContext& context,
+                                CommandService& service,
                                 const Extension& extension,
                                 const ui::Command& command) {
   // The keys bound now. A command's own are only what its manifest suggests,
-  // which another extension may hold.
+  // which another extension may hold, or the shell.
   const Command bound =
       service.FindCommandByName(extension.id(), command.command_name());
   return ExtensionCommand{
       .name = command.command_name(),
       .description = base::UTF16ToUTF8(command.description()),
-      .keys = bound.accelerator().key_code() == ui::VKEY_UNKNOWN
+      .keys = bound.accelerator().key_code() == ui::VKEY_UNKNOWN ||
+                      IsReservedByShell(&context, bound.accelerator())
                   ? std::string()
                   : ui::Command::AcceleratorToString(bound.accelerator()),
       .global = bound.global(),
@@ -372,13 +374,13 @@ ExtensionCommands CommandsOf(content::BrowserContext& context,
         extensions::CommandsInfo::GetBrowserActionCommand(&extension),
         extensions::CommandsInfo::GetPageActionCommand(&extension)}) {
     if (action != nullptr) {
-      commands.commands.push_back(CommandAsEntry(*service, extension, *action));
+      commands.commands.push_back(CommandAsEntry(context, *service, extension, *action));
     }
   }
   if (const ui::CommandMap* named =
           extensions::CommandsInfo::GetNamedCommands(&extension)) {
     for (const auto& [name, command] : *named) {
-      commands.commands.push_back(CommandAsEntry(*service, extension, command));
+      commands.commands.push_back(CommandAsEntry(context, *service, extension, command));
     }
   }
   return commands;

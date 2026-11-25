@@ -81,6 +81,12 @@ export type Extensions = {
   menu: (id: string) => Promise<readonly AppMenuEntry[]>;
   on: On<ExtensionsListeners>;
   /**
+   * Keeps `keys`, each as `Ctrl+T`, from extensions, in place of those given
+   * before. A command bound to one has no keys, and the page gets them, then
+   * the shell. None are kept by default.
+   */
+  reserveKeys: (keys: readonly string[]) => void;
+  /**
    * Runs command `name` of extension `id` on the active page, as its keys do
    * in Chrome. The action's own, `_execute_action`, runs the action, and is a
    * `popup` event when the action has a popup.
@@ -114,6 +120,7 @@ export type ExtensionsHost = Pick<
   | "extensions"
   | "installedExtensions"
   | "removeEventListener"
+  | "reserveExtensionKeys"
   | "runExtensionCommand"
   | "runExtensionMenuItem"
   | "setExtensionEnabled"
@@ -170,6 +177,9 @@ export const extensions = (host: ExtensionsHost): Extensions => {
             ),
         ),
     }),
+    reserveKeys: (keys) => {
+      host.reserveExtensionKeys([...keys]);
+    },
     runCommand: (id, name) => {
       host.runExtensionCommand(id, name);
     },

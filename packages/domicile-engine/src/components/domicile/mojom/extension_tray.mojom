@@ -105,6 +105,11 @@ interface ExtensionTray {
   // uninstall.
   Activate(string id);
 
+  // Keeps `keys` (`Ctrl+T`) from extensions, replacing those given before: a
+  // command bound to one has no keys, and the page gets them. Until this
+  // document goes.
+  ReserveKeys(array<string> keys);
+
   // Runs command `name` of extension `id` (chrome.commands), as its keys do in
   // Chrome: grants activeTab on the active tab, then dispatches
   // `commands.onCommand` with that tab. The action's own command

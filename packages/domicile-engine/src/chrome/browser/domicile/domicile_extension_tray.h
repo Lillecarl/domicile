@@ -12,6 +12,10 @@
 
 class GURL;
 
+namespace ui {
+class Accelerator;
+}
+
 namespace content {
 class BrowserContext;
 class RenderFrameHost;
@@ -43,6 +47,11 @@ void AskShellToRunCommand(content::BrowserContext* context,
                           const std::string& id,
                           const std::string& name,
                           base::OnceCallback<void(bool)> handled);
+
+// Whether a shell document of `context` keeps `keys` from extensions. See
+// mojom::ExtensionTray.ReserveKeys.
+bool IsReservedByShell(content::BrowserContext* context,
+                       const ui::Accelerator& keys);
 
 }  // namespace domicile
 

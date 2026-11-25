@@ -88,6 +88,16 @@ describe("extensions", () => {
     });
   });
 
+  it("keeps the shell's keys from extensions", () => {
+    const fake = new FakeDomicileHost();
+
+    desktop(fake.host).extensions.reserveKeys(["Ctrl+T", "Ctrl+W"]);
+
+    expect(fake.calls).toStrictEqual([
+      ["reserveExtensionKeys", ["Ctrl+T", "Ctrl+W"]],
+    ]);
+  });
+
   it("says which command's keys were pressed in a page", () => {
     const fake = new FakeDomicileHost();
     const pressed = { id: action.id, name: "fill", profile: "work" };

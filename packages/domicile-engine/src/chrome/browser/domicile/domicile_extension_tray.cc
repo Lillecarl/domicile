@@ -68,6 +68,9 @@
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "ui/base/accelerators/accelerator.h"
+#include "ui/base/accelerators/command.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
@@ -285,6 +288,12 @@ class ExtensionTray final
     return true;
   }
 
+  // Whether this tray's shell keeps `keys` from extensions in `context`.
+  bool Reserves(content::BrowserContext* context, const ui::Accelerator& keys) {
+    return &BrowserProfileRegistry::Get().HomeOf(*context) == &profile() &&
+           std::ranges::contains(reserved_, keys);
+  }
+
   // Asks this tray's shell whether it runs command `name` of `id`, pressed in
   // a page of `context`. See mojom::ExtensionTrayClient.CommandPressed.
   void AskToRun(content::BrowserContext* context,
@@ -421,6 +430,22 @@ class ExtensionTray final
     if (granter->IsGranted(extension)) {
       LOG(INFO) << "domicile: the tray granted " << id << " activeTab on tab "
                 << TabIdOf(tab) << ".";
+    }
+  }
+
+  void ReserveKeys(const std::vector<std::string>& keys) override {
+    reserved_.clear();
+    for (const std::string& key : keys) {
+      const ui::Accelerator parsed = ui::Command::StringToAccelerator(key);
+      if (parsed.key_code() == ui::VKEY_UNKNOWN) {
+        LOG(WARNING) << "domicile: the shell reserved \"" << key
+                     << "\", which is no key an extension may have.";
+      } else {
+        reserved_.push_back(parsed);
+      }
+    }
+    for (ExtensionTray* tray : Trays()) {
+      tray->SendCommands();
     }
   }
 
@@ -890,6 +915,9 @@ class ExtensionTray final
   // The config's extensions and settings, which the installed list shows.
   PrefChangeRegistrar config_;
 
+  // See ReserveKeys.
+  std::vector<ui::Accelerator> reserved_;
+
   // The commands last sent; empty before any were.
   std::string sent_commands_;
 
@@ -920,6 +948,13 @@ bool RequestExtensionPopup(content::BrowserContext* context,
     sent = tray->RequestPopup(context, id, popup) || sent;
   }
   return sent;
+}
+
+bool IsReservedByShell(content::BrowserContext* context,
+                       const ui::Accelerator& keys) {
+  return std::ranges::any_of(Trays(), [&](ExtensionTray* tray) {
+    return tray->Reserves(context, keys);
+  });
 }
 
 void AskShellToRunCommand(content::BrowserContext* context,

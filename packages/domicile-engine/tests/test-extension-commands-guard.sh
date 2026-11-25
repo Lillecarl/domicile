@@ -60,20 +60,22 @@ says() { # $1 MEASURED, $2 what the sentence must contain
   esac
 }
 
-expect "every step done passes" "pass" "$(verdict "commands 1 1 1 1 1 1 1")"
+expect "every step done passes" "pass" "$(verdict "commands 1 1 1 1 1 1 1 1")"
 expect "no list sent blames the stand-in's connection" "yes" \
-  "$(says "commands 0 0 0 0 0 0 0" "never sent")"
+  "$(says "commands 0 0 0 0 0 0 0 0" "never sent")"
 expect "no list heard blames the binding" "yes" \
-  "$(says "commands 1 0 0 0 0 0 0" "did not bind")"
+  "$(says "commands 1 0 0 0 0 0 0 0" "did not bind")"
 expect "wrong keys blame CommandsOf" "yes" \
-  "$(says "commands 1 1 0 0 0 0 0" "CommandsOf")"
+  "$(says "commands 1 1 0 0 0 0 0 0" "CommandsOf")"
 expect "a command not heard blames RunCommand" "yes" \
-  "$(says "commands 1 1 1 0 0 0 0" "RunCommand")"
+  "$(says "commands 1 1 1 0 0 0 0 0" "RunCommand")"
 expect "no menu blames ActionMenuOf" "yes" \
-  "$(says "commands 1 1 1 1 0 0 0" "ActionMenuOf")"
+  "$(says "commands 1 1 1 1 0 0 0 0" "ActionMenuOf")"
 expect "a click not heard blames RunActionMenuItem" "yes" \
-  "$(says "commands 1 1 1 1 1 0 0" "RunActionMenuItem")"
-expect "no popup is a failure" "fail" "$(verdict "commands 1 1 1 1 1 1 0")"
+  "$(says "commands 1 1 1 1 1 0 0 0" "RunActionMenuItem")"
+expect "a reserved key still the fixture's is a failure" "yes" \
+  "$(says "commands 1 1 1 1 1 1 1 0" "IsReservedByShell")"
+expect "no popup is a failure" "fail" "$(verdict "commands 1 1 1 1 1 1 0 0")"
 expect "the sharp control passes" "pass" "$(verdict "control 1 1 0 1 0")"
 expect "a control that listed the fixture fails" "fail" \
   "$(verdict "control 1 1 1 1 0")"

@@ -255,6 +255,9 @@ class MODULES_EXPORT DomicileHost final
   void setExtensionsProfile(ScriptState*,
                             const String& profile,
                             ExceptionState&);
+  void reserveExtensionKeys(ScriptState*,
+                            const Vector<String>& keys,
+                            ExceptionState&);
   void runExtensionCommand(ScriptState*,
                            const String& id,
                            const String& name,

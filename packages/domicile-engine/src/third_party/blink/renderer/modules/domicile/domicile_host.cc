@@ -1278,6 +1278,14 @@ void DomicileHost::activateExtension(ScriptState*,
   }
 }
 
+void DomicileHost::reserveExtensionKeys(ScriptState*,
+                                        const Vector<String>& keys,
+                                        ExceptionState& exception_state) {
+  if (Ready(exception_state)) {
+    tray_->ReserveKeys(keys);
+  }
+}
+
 void DomicileHost::runExtensionCommand(ScriptState*,
                                        const String& id,
                                        const String& name,

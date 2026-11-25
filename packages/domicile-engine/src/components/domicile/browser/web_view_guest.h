@@ -1441,9 +1441,10 @@ class WebViewGuest : public mojom::WebViewGuest,
   std::optional<gfx::Size> content_size_;
 
   // The newest context menu sent to the element: its id (0 before the first),
-  // its frame, its params and its extension items.
+  // its frame, the document that was in it, its params and its extension items.
   int context_menu_id_ = 0;
   content::GlobalRenderFrameHostId context_menu_frame_;
+  content::WeakDocumentPtr context_menu_document_;
   std::optional<content::ContextMenuParams> context_menu_params_;
   std::unique_ptr<GuestExtensionMenu> context_menu_extensions_;
 

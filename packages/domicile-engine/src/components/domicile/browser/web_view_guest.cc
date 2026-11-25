@@ -2000,6 +2000,7 @@ bool WebViewGuest::HandleContextMenu(
 
   context_menu_id_ += 1;
   context_menu_frame_ = render_frame_host.GetGlobalId();
+  context_menu_document_ = render_frame_host.GetWeakDocumentPtr();
   context_menu_params_ = params;
   context_menu_extensions_ = ExtensionMenus().Run(*guest_contents_, params);
 
@@ -2147,9 +2148,11 @@ void WebViewGuest::RunContextMenuExtensionItem(int32_t menu, int32_t item) {
   if (!IsNewestContextMenu(menu)) {
     return;
   }
+  // The document, not its frame: the item grants activeTab on the page, and a
+  // frame may hold another document by now.
   content::RenderFrameHost* frame =
-      content::RenderFrameHost::FromID(context_menu_frame_);
-  if (frame == nullptr) {
+      context_menu_document_.AsRenderFrameHostIfValid();
+  if (frame == nullptr || !frame->IsActive()) {
     LOG(INFO) << "domicile: the page a <webview>'s context menu was for is "
                  "gone; dropping the extension item.";
     return;

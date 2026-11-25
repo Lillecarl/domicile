@@ -85,7 +85,10 @@ extension popups and other bubbles as them.
   one (`casting/streams.rs`) draw each surface's last frame where the parent's
   frames embed it, cut to the window. A cast draws a surface that has not
   committed since it started from the frame the engine shows. A sync
-  subsurface's frame may reach a cast one frame before its parent's.
+  subsurface's frame may reach a cast one frame before its parent's. While
+  the engine composites in software, a cast has only the frames committed
+  since it started: a still window is blank, and a subsurface is missing
+  until its first commit after its parent lists it.
 - **Check:** `guard-scrolling-bubble.sh` scrolls a window under a sync
   subsurface on `crux` and reads a monitor cast: each frame shows the
   subsurface at the window's content. Its control moves the subsurface a

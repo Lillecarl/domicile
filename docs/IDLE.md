@@ -25,10 +25,11 @@ input, and locks the desktop after `idle.lock_after_seconds`
   window or the shell's page would not reset the clock, and the desk would
   lock under somebody typing.
 - **Input is a key, a touch, a click, a scroll or a pointer that moved on the
-  screen**, less the pointer's when [it is ignored](#ignoring-the-pointer). aura synthesizes a move under a still pointer after a window
-  changes or the displays are configured, and blanking can be such a change. The
-  engine forwards it with `moved: false` (Blink's `movementX/Y` are zero), so
-  the client still hears it and the clock does not.
+  screen**, less the pointer's when [it is ignored](#ignoring-the-pointer).
+  aura synthesizes a move under a still pointer after a window changes or the
+  displays are configured, and blanking can be such a change. The engine
+  forwards it with `moved: false` (Blink's `movementX/Y` are zero), so the
+  client still hears it and the clock does not.
 
 ## Ignoring the pointer
 
@@ -55,6 +56,10 @@ blanked or [asleep](#sleeping-on-demand).
   screen takes keys while dark, and the unlock attempt lights the screens. Keys
   to a native window count.
 - **Idle inhibitors are unaffected.**
+- **So is `local_seconds`** of
+  [`domicile idle-time`](CLI.md#domicile-idle-time---json): agents wait on it,
+  and a hand on the mouse is somebody to keep out of the way of. A mouse that
+  reports motion by itself therefore keeps agents waiting.
 
 ## Blanking
 

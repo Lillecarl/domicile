@@ -228,6 +228,45 @@ fn a_pointer_ignored_on_disk_leaves_a_dark_desk_to_its_keys() {
     heard.expect("the key lights the desk");
 }
 
+/// An ignored pointer is still a hand on this computer: agents wait on
+/// `local_seconds`, whatever the idle clock counts.
+#[test]
+fn an_ignored_pointer_is_still_local_input() {
+    let compositor = Compositor::started_with(A_DESK_THAT_IGNORES_ITS_POINTER);
+    let mut chrome = compositor.chrome();
+    chrome
+        .wait_for(|message| matches!(message, HostMessage::Idle { idle: true }))
+        .expect("the desk goes dark");
+
+    chrome
+        .say(&ChromeMessage::Activity {
+            input: None,
+            kind: Some(ActivityKind::Pointer),
+        })
+        .expect("the chrome socket takes activity");
+    // Settled on the Wayland thread, after the activity.
+    watch(&mut chrome, 3, 1);
+    chrome
+        .wait_for(idle(3, true))
+        .expect("the desk is still idle");
+    chrome
+        .say(&ChromeMessage::WhichIdleTime)
+        .expect("the chrome socket takes a query");
+    let heard = chrome
+        .wait_for(|message| matches!(message, HostMessage::IdleTime { .. }))
+        .expect("the page hears the idle time");
+
+    let HostMessage::IdleTime {
+        seconds,
+        local_seconds,
+    } = heard
+    else {
+        unreachable!("only an idle time was waited for")
+    };
+    assert!(seconds >= 1, "the pointer ended the idle spell");
+    assert_eq!(local_seconds, 0, "the pointer is at this computer");
+}
+
 /// Changing the timeout while the screens are off turns them back on.
 ///
 /// The reload replaces the clock with one from `Idle::after`, which starts

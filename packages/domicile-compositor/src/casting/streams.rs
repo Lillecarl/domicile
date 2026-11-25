@@ -52,10 +52,9 @@ use crate::casting::{Candidate, Consumer, Event, Listener, Region, Request, Sour
 use crate::engine::{BrowserView, BrowserWindow, CaptureId, CapturedFrame};
 use crate::engine_session::Child;
 
-/// A window's frame, as its commit brought it.
+/// How to read a surface's frame, as its commit brought it.
 pub struct Committed<'a> {
     pub app_id: &'a str,
-    pub buffer: &'a WlBuffer,
     /// The part of the buffer that is the window, in buffer pixels, and the
     /// turn that makes it upright.
     pub sampled: Sampled,
@@ -108,6 +107,8 @@ pub struct Streams {
     densities: HashMap<String, (f64, f64)>,
     /// Each cast window's last frame.
     shots: HashMap<String, Shot>,
+    /// The subsurfaces of cast windows whose last frame could not be read.
+    unreadable: HashSet<String>,
     /// Each window's last frame the engine shows, for a shot of it alone.
     shown: HashMap<String, Shown>,
     /// Each surface's subsurfaces as its frames draw them, bottom to top, for
@@ -292,6 +293,7 @@ impl Streams {
             sizes: HashMap::new(),
             densities: HashMap::new(),
             shots: HashMap::new(),
+            unreadable: HashSet::new(),
             shown: HashMap::new(),
             children: HashMap::new(),
             pointer: None,
@@ -1119,12 +1121,13 @@ impl Streams {
         }
     }
 
-    /// A window, or a subsurface in one, committed a frame. Fills its streams'
-    /// buffers and sends the ones that are due. Returns when to call
-    /// [`Streams::tick`], if a filled frame waits.
+    /// A window, or a subsurface in one, committed `buffer`, read as `frame`
+    /// says. Fills its streams' buffers and sends the ones that are due.
+    /// Returns when to call [`Streams::tick`], if a filled frame waits.
     pub fn committed(
         &mut self,
         frame: Committed,
+        buffer: &WlBuffer,
         mut renderer: Option<&mut GlesRenderer>,
         now: Instant,
     ) -> Option<Instant> {
@@ -1132,12 +1135,26 @@ impl Streams {
             .insert(frame.app_id.to_string(), frame.sampled.upright_size());
         self.densities
             .insert(frame.app_id.to_string(), frame.pixels_a_point);
-        let streams = self.streams_of(frame.app_id);
-        if streams.is_empty() {
+        if self.streams_of(frame.app_id).is_empty() {
             return self.next_due();
         }
-        match gpu::snapshot(frame.buffer, renderer.as_deref_mut()) {
+        let snapshot = gpu::snapshot(buffer, renderer.as_deref_mut());
+        self.kept(frame, snapshot, renderer, now)
+    }
+
+    /// The `snapshot` of a frame a surface of a cast window committed, or why
+    /// it could not be kept. Returns as [`Streams::committed`] does.
+    fn kept(
+        &mut self,
+        frame: Committed,
+        snapshot: Result<Snapshot, FillError>,
+        mut renderer: Option<&mut GlesRenderer>,
+        now: Instant,
+    ) -> Option<Instant> {
+        let streams = self.streams_of(frame.app_id);
+        match snapshot {
             Ok(snapshot) => {
+                self.unreadable.remove(frame.app_id);
                 self.shots.insert(
                     frame.app_id.to_string(),
                     Shot {
@@ -1148,8 +1165,17 @@ impl Streams {
                 );
             }
             Err(why) => {
-                for (stream, _) in streams {
-                    self.fail(stream, &why);
+                self.shots.remove(frame.app_id);
+                if !self.windows().contains(frame.app_id) {
+                    self.leave_out(frame.app_id, &why);
+                }
+                for (stream, app_id) in streams {
+                    if app_id == frame.app_id {
+                        self.fail(stream, &why);
+                    } else {
+                        let damage = self.place_in(&app_id, frame.app_id);
+                        self.offer(stream, damage, renderer.as_deref_mut(), now);
+                    }
                 }
                 return self.next_due();
             }
@@ -1163,6 +1189,15 @@ impl Streams {
             self.offer(stream, damage, renderer.as_deref_mut(), now);
         }
         self.next_due()
+    }
+
+    /// Casts of `surface`'s window go on without it until it commits a frame
+    /// they can read.
+    fn leave_out(&mut self, surface: &str, why: &FillError) {
+        // Once, not at each of its frames.
+        if self.unreadable.insert(surface.to_string()) {
+            tracing::error!(%surface, %why, "a subsurface could not be cast");
+        }
     }
 
     /// The engine captured a frame of a display. Keeps it and fills the
@@ -1676,6 +1711,7 @@ impl Streams {
         self.shown.remove(app_id);
         self.children.remove(app_id);
         self.shots.remove(app_id);
+        self.unreadable.remove(app_id);
         let gone: Vec<_> = self
             .casts
             .iter()
@@ -2205,14 +2241,14 @@ mod tests {
     use smithay::utils::Transform;
 
     use super::{
-        compose, cut, damage_in_view, density, heard, view, Cast, EnginePointer, Shot, Shows,
-        Streams,
+        compose, cut, damage_in_view, density, heard, view, Cast, Committed, EnginePointer, Shot,
+        Shows, Streams,
     };
     use crate::buffer_transform::Sampled;
     use crate::casting::audio::Heard;
     use crate::casting::captures::Capturer;
     use crate::casting::cursor::{CursorMode, Sprite};
-    use crate::casting::gpu::Snapshot;
+    use crate::casting::gpu::{FillError, Snapshot};
     use crate::casting::lifecycle::Ended;
     use crate::casting::memory::Mapping;
     use crate::casting::negotiation::Pixel;
@@ -2794,6 +2830,128 @@ mod tests {
             [(0, 0, 100, 50)],
             "not placed yet: all of it"
         );
+    }
+
+    /// [`a_cast_window_with_subsurfaces`] cast by a client that has had its
+    /// first frame and lent a buffer for the next, and what the client hears.
+    fn a_filling_cast() -> (Streams, Channel<ToPipewire>, Instant) {
+        let mut streams = a_cast_window_with_subsurfaces();
+        let (to_clients, heard) = channel();
+        streams.to_clients = to_clients;
+        let stream = StreamId(1);
+        streams.clients.insert(stream);
+        let now = Instant::now();
+        streams.news(
+            ToWayland::Format {
+                stream,
+                format: StreamFormat {
+                    pixel: Pixel::Bgrx,
+                    size: (100, 50),
+                    modifier: None,
+                },
+                framerate: 1000,
+            },
+            None,
+            None,
+            now,
+        );
+        streams.news(ToWayland::Filling { stream, on: true }, None, None, now);
+        for id in [0, 1] {
+            let buffer = BufferId(id);
+            let mapping = Mapping::new(c"test", 100 * 50 * 4).expect("a memfd");
+            let target = Target::Shm(Arc::new(mapping));
+            for news in [
+                ToWayland::Added {
+                    stream,
+                    buffer,
+                    target,
+                },
+                ToWayland::Lent { stream, buffer },
+            ] {
+                streams.news(news, None, None, now);
+            }
+        }
+        assert_eq!(told(&heard), [Told::Filled(vec![(0, 0, 100, 50)])]);
+        (streams, heard, now + Duration::from_secs(1))
+    }
+
+    /// What a cast's client is told.
+    #[derive(Debug, PartialEq)]
+    enum Told {
+        /// A frame, damaged there.
+        Filled(Vec<Rect>),
+        Ended,
+        Other,
+    }
+
+    /// What a cast's client was told since it last read.
+    fn told(heard: &Channel<ToPipewire>) -> Vec<Told> {
+        std::iter::from_fn(|| heard.try_recv().ok())
+            .map(|request| match request {
+                ToPipewire::Filled { damage, .. } => Told::Filled(damage),
+                ToPipewire::End { .. } => Told::Ended,
+                _ => Told::Other,
+            })
+            .collect()
+    }
+
+    /// A commit of `surface` at two pixels a point, all of a `size` buffer.
+    fn commit(surface: &str, size: (i32, i32)) -> Committed<'_> {
+        let whole = (0, 0, size.0, size.1);
+        Committed {
+            app_id: surface,
+            sampled: Sampled {
+                crop: whole,
+                transform: Transform::Normal,
+            },
+            pixels_a_point: (2.0, 2.0),
+            damage: Some(whole),
+        }
+    }
+
+    #[test]
+    fn a_subsurfaces_frame_fills_its_windows_cast() {
+        let (mut streams, heard, now) = a_filling_cast();
+
+        streams.kept(
+            commit("subsurface-1", (60, 20)),
+            Ok(shot_of((60, 20), Transform::Normal).snapshot),
+            None,
+            now,
+        );
+
+        assert_eq!(told(&heard), [Told::Filled(vec![(60, 10, 40, 20)])]);
+    }
+
+    /// A `wp_single_pixel_buffer` is neither shm nor a dmabuf, so the engine
+    /// does not show it either.
+    #[test]
+    fn a_subsurface_that_cannot_be_read_leaves_its_windows_cast() {
+        let (mut streams, heard, now) = a_filling_cast();
+
+        streams.kept(
+            commit("subsurface-1", (1, 1)),
+            Err(FillError::NotABuffer),
+            None,
+            now,
+        );
+
+        assert_eq!(told(&heard), [Told::Filled(vec![(0, 0, 100, 50)])]);
+        assert_eq!(layers(&streams).len(), 1, "nor are its own drawn");
+    }
+
+    #[test]
+    fn a_window_that_cannot_be_read_ends_its_cast() {
+        let (mut streams, heard, now) = a_filling_cast();
+
+        streams.kept(
+            commit("app-1", (1, 1)),
+            Err(FillError::NotABuffer),
+            None,
+            now,
+        );
+
+        assert_eq!(told(&heard), [Told::Ended]);
     }
 
     #[test]

@@ -174,7 +174,6 @@ impl DomicileCompositor {
         let due = self.casting.committed(
             casting::Committed {
                 app_id,
-                buffer,
                 sampled: Sampled { crop, ..sampled },
                 pixels_a_point,
                 damage: damage.map(|region| {
@@ -186,6 +185,7 @@ impl DomicileCompositor {
                     )
                 }),
             },
+            buffer,
             renderer,
             Instant::now(),
         );

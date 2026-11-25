@@ -8,27 +8,13 @@
 #include "base/notreached.h"
 #include "base/time/tick_clock.h"
 #include "ui/events/event.h"
+#include "ui/events/event_constants.h"
 #include "ui/events/types/event_type.h"
 
 namespace domicile {
 namespace {
 
-// Whether the reporter hears `kind` from the event source itself.
-bool HeardFromEventSource(ActivityKind kind) {
-  switch (kind) {
-    case ActivityKind::kKey:
-    case ActivityKind::kPointer:
-    case ActivityKind::kTouch:
-      return true;
-    case ActivityKind::kPointerMotion:
-    case ActivityKind::kOther:
-      return false;
-  }
-  NOTREACHED();
-}
-
-}  // namespace
-
+// What `event` came from.
 ActivityKind ActivityKindOf(const ui::Event& event) {
   if (event.IsKeyEvent()) {
     return ActivityKind::kKey;
@@ -49,6 +35,22 @@ ActivityKind ActivityKindOf(const ui::Event& event) {
   }
   return ActivityKind::kOther;
 }
+
+// Whether the reporter hears `kind` from the event source itself.
+bool HeardFromEventSource(ActivityKind kind) {
+  switch (kind) {
+    case ActivityKind::kKey:
+    case ActivityKind::kPointer:
+    case ActivityKind::kTouch:
+      return true;
+    case ActivityKind::kPointerMotion:
+    case ActivityKind::kOther:
+      return false;
+  }
+  NOTREACHED();
+}
+
+}  // namespace
 
 DeskActivityReporter::DeskActivityReporter(ui::UserActivityDetector* detector,
                                            ui::PlatformEventSource* source,
@@ -75,7 +77,12 @@ void DeskActivityReporter::OnUserActivity(const ui::Event* event) {
 void DeskActivityReporter::WillProcessEvent(const ui::PlatformEvent& event) {}
 
 void DeskActivityReporter::DidProcessEvent(const ui::PlatformEvent& event) {
-  // Ozone's platform events are ui::Events.
+  // Ozone's platform events are ui::Events. The detector skips those of the
+  // mouse that nobody made, such as a nested desk's releases of the buttons
+  // its host took over.
+  if (event->IsMouseEvent() && (event->flags() & ui::EF_IS_SYNTHESIZED)) {
+    return;
+  }
   const ActivityKind kind = ActivityKindOf(*event);
   if (HeardFromEventSource(kind) &&
       throttle_.ShouldReport(clock_->NowTicks())) {

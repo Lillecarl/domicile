@@ -37,8 +37,8 @@ FILTER='PinchMetadataTest.*:ScrollMetadataTest.*:FrameSinkBrokerTest.*:WindowDif
 # WebViewUrl 5, ShellFetch 22, BrowserWindowCaptureTarget 3, BrowserWindowListing 3, ShellWindowWait 4, ShellSwap 12,
 # DeskCursorThemeSource 3, XCursorTheme 5, XCursorThemeDirectory 4,
 # SyncedFrame 7, RenderProcess 3, ShellDeath 5, ProbeWait 3, ScreenCapture 7,
-# ScreenChoice 3, WebViewPartition 5, WillNavigate 4, DeskActivity 5,
-# DeskActivityReporter 6, DeskPointer 5, PointerWarp 10, PointerConfinementBoxes 4, PageMatches 8, ForceDark 2, HiddenFromCaptures 7,
+# ScreenChoice 3, WebViewPartition 5, WillNavigate 4, DeskActivity 4,
+# DeskActivityReporter 7, DeskPointer 5, PointerWarp 10, PointerConfinementBoxes 4, PageMatches 8, ForceDark 2, HiddenFromCaptures 7,
 # LocaleFallback 2, DomicileLcdTextActivation 2, Rtkit 1, DeskGestures 14,
 # NativeGestureSequence 3, EdgeSwipe 10, DeskPointerHiding 2, PointerHiding 8,
 # InputMethodLines 7, DeskModifierTaps 13, TapModifierOf 1, IdentityDialog 11,
@@ -51,8 +51,9 @@ FILTER='PinchMetadataTest.*:ScrollMetadataTest.*:FrameSinkBrokerTest.*:WindowDif
 # DomicileMonitorTwinActivation 1, CursorDisplay 7, DomicileHiddenPageTiles 4,
 # ChannelDisconnectOrder 2, BrokerSocket 3.
 #
-# 1033, and it was 1032 — a click a moving mouse does not hide is one more
-# DeskActivityReporter case. Before that
+# 1033, and it was 1032 — a click a moving mouse does not hide and a release
+# nobody made are two more DeskActivityReporter cases, and the throttle's own
+# DeskActivity case is gone. Before that
 # 1032, and it was 1027 — which input is reported, and as what kind, are five
 # DeskActivityReporter cases. Before that
 # 1027, and it was 1025 — an input's kind and the throttle of keys' own reports

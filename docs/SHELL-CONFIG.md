@@ -386,7 +386,7 @@ on. `idle.lock_after_seconds` is how long before it locks.
   sleeps ([Locking](SHELL-IDLE-AND-LOCK.md#locking)). `0` is an error.
 - `idle.ignore_pointer_motion` ignores pointer motion, for both timeouts, the
   shell's idle watches, the idle time apps read, and lighting dark screens.
-  Keys, touch screens, clicks, wheels, touchpad gestures, unlock attempts and
+  Keys, touch screens, clicks, scrolling, unlock attempts and
   `domicile wake-displays` still count. Defaults to `false`
   ([IDLE.md](IDLE.md#ignoring-pointer-motion)).
 - Apps can block blanking and locking (for example, during a video) with

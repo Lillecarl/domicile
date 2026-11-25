@@ -346,10 +346,10 @@ export type IdleConfig = {
   /**
    * Whether pointer motion is ignored as a sign of somebody at the desktop.
    *
-   * It then holds off neither timeout and lights no dark screen. Keys,
-   * touch screens, clicks, wheels, touchpad gestures, unlock attempts and
-   * `domicile wake-displays` still do. For a mouse that reports motion by
-   * itself.
+   * It then holds off neither timeout, counts for no idle watch or idle time
+   * an app reads, and lights no dark screen. Keys, touch screens, clicks,
+   * scrolling, unlock attempts and `domicile wake-displays` still do. For a
+   * mouse that reports motion by itself.
    */
   ignore_pointer_motion?: boolean;
   /**

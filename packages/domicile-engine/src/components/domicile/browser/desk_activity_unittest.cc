@@ -6,7 +6,6 @@
 #include <string>
 
 #include "base/functional/bind.h"
-#include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace domicile {
@@ -71,18 +70,6 @@ TEST(DeskActivityTest, AKindIsNamedAsTheCompositorReadsIt) {
   EXPECT_EQ(ActivityKindName(ActivityKind::kPointerMotion), "pointer_motion");
   EXPECT_EQ(ActivityKindName(ActivityKind::kTouch), "touch");
   EXPECT_EQ(ActivityKindName(ActivityKind::kOther), "other");
-}
-
-// A held key repeats, and the compositor needs only to hear of it now and
-// then.
-TEST(DeskActivityTest, InputIsReportedAtMostEvery200Milliseconds) {
-  ActivityThrottle throttle;
-  const base::TimeTicks start = base::TimeTicks() + base::Seconds(1);
-
-  EXPECT_TRUE(throttle.ShouldReport(start));
-  EXPECT_FALSE(throttle.ShouldReport(start + base::Milliseconds(199)));
-  EXPECT_TRUE(throttle.ShouldReport(start + base::Milliseconds(200)));
-  EXPECT_FALSE(throttle.ShouldReport(start + base::Milliseconds(399)));
 }
 
 }  // namespace

@@ -389,7 +389,7 @@
         },
         "ignore_pointer_motion": {
           "default": false,
-          "description": "Whether pointer motion is ignored as a sign of somebody at the desktop.\n\nIt then holds off neither timeout and lights no dark screen. Keys,\ntouch screens, clicks, wheels, touchpad gestures, unlock attempts and\n`domicile wake-displays` still do. For a mouse that reports motion by\nitself.",
+          "description": "Whether pointer motion is ignored as a sign of somebody at the desktop.\n\nIt then holds off neither timeout, counts for no idle watch or idle time\nan app reads, and lights no dark screen. Keys, touch screens, clicks,\nscrolling, unlock attempts and `domicile wake-displays` still do. For a\nmouse that reports motion by itself.",
           "type": "boolean"
         },
         "lock_after_seconds": {

@@ -358,7 +358,9 @@ the config to keep one.
 
 Turn every monitor off now. Windows, workspaces and the layout stay as they
 are, and programs keep running. A key, a click or a pointer move lights them
-again, as does `wake-displays`. Input in the first second is ignored, so
+again, as does `wake-displays`. With
+[`idle.ignore_pointer_motion`](IDLE.md#ignoring-pointer-motion), a pointer move
+does not. Input in the first second is ignored, so
 letting go of Enter or of the keybinding that ran it does not undo it. In
 manganese, bind `exec domicile sleep-displays`.
 

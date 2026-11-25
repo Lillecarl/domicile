@@ -39,9 +39,11 @@ ui::TouchEvent Touch() {
                         ui::PointerDetails(ui::EventPointerType::kTouch, 0));
 }
 
-ui::MouseEvent Mouse(ui::EventType type) {
+ui::MouseEvent Mouse(ui::EventType type,
+                     ui::EventFlags flags = ui::EF_NONE) {
   return ui::MouseEvent(type, gfx::PointF(10, 10), gfx::PointF(10, 10),
-                        base::TimeTicks::Now(), ui::EF_LEFT_MOUSE_BUTTON,
+                        base::TimeTicks::Now(),
+                        ui::EF_LEFT_MOUSE_BUTTON | flags,
                         ui::EF_LEFT_MOUSE_BUTTON);
 }
 
@@ -124,18 +126,37 @@ class DeskActivityReporterTest : public testing::Test {
 };
 
 TEST_F(DeskActivityReporterTest, AnEventIsOfTheDeviceItCameFrom) {
-  EXPECT_EQ(ActivityKindOf(Key()), ActivityKind::kKey);
-  EXPECT_EQ(ActivityKindOf(Touch()), ActivityKind::kTouch);
-  EXPECT_EQ(ActivityKindOf(Move()), ActivityKind::kPointerMotion);
-  EXPECT_EQ(ActivityKindOf(Mouse(ui::EventType::kMouseDragged)),
-            ActivityKind::kPointerMotion);
-  EXPECT_EQ(ActivityKindOf(Click()), ActivityKind::kPointer);
-  EXPECT_EQ(ActivityKindOf(Mouse(ui::EventType::kMouseReleased)),
-            ActivityKind::kPointer);
-  EXPECT_EQ(ActivityKindOf(Wheel()), ActivityKind::kPointer);
-  EXPECT_EQ(ActivityKindOf(Scroll()), ActivityKind::kPointer);
-  EXPECT_EQ(ActivityKindOf(Pinch()), ActivityKind::kPointer);
-  EXPECT_EQ(ActivityKindOf(ui::CancelModeEvent()), ActivityKind::kOther);
+  Dispatch(Key());
+  Pass(base::Milliseconds(200));
+  Dispatch(Touch());
+  Pass(base::Milliseconds(200));
+  Dispatch(Move());
+  Pass(base::Milliseconds(200));
+  Dispatch(Mouse(ui::EventType::kMouseDragged));
+  Pass(base::Milliseconds(200));
+  Dispatch(Click());
+  Pass(base::Milliseconds(200));
+  Dispatch(Mouse(ui::EventType::kMouseReleased));
+  Pass(base::Milliseconds(200));
+  Dispatch(Wheel());
+  Pass(base::Milliseconds(200));
+  Dispatch(Scroll());
+  Pass(base::Milliseconds(200));
+  Dispatch(Pinch());
+
+  EXPECT_EQ(
+      reported(),
+      Kinds({ActivityKind::kKey, ActivityKind::kTouch,
+             ActivityKind::kPointerMotion, ActivityKind::kPointerMotion,
+             ActivityKind::kPointer, ActivityKind::kPointer,
+             ActivityKind::kPointer, ActivityKind::kPointer,
+             ActivityKind::kPointer}));
+}
+
+TEST_F(DeskActivityReporterTest, AReleaseNobodyMadeIsNoActivity) {
+  Dispatch(Mouse(ui::EventType::kMouseReleased, ui::EF_IS_SYNTHESIZED));
+
+  EXPECT_EQ(reported(), Kinds());
 }
 
 // The detector reports the motion and then nothing for 200 ms.

@@ -40,9 +40,6 @@ class Event;
 
 namespace domicile {
 
-// What `event` came from.
-ActivityKind ActivityKindOf(const ui::Event& event);
-
 // Reports the desk's input and its kind.
 //
 // `ui::UserActivityDetector` watches for pointer motion: it sees each event as

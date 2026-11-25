@@ -564,10 +564,10 @@ in {
             };
             ignore_pointer_motion = lib.mkOption {
               description = ''
-                Whether pointer motion is ignored for both timeouts and for
-                lighting dark screens. Keys, touch screens, clicks, wheels and
-                touchpad gestures still count. For a mouse that reports motion
-                by itself.
+                Whether pointer motion is ignored for both timeouts, the
+                shell's idle watches, the idle time apps read and lighting dark
+                screens. Keys, touch screens, clicks and scrolling still count.
+                For a mouse that reports motion by itself.
 
                 Applied on reload.
               '';

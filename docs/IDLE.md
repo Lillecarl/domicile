@@ -50,11 +50,14 @@ screens that are blanked or [asleep](#sleeping-on-demand).
 - **The engine reports keys, touches and the pointer's own input on their own
   throttle.** `ui::UserActivityDetector` reports one event of any kind each
   200 ms, so a moving mouse would hide them.
+- **A gesture the shell takes counts for nothing**, with the option on or off: a
+  touchpad swipe, hold or pinch it listens for, or a touch screen edge swipe.
+  The engine reads it before it is an event.
 - **An engine that sends no kind** therefore counts no key typed into a browser
-  window or the shell's page, and no click there. The desk can lock under somebody typing there,
-  and those keys do not light a dark screen. Nobody is locked out: the lock
-  screen takes keys while dark, and the unlock attempt lights the screens. Keys
-  to a native window count.
+  window or the shell's page, and no click there. The desk can lock under
+  somebody typing there, and those keys do not light a dark screen. Nobody is
+  locked out: the lock screen takes keys while dark, and the unlock attempt
+  lights the screens. Keys to a native window count.
 - **Idle inhibitors are unaffected.**
 - **So is `local_seconds`** of
   [`domicile idle-time`](CLI.md#domicile-idle-time---json): agents wait on it,

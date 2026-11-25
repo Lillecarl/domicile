@@ -616,10 +616,10 @@ pub struct IdleConfig {
     pub lock_after_seconds: Option<u64>,
     /// Whether pointer motion is ignored as a sign of somebody at the desktop.
     ///
-    /// It then holds off neither timeout and lights no dark screen. Keys,
-    /// touch screens, clicks, wheels, touchpad gestures, unlock attempts and
-    /// `domicile wake-displays` still do. For a mouse that reports motion by
-    /// itself.
+    /// It then holds off neither timeout, counts for no idle watch or idle time
+    /// an app reads, and lights no dark screen. Keys, touch screens, clicks,
+    /// scrolling, unlock attempts and `domicile wake-displays` still do. For a
+    /// mouse that reports motion by itself.
     pub ignore_pointer_motion: bool,
 }
 

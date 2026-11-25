@@ -20,6 +20,12 @@ Each agent session has a seat of its own, so an agent clicks and types in one na
 
 [Agents](AGENTS.md) · [Agent seats](architecture/AGENT-SEATS.md) · [`domicile pointer`](CLI.md#domicile-pointer---agent-session-xy-clickdouble-clickright-clickmiddle-click) · [`domicile idle-time`](CLI.md#domicile-idle-time---json)
 
+### Shader effects
+
+Your shell can draw its own SkSL over any element. Register it with `domicile.effects.register(name, { sksl, outset })`, then use it with `filter: domicile-shader(name, …)` or `backdrop-filter`. Its numbers animate with CSS transitions, and it composes with the built-in filters. When the GPU hangs on an effect, the engine drops it and `effects.on("lost")` names it.
+
+[Design](architecture/MOTION.md#shader-primitive)
+
 ## 1.3.0
 
 _November 24, 2026_

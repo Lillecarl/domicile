@@ -11,6 +11,10 @@ _Unreleased_
 
 An agent now clicks and types with a pointer and keyboard of its own, so it can work in one app while you work in another. It never moves your pointer or changes what you're typing in, and an app you're using stays yours.
 
+### Fixes
+
+- A screenshot or a cast of a Firefox window shows the window instead of a blank picture.
+
 ## 1.3.0
 
 _November 24, 2026_

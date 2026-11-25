@@ -3,4 +3,4 @@
 "domicile": patch
 ---
 
-`domicile load-extension` reloads an extension in every browser profile, not only the default one.
+Loading an unpacked extension again, as the Settings app's **Load unpacked folder** does, reloads it in every browser profile that has it. It ends once the last profile has reloaded, and names each profile that failed.

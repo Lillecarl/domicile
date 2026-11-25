@@ -54,6 +54,10 @@ An effect can draw the element through a mesh, a grid for cloth or instances for
 
 [Design](architecture/MOTION.md#shader-primitive)
 
+### Fixes
+
+- Setting a site's permission lets a site ask again that Chrome stopped for unanswered requests. [Browser windows](SHELL-BROWSER-WINDOWS.md)
+
 ## 1.3.0
 
 _November 24, 2026_

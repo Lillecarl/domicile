@@ -78,6 +78,10 @@ An effect can draw the element through a mesh, a grid for cloth or instances for
 
 [`idle`](SHELL-CONFIG.md#idle)
 
+### Also new
+
+- Pages no `<webview>` shows are unloaded while the computer is short of memory, and load again when they are shown. A window has `isDiscarded`, and `browser.discard(id)` unloads one by hand. [Browser windows](SHELL-BROWSER-WINDOWS.md)
+
 ### Fixes
 
 - An extension that asks for a page's language, such as Ghostery, is refused and the desktop stays up. [Extensions](SHELL-EXTENSIONS.md)

@@ -30,7 +30,7 @@ FILTER='PinchMetadataTest.*:ScrollMetadataTest.*:FrameSinkBrokerTest.*:WindowDif
 # DomicileDisplayRegions 27, DomicileDeskTargeter 4, PlaceholderStage 3,
 # SystemCall 6, PortalRequest 3, FileChoice 13, DisplayCapture 9,
 # CapturedFourcc 1, DisplayCaptureTarget 4, HeldChords 6, ForwardedKeys 5,
-# SitePermissions 11,
+# SitePermissions 12,
 # ControlChannel 30, DeviceChoices 9, SurfaceFrames 8, SurfaceHolds 6,
 # GuestDialogs 6, DownloadTally 6, SurfaceSubmits 4, SurfaceBacklog 4,
 # PrivatePages 3, ShellOrigin 4, AppRoots 4, AppChannel 3, AppDocument 3,
@@ -51,6 +51,8 @@ FILTER='PinchMetadataTest.*:ScrollMetadataTest.*:FrameSinkBrokerTest.*:WindowDif
 # DomicileMonitorTwinActivation 1, CursorDisplay 7, DomicileHiddenPageTiles 4,
 # ChannelDisconnectOrder 2, BrokerSocket 3.
 #
+# 1026, and it was 1025 — a choice that lets a site Chrome stopped ask again is
+# one SitePermissions case. Before that
 # 1025, and it was 1020 — a buffer viz read on several GPU streams is one
 # more FrameSinkBroker case and one more SurfaceHolds one, and the broker
 # connection closing on exec and never blocking are three BrokerSocket cases.

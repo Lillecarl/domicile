@@ -25,6 +25,7 @@ use std::time::Instant;
 
 use domicile_protocol::{PointerOverWindow, ShotWindow};
 use pipewire as pw;
+use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::allocator::Buffer as _;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::ImportDma as _;
@@ -1106,32 +1107,37 @@ impl Streams {
 
     /// Keeps the frame each surface of window `app_id` last showed, where no
     /// commit since the cast started has left one: a still surface, like the
-    /// toplevel Firefox draws its content over, may never commit again.
-    fn keep_what_is_shown(&mut self, app_id: &str, mut renderer: Option<&mut GlesRenderer>) {
+    /// toplevel Firefox draws its content over, may never commit again. Fails
+    /// if the window's own frame does not `import`.
+    fn keep_what_is_shown(
+        &mut self,
+        app_id: &str,
+        mut import: impl FnMut(&Dmabuf) -> Result<Snapshot, FillError>,
+    ) -> Result<(), FillError> {
         for surface in shots::surfaces(app_id, &self.children) {
-            if self.shots.contains_key(&surface) {
+            if self.shots.contains_key(&surface) || self.unreadable.contains(&surface) {
                 continue;
             }
-            let (Some(shown), Some(renderer)) = (self.shown.get(&surface), renderer.as_deref_mut())
-            else {
+            let Some(shown) = self.shown.get(&surface) else {
                 continue;
             };
-            match renderer.import_dmabuf(&shown.dmabuf, None) {
-                Ok(texture) => {
+            match import(&shown.dmabuf) {
+                Ok(snapshot) => {
                     let sampled = shots::sampled(shown);
                     self.shots.insert(
                         surface,
                         Shot {
-                            snapshot: Snapshot::Texture(texture),
+                            snapshot,
                             sampled,
                             pixels_a_point: shown.pixels_a_point,
                         },
                     );
                 }
-                // Its next commit may import.
-                Err(why) => debug!(%surface, %why, "a shown frame could not be cast"),
+                Err(why) if surface == app_id => return Err(why),
+                Err(why) => self.leave_out(&surface, &why),
             }
         }
+        Ok(())
     }
 
     /// A window, or a subsurface in one, committed `buffer`, read as `frame`
@@ -1823,7 +1829,16 @@ impl Streams {
         now: Instant,
     ) {
         if let Some(Shows::Window(app_id)) = self.casts.get(&stream).map(|cast| &cast.shows) {
-            self.keep_what_is_shown(&app_id.clone(), renderer.as_deref_mut());
+            let app_id = app_id.clone();
+            if let Some(renderer) = renderer.as_deref_mut() {
+                let kept = self.keep_what_is_shown(&app_id, |dmabuf| {
+                    Ok(Snapshot::Texture(renderer.import_dmabuf(dmabuf, None)?))
+                });
+                if let Err(why) = kept {
+                    self.fail(stream, &why);
+                    return;
+                }
+            }
         }
         let Some(cast) = self.casts.get_mut(&stream) else {
             return;
@@ -3132,6 +3147,68 @@ mod tests {
 
         assert_eq!(told(&heard), [Told::Filled(vec![(0, 0, 100, 50)])]);
         assert_eq!(layers(&streams)[2], ((0, 0, 2, 2), (62, 12, 4, 4)));
+    }
+
+    /// Keeps what `app-1`'s surfaces show through an import that fails for a
+    /// 20 pixel wide dmabuf. Returns the width of each it imports.
+    fn keep_what_is_shown(streams: &mut Streams) -> (Result<(), FillError>, Vec<u32>) {
+        let mut imported = Vec::new();
+        let kept = streams.keep_what_is_shown("app-1", |dmabuf| {
+            imported.push(dmabuf.width());
+            match dmabuf.width() {
+                20 => Err(FillError::Dmabuf),
+                _ => Ok(shot_of((1, 1), Transform::Normal).snapshot),
+            }
+        });
+        (kept, imported)
+    }
+
+    /// A still toplevel may never commit while it is cast.
+    #[test]
+    fn a_cast_keeps_what_its_window_shows_where_no_commit_has_left_a_frame() {
+        let mut streams = a_cast_window_with_subsurfaces();
+        streams.shots.remove("app-1");
+        streams.shown("app-1", shown((100, 50), (1.5, 1.5)));
+        streams.shown("subsurface-1", shown((60, 20), (1.5, 1.5)));
+
+        let (kept, imported) = keep_what_is_shown(&mut streams);
+
+        assert!(kept.is_ok());
+        assert_eq!(imported, [100], "a subsurface's commit is newer");
+        assert_eq!(streams.shots["app-1"].pixels_a_point, (1.5, 1.5));
+        assert_eq!(streams.shots["app-1"].sampled.crop, (0, 0, 100, 50));
+    }
+
+    #[test]
+    fn a_shown_subsurface_that_does_not_import_waits_for_its_next_commit() {
+        let (mut streams, _heard, now) = a_filling_cast();
+        streams.shots.remove("subsurface-2");
+        streams.shown("subsurface-2", shown((20, 20), (2.0, 2.0)));
+
+        let (kept, imported) = keep_what_is_shown(&mut streams);
+        assert!(kept.is_ok());
+        assert_eq!(imported, [20]);
+        let (_, imported) = keep_what_is_shown(&mut streams);
+        assert!(imported.is_empty(), "not tried again");
+
+        streams.kept(
+            commit("subsurface-2", (4, 4)),
+            Ok(shot_of((4, 4), Transform::Normal).snapshot),
+            None,
+            now,
+        );
+        assert_eq!(layers(&streams).len(), 3);
+    }
+
+    #[test]
+    fn a_shown_window_that_does_not_import_cannot_be_cast() {
+        let mut streams = a_cast_window_with_subsurfaces();
+        streams.shots.remove("app-1");
+        streams.shown("app-1", shown((20, 20), (2.0, 2.0)));
+
+        let (kept, _) = keep_what_is_shown(&mut streams);
+
+        assert!(kept.is_err());
     }
 
     #[test]

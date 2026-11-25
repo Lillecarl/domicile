@@ -16,7 +16,7 @@ use tracing::{debug, info, warn};
 use crate::buffer_transform::Sampled;
 use crate::client_damage::Region;
 use crate::engine_session::{Child, EngineSession};
-use crate::surface_commit::committed_buffer;
+use crate::surface_commit::{committed_buffer, Mapping};
 use crate::{casting, engine};
 use crate::{CalloopData, DomicileCompositor, Gpu};
 
@@ -163,18 +163,14 @@ impl DomicileCompositor {
         pixels_a_point: (f64, f64),
         damage: Option<Region>,
     ) {
-        let crop = match (sampled.crop, committed_buffer(buffer)) {
-            ((_, _, 0, 0), Some(committed)) => {
-                let (width, height) = committed.size();
-                (0, 0, width as i32, height as i32)
-            }
-            (crop, _) => crop,
-        };
+        // A buffer of no known kind has no size, and is not read.
+        let sampled =
+            committed_buffer(buffer).map_or(sampled, |committed| sampled.of(committed.size()));
         let renderer = self.gpu.as_mut().map(Gpu::renderer);
         let due = self.casting.committed(
             casting::Committed {
                 app_id,
-                sampled: Sampled { crop, ..sampled },
+                sampled,
                 pixels_a_point,
                 damage: damage.map(|region| {
                     (
@@ -190,6 +186,23 @@ impl DomicileCompositor {
             Instant::now(),
         );
         self.arm_the_cast_deadline(due);
+    }
+
+    /// Tells the casts a surface's last buffer, `size` pixels big, is mapped
+    /// by `mapping` since a commit that attached none and answers a configure
+    /// of `configured` size.
+    pub fn cast_remapped(
+        &mut self,
+        app_id: &str,
+        size: (u32, u32),
+        mapping: &Mapping,
+        configured: Option<(i32, i32)>,
+    ) {
+        self.casting
+            .remapped(app_id, size, |buffer| casting::Remapped {
+                sampled: mapping.sampled(buffer, configured).of(buffer),
+                pixels_a_point: mapping.pixels_a_point(buffer),
+            });
     }
 
     /// Hands a surface's subsurfaces to the casts of its window.

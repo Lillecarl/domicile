@@ -65,6 +65,14 @@ pub struct Committed<'a> {
     pub damage: Option<Rect>,
 }
 
+/// How a buffer is read since a commit that attached none.
+pub struct Remapped {
+    /// As in [`Committed`].
+    pub sampled: Sampled,
+    /// As in [`Committed`].
+    pub pixels_a_point: (f64, f64),
+}
+
 /// The GPU the streams' dmabufs are allocated on.
 pub struct Gpu {
     /// The render node, for the PipeWire thread's allocator.
@@ -386,19 +394,23 @@ impl Streams {
             .shown
             .get(app_id)
             .ok_or_else(|| format!("window {app_id} has shown no frame"))?;
-        let pixels_a_point = self
-            .densities
-            .get(app_id)
-            .ok_or_else(|| format!("window {app_id} has committed no frame"))?;
         let size = shots::sampled(shown).upright_size();
-        let surfaces: Vec<_> =
-            shots::stack(app_id, size, *pixels_a_point, &self.children, |child| {
-                self.shown.contains_key(child)
-            })
-            .into_iter()
-            .map(|(surface, to)| (&self.shown[&surface], to))
-            .collect();
-        shots::window(size, &surfaces, renderer)
+        shots::window(size, &self.surfaces_shown(app_id, shown), renderer)
+    }
+
+    /// The last frame each surface of window `app_id` showed, bottom first,
+    /// beside where it goes in a shot of the window, which showed `shown`.
+    fn surfaces_shown(&self, app_id: &str, shown: &Shown) -> Vec<(&Shown, Rect)> {
+        shots::stack(
+            app_id,
+            shots::sampled(shown).upright_size(),
+            shown.pixels_a_point,
+            &self.children,
+            |child| self.shown.contains_key(child),
+        )
+        .into_iter()
+        .map(|(surface, to)| (&self.shown[&surface], to))
+        .collect()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1676,6 +1688,29 @@ impl Streams {
         self.shown.insert(app_id.to_string(), frame);
     }
 
+    /// Surface `app_id`'s last `buffer`-pixel buffer maps otherwise, without a
+    /// new one. `map` says how a buffer of some size does.
+    pub fn remapped(
+        &mut self,
+        app_id: &str,
+        buffer: (u32, u32),
+        map: impl Fn((u32, u32)) -> Remapped,
+    ) {
+        let last = map(buffer);
+        self.sizes
+            .insert(app_id.to_string(), last.sampled.upright_size());
+        self.densities
+            .insert(app_id.to_string(), last.pixels_a_point);
+        if let Some(shown) = self.shown.get_mut(app_id) {
+            let Remapped {
+                sampled,
+                pixels_a_point,
+            } = map((shown.dmabuf.width(), shown.dmabuf.height()));
+            shown.sampled = sampled;
+            shown.pixels_a_point = pixels_a_point;
+        }
+    }
+
     /// Surface `app_id`'s subsurfaces are now `children`, bottom to top. Fills
     /// the streams of its window if that changes them. Returns when to call
     /// [`Streams::tick`], if a filled frame waits.
@@ -2233,12 +2268,15 @@ fn heard(shows: &Shows, process: Option<u32>, client: bool) -> Option<Heard> {
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
+    use std::fs::File;
     use std::io::Write as _;
     use std::os::fd::{FromRawFd as _, OwnedFd};
     use std::sync::mpsc;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
+    use smithay::backend::allocator::dmabuf::{Dmabuf, DmabufFlags};
+    use smithay::backend::allocator::{Buffer as _, Fourcc, Modifier};
     use smithay::reexports::calloop::channel::{channel, Channel};
 
     use domicile_protocol::{PointerOverWindow, ShotWindow};
@@ -2246,8 +2284,8 @@ mod tests {
     use smithay::utils::Transform;
 
     use super::{
-        compose, cut, damage_in_view, density, heard, view, Cast, Committed, EnginePointer, Shot,
-        Shows, Streams,
+        compose, cut, damage_in_view, density, heard, view, Cast, Committed, EnginePointer,
+        Remapped, Shot, Shows, Streams,
     };
     use crate::buffer_transform::Sampled;
     use crate::casting::audio::Heard;
@@ -2261,7 +2299,7 @@ mod tests {
     use crate::casting::producer::{BufferId, StreamFormat, Target, ToPipewire, ToWayland};
     use crate::casting::region;
     use crate::casting::region::Screen;
-    use crate::casting::shots::Desk;
+    use crate::casting::shots::{Desk, Shown};
     use crate::casting::{Candidate, Consumer, Region, Request, Source, StreamId};
     use crate::engine::{
         BrowserView, BrowserWindow, CaptureId, CapturedFrame, CapturedPixels, SharedFd,
@@ -2702,6 +2740,69 @@ mod tests {
         );
 
         assert!(heard.try_recv().expect("developed").is_err());
+    }
+
+    /// A frame the engine shows, all of a `size` buffer.
+    fn shown(size: (i32, i32), pixels_a_point: (f64, f64)) -> Shown {
+        let mut dmabuf = Dmabuf::builder(
+            size,
+            Fourcc::Argb8888,
+            Modifier::Linear,
+            DmabufFlags::empty(),
+        );
+        // Never imported, so any fd will do.
+        let fd = OwnedFd::from(File::open("/dev/null").expect("it opens"));
+        assert!(dmabuf.add_plane(fd, 0, 0, size.0 as u32 * 4));
+        Shown {
+            dmabuf: dmabuf.build().expect("it has a plane"),
+            sampled: Sampled::default(),
+            pixels_a_point,
+        }
+    }
+
+    #[test]
+    fn a_shot_window_draws_its_subsurfaces_at_the_density_it_shows() {
+        let mut streams = streams();
+        streams.shown("app-1", shown((200, 100), (2.0, 2.0)));
+        streams.shown("subsurface-1", shown((20, 20), (2.0, 2.0)));
+        let child = |app_id: &str, above| Child {
+            app_id: app_id.into(),
+            position: (30.0, 5.0),
+            size: (10.0, 10.0),
+            above,
+        };
+        streams.children(
+            "app-1",
+            vec![child("subsurface-1", false), child("subsurface-2", true)],
+            None,
+            Instant::now(),
+        );
+        let places = |streams: &Streams| {
+            streams
+                .surfaces_shown("app-1", &streams.shown["app-1"])
+                .iter()
+                .map(|(shown, to)| (shown.dmabuf.width(), *to))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            places(&streams),
+            [(20, (60, 10, 20, 20)), (200, (0, 0, 200, 100))]
+        );
+
+        // Its viewport grows twice as large over the same buffer.
+        streams.remapped("app-1", (200, 100), |_| Remapped {
+            sampled: Sampled {
+                crop: (0, 0, 200, 100),
+                transform: Transform::Normal,
+            },
+            pixels_a_point: (1.0, 1.0),
+        });
+
+        assert_eq!(
+            places(&streams),
+            [(20, (30, 5, 10, 10)), (200, (0, 0, 200, 100))]
+        );
     }
 
     #[test]

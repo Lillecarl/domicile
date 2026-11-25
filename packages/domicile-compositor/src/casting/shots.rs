@@ -53,6 +53,9 @@ pub struct Shown {
     /// The part of the buffer that is the window, in buffer pixels, with
     /// `(0, 0, 0, 0)` for all of it, and the turn that makes it upright.
     pub sampled: Sampled,
+    /// How many buffer pixels span one of the surface's points across and
+    /// down.
+    pub pixels_a_point: (f64, f64),
 }
 
 /// The rectangle every monitor fits in, in logical pixels. `None` without
@@ -123,14 +126,9 @@ pub fn window(
 /// The part of `shown`'s buffer that is the surface, with the whole buffer
 /// spelled out.
 pub fn sampled(shown: &Shown) -> Sampled {
-    let size = shown.dmabuf.size();
-    match shown.sampled.crop {
-        (_, _, 0, 0) => Sampled {
-            crop: (0, 0, size.w, size.h),
-            ..shown.sampled
-        },
-        _ => shown.sampled,
-    }
+    shown
+        .sampled
+        .of((shown.dmabuf.width(), shown.dmabuf.height()))
 }
 
 /// `app_id` and its subsurfaces, nested ones too.

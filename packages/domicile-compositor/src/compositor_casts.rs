@@ -198,11 +198,18 @@ impl DomicileCompositor {
         mapping: &Mapping,
         configured: Option<(i32, i32)>,
     ) {
-        self.casting
-            .remapped(app_id, size, |buffer| casting::Remapped {
+        let renderer = self.gpu.as_mut().map(Gpu::renderer);
+        let due = self.casting.remapped(
+            app_id,
+            size,
+            |buffer| casting::Remapped {
                 sampled: mapping.sampled(buffer, configured).of(buffer),
                 pixels_a_point: mapping.pixels_a_point(buffer),
-            });
+            },
+            renderer,
+            Instant::now(),
+        );
+        self.arm_the_cast_deadline(due);
     }
 
     /// Hands a surface's subsurfaces to the casts of its window.

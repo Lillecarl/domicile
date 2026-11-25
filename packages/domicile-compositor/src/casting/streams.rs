@@ -1112,11 +1112,8 @@ impl Streams {
             if self.shots.contains_key(&surface) {
                 continue;
             }
-            let (Some(shown), Some(&pixels_a_point), Some(renderer)) = (
-                self.shown.get(&surface),
-                self.densities.get(&surface),
-                renderer.as_deref_mut(),
-            ) else {
+            let (Some(shown), Some(renderer)) = (self.shown.get(&surface), renderer.as_deref_mut())
+            else {
                 continue;
             };
             match renderer.import_dmabuf(&shown.dmabuf, None) {
@@ -1127,7 +1124,7 @@ impl Streams {
                         Shot {
                             snapshot: Snapshot::Texture(texture),
                             sampled,
-                            pixels_a_point,
+                            pixels_a_point: shown.pixels_a_point,
                         },
                     );
                 }
@@ -1689,13 +1686,17 @@ impl Streams {
     }
 
     /// Surface `app_id`'s last `buffer`-pixel buffer maps otherwise, without a
-    /// new one. `map` says how a buffer of some size does.
+    /// new one. `map` says how a buffer of some size does. Fills the streams of
+    /// its window. Returns when to call [`Streams::tick`], if a filled frame
+    /// waits.
     pub fn remapped(
         &mut self,
         app_id: &str,
         buffer: (u32, u32),
         map: impl Fn((u32, u32)) -> Remapped,
-    ) {
+        renderer: Option<&mut GlesRenderer>,
+        now: Instant,
+    ) -> Option<Instant> {
         let last = map(buffer);
         self.sizes
             .insert(app_id.to_string(), last.sampled.upright_size());
@@ -1709,6 +1710,16 @@ impl Streams {
             shown.sampled = sampled;
             shown.pixels_a_point = pixels_a_point;
         }
+        if let Some(shot) = self.shots.get_mut(app_id) {
+            let Remapped {
+                sampled,
+                pixels_a_point,
+            } = map(shot.snapshot.size());
+            shot.sampled = sampled;
+            shot.pixels_a_point = pixels_a_point;
+        }
+        self.redraw(app_id, renderer, now);
+        self.next_due()
     }
 
     /// Surface `app_id`'s subsurfaces are now `children`, bottom to top. Fills
@@ -1718,7 +1729,7 @@ impl Streams {
         &mut self,
         app_id: &str,
         children: Vec<Child>,
-        mut renderer: Option<&mut GlesRenderer>,
+        renderer: Option<&mut GlesRenderer>,
         now: Instant,
     ) -> Option<Instant> {
         let before = if children.is_empty() {
@@ -1728,20 +1739,25 @@ impl Streams {
         };
         if before.as_ref() != self.children.get(app_id) {
             self.forget_what_is_not_cast();
-            for (stream, window) in self.streams_of(app_id) {
-                let Some(shot) = self.shots.get(&window) else {
-                    continue;
-                };
-                let (width, height) = shot.sampled.upright_size();
-                self.offer(
-                    stream,
-                    vec![(0, 0, width as i32, height as i32)],
-                    renderer.as_deref_mut(),
-                    now,
-                );
-            }
+            self.redraw(app_id, renderer, now);
         }
         self.next_due()
+    }
+
+    /// Draws the whole of each stream that shows `surface`.
+    fn redraw(&mut self, surface: &str, mut renderer: Option<&mut GlesRenderer>, now: Instant) {
+        for (stream, window) in self.streams_of(surface) {
+            let Some(shot) = self.shots.get(&window) else {
+                continue;
+            };
+            let (width, height) = shot.sampled.upright_size();
+            self.offer(
+                stream,
+                vec![(0, 0, width as i32, height as i32)],
+                renderer.as_deref_mut(),
+                now,
+            );
+        }
     }
 
     /// A window closed: its streams end.
@@ -2791,13 +2807,19 @@ mod tests {
         );
 
         // Its viewport grows twice as large over the same buffer.
-        streams.remapped("app-1", (200, 100), |_| Remapped {
-            sampled: Sampled {
-                crop: (0, 0, 200, 100),
-                transform: Transform::Normal,
+        streams.remapped(
+            "app-1",
+            (200, 100),
+            |_| Remapped {
+                sampled: Sampled {
+                    crop: (0, 0, 200, 100),
+                    transform: Transform::Normal,
+                },
+                pixels_a_point: (1.0, 1.0),
             },
-            pixels_a_point: (1.0, 1.0),
-        });
+            None,
+            Instant::now(),
+        );
 
         assert_eq!(
             places(&streams),
@@ -3058,6 +3080,58 @@ mod tests {
         streams.children("app-1", listed, None, now);
 
         assert_eq!(layers(&streams).len(), 1, "nor do its own");
+    }
+
+    /// A resize through its viewport or geometry, without a new buffer.
+    #[test]
+    fn a_cast_window_mapped_otherwise_is_drawn_so() {
+        let (mut streams, heard, now) = a_filling_cast();
+
+        streams.remapped(
+            "app-1",
+            (100, 50),
+            |_| Remapped {
+                sampled: Sampled {
+                    crop: (0, 0, 100, 50),
+                    transform: Transform::Normal,
+                },
+                pixels_a_point: (1.0, 1.0),
+            },
+            None,
+            now,
+        );
+
+        assert_eq!(told(&heard), [Told::Filled(vec![(0, 0, 100, 50)])]);
+        assert_eq!(
+            layers(&streams),
+            [
+                ((0, 0, 100, 50), (0, 0, 100, 50)),
+                ((0, 0, 60, 20), (30, 5, 30, 10)),
+                ((0, 0, 4, 4), (31, 6, 2, 2)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_cast_subsurface_mapped_otherwise_is_drawn_so() {
+        let (mut streams, heard, now) = a_filling_cast();
+
+        streams.remapped(
+            "subsurface-2",
+            (4, 4),
+            |(width, height)| Remapped {
+                sampled: Sampled {
+                    crop: (0, 0, width as i32 / 2, height as i32 / 2),
+                    transform: Transform::Normal,
+                },
+                pixels_a_point: (1.0, 1.0),
+            },
+            None,
+            now,
+        );
+
+        assert_eq!(told(&heard), [Told::Filled(vec![(0, 0, 100, 50)])]);
+        assert_eq!(layers(&streams)[2], ((0, 0, 2, 2), (62, 12, 4, 4)));
     }
 
     #[test]

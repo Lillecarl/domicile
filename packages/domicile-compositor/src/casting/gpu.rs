@@ -10,7 +10,7 @@ use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::gles::{GlesError, GlesRenderer, GlesTexture};
 use smithay::backend::renderer::{
     Bind, Color32F, ExportMem as _, Frame, ImportDma as _, ImportMem as _, ImportMemWl as _,
-    Offscreen as _, Renderer as _,
+    Offscreen as _, Renderer as _, Texture as _,
 };
 use smithay::reexports::wayland_server::protocol::{wl_buffer::WlBuffer, wl_shm};
 use smithay::utils::{Physical, Rectangle, Size, Transform};
@@ -35,6 +35,16 @@ pub enum Snapshot {
     },
     /// A frame on the GPU: an uploaded shm frame, or the client's dmabuf.
     Texture(GlesTexture),
+}
+
+impl Snapshot {
+    /// In the buffer's own pixels.
+    pub fn size(&self) -> (u32, u32) {
+        match self {
+            Snapshot::Pixels { size, .. } => *size,
+            Snapshot::Texture(texture) => (texture.width(), texture.height()),
+        }
+    }
 }
 
 /// Part of a stream frame: `from` of `snapshot`, in its pixels, drawn over

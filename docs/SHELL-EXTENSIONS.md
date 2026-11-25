@@ -138,21 +138,17 @@ panel.append(view);
 
 `extensions.commands` lists every extension with commands (`chrome.commands`)
 and the keys bound to them, for example Bitwarden's `autofill_login` on
-Ctrl+Shift+L. `extensions.on("commands")` reports changes. Both follow the
-focused page's profile. Match the keys yourself in browser windows:
+Ctrl+Shift+L. `extensions.on("commands")` reports changes. The list is that of
+the profile given to `extensions.setProfile`, so set it as focus moves. Match
+the keys yourself in browser windows:
 
 ```js
-import { pressesAccelerator } from "@domicile-desktop/sdk/app-menu";
+import { extensionCommandFor } from "@domicile-desktop/sdk/extension";
 
 view.addEventListener("domicile-guest-keydown", (event) => {
-  for (const { id, commands } of domicile.extensions.commands ?? []) {
-    for (const { keys, name } of commands) {
-      if (keys !== undefined && pressesAccelerator(keys, event)) {
-        event.preventDefault();
-        domicile.extensions.runCommand(id, name);
-        return;
-      }
-    }
+  const command = extensionCommandFor(domicile.extensions.commands ?? [], event);
+  if (command !== undefined) {
+    domicile.extensions.runCommand(command.id, command.name);
   }
 });
 ```
@@ -160,7 +156,10 @@ view.addEventListener("domicile-guest-keydown", (event) => {
 - An extension may have any key, Ctrl+T and Ctrl+L too: Chrome's own shortcuts
   are not kept from it. Match your shell's keys first.
 - As in Chrome, a page does not get the keys of its profile's extensions:
-  `domicile-guest-keydown` has them at once.
+  `domicile-guest-keydown` has them at once. Every `<webview>` in a profile
+  needs a listener, or a command's keys pressed in it do nothing.
+- The engine matches the key the layout makes, and `extensionCommandFor` the
+  key's place on a US layout. Where they differ, the keys do nothing.
 - `runCommand` acts on the active tab, as a key does in Chrome.
 - `_execute_action` clicks the action. For one with a popup the shell also
   hears `extensions.on("popup")`.

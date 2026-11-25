@@ -6,8 +6,8 @@
 #
 # WHY THIS EXISTS. guard-extension-commands.sh has the shell run a command
 # itself. Here the keys are pressed in a page: the browser must find the
-# command in the page's own profile, keep the key from the page, and name the
-# command to the shell (WebViewGuest::PreHandleKeyboardEvent, CommandPressed).
+# command in the page's own profile, keep the key from the page, and send it
+# to the shell (WebViewGuest::PreHandleKeyboardEvent, CommandPressed).
 # And the items of a page's own context menu need a right click in a page.
 #
 # Headless, with guard-extension-commands.sh's fixture, whose service worker
@@ -17,7 +17,7 @@
 # go to the page with focus.
 #
 # WHAT IT ASSERTS. Ctrl+Shift+L, the fixture's, in the default profile's page:
-# the shell hears `domicile-guest-keydown` naming the fixture's command, the
+# the shell hears `domicile-guest-keydown` with the fixture's keys, the
 # page, which cancels every key, hears nothing, and running the command reaches
 # that profile's service worker. The same in the work profile's. In the private
 # profile's page, where the fixture is off, the page hears the key. A right

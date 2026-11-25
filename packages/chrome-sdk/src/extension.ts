@@ -7,7 +7,8 @@
 // trusted.
 
 import { z } from "zod";
-import { acceleratorOf } from "./app-menu";
+import type { KeyLike } from "./app-menu";
+import { acceleratorOf, pressesAccelerator } from "./app-menu";
 
 /** A Chromium extension id: 32 letters `a` through `p`. */
 const EXTENSION_ID = /^[a-p]{32}$/;
@@ -103,6 +104,22 @@ export const extensionCommandsSchema = z.object({
 });
 
 export type ExtensionCommands = z.infer<typeof extensionCommandsSchema>;
+
+/** The extension and the command of it in `extensions` that `event` presses. */
+export const extensionCommandFor = (
+  extensions: readonly ExtensionCommands[],
+  event: KeyLike,
+): { id: string; name: string } | undefined => {
+  for (const { commands, id } of extensions) {
+    const pressed = commands.find(
+      ({ keys }) => keys !== undefined && pressesAccelerator(keys, event),
+    );
+    if (pressed !== undefined) {
+      return { id, name: pressed.name };
+    }
+  }
+  return undefined;
+};
 
 /** Which sites an extension can read and change. */
 export const siteAccessSchema = z.enum([

@@ -603,11 +603,13 @@ interface WebViewGuestClient {
   PageChanged(url.mojom.Url url, WebViewSecurity security);
 
   // A key with Ctrl, Alt or Meta that the page did not handle, for browser
-  // shortcuts.
+  // shortcuts, or that is bound to an extension's command, which the page never
+  // gets.
   //
   // Unhandled guest keys stop at the guest's WebContentsDelegate, so the shell
-  // cannot see them otherwise. Comes from HandleKeyboardEvent, which runs only
-  // if the page did not call preventDefault, so sites keep their own chords.
+  // cannot see them otherwise. The rest come from HandleKeyboardEvent, which
+  // runs only if the page did not call preventDefault, so sites keep their own
+  // chords.
   //
   // Chords only, so ordinary typing, including passwords, is not copied into
   // the shell's document.

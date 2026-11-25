@@ -24,6 +24,10 @@ the detail, when there is one. Remove a gap when it's fixed.
   The event carries extensions' items
   ([SHELL-EXTENSIONS.md](/docs/SHELL-EXTENSIONS.md#menus)), and manganese draws
   none of them.
+- **An extension's keys do nothing on a layout where a key's letter is not its
+  US one,** such as Dvorak, nor in manganese's Google Messages panel and network
+  sign-in page. The page does not get them either.
+  [SHELL-EXTENSIONS.md](/docs/SHELL-EXTENSIONS.md#commands).
 - **An input method's candidate list does not show over pages or the
   shell:** they compose from it, but only native windows show its list.
   [TEXT-INPUT.md](/docs/architecture/TEXT-INPUT.md#plan).

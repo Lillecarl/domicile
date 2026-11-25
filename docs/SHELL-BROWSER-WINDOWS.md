@@ -395,7 +395,8 @@ The guest has no built-in browser behavior:
 Bind browser keys yourself:
 
 - `domicile-guest-keydown`: a `KeyboardEvent` for each chord (Ctrl, Alt or
-  Meta held) the page did not `preventDefault`. Plain keys never arrive.
+  Meta held) the page did not `preventDefault`, or that is bound to an
+  [extension's command](SHELL-EXTENSIONS.md#commands). Plain keys never arrive.
 - `domicile-guest-keyup`: a `KeyboardEvent` for each modifier (Alt, Control,
   Meta or Shift) let go of that the page did not `preventDefault`. With
   `domicile-guest-keydown`, it tells a lone Alt tap from Alt held for a chord.

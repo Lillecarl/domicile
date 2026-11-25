@@ -296,9 +296,9 @@ interface DomicileExtension {
     own accelerators from extensions, and a patch lifts that: a desk has none.
   - `runExtensionCommand` does what `ExtensionKeybindingRegistry` does for a
     key: it grants `activeTab` on the active tab, then sends
-    `commands.onCommand` with that tab. The page gets its keys first
-    (`domicile-guest-keydown`), as Chrome has it for a key that is not
-    reserved.
+    `commands.onCommand` with that tab.
+  - A command's keys go to the shell (`domicile-guest-keydown`) and never to the
+    page. Chrome's registry on the shell's window binds none (patch 0280).
   - `_execute_action` is `activateExtension`, and asks the shell for the popup
     as `action.openPopup()` does.
   - Over a private page the extension is not allowed in, nothing runs.

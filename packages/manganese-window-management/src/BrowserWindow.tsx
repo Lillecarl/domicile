@@ -24,7 +24,7 @@ import {
   openedByMnemonic,
 } from "@domicile-desktop/sdk/app-menu";
 import type { Domicile } from "@domicile-desktop/sdk/desktop/desktop";
-import { extensionCommandOf } from "@domicile-desktop/sdk/extension";
+import { extensionCommandFor } from "@domicile-desktop/sdk/extension";
 import {
   WEBVIEW_DIALOG_EVENT,
   WEBVIEW_FOCUS_REQUEST_EVENT,
@@ -604,7 +604,7 @@ export const BrowserWindow = ({
     if (view === null || page === null) {
       return undefined;
     } else {
-      const pressed = (event: DomicileGuestKeyEvent) => {
+      const pressed = (event: KeyboardEvent) => {
         altAlone.current =
           event.key === "Alt" && (altAlone.current || !event.repeat);
         // An app's accelerators come before the browser's keys, as its menu
@@ -619,7 +619,10 @@ export const BrowserWindow = ({
             : openedByMnemonic(menuBar.entries, event);
         const command =
           event.target === view ? browserCommandFor(event) : undefined;
-        const extensionCommand = extensionCommandOf(event);
+        const extensionCommand = extensionCommandFor(
+          domicile.extensions.commands ?? [],
+          event,
+        );
         if (accelerated !== undefined) {
           chooseMenuEntry(accelerated.id);
         } else if (mnemonic !== undefined) {

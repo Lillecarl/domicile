@@ -7,14 +7,14 @@
 //   GUARD shell-loaded             this module ran
 //   GUARD focused at=…             a page took focus, and the tray its profile
 //   GUARD key at=… command=…       a page's `domicile-guest-keydown`, with the
-//                                  command of the `?expect=` extension it
-//                                  names, or `none`
+//                                  command of the `?expect=` extension bound to
+//                                  Ctrl+Shift+L, or `none`
 //   GUARD badge at=… text=…        the extension's badge in that profile, which
 //                                  says what its service worker heard
 //   GUARD menu at=… items=…        a page's context menu, and the labels of the
 //                                  items extensions add to it
 //
-// It runs each command a key names, and the first item of a menu.
+// It runs each command a key is bound to, and the first item of a menu.
 //
 // Everything is inside `HostShell`, which the document Domicile writes calls once
 // the module has loaded.
@@ -77,11 +77,16 @@ export const HostShell = (_root, desktop) => {
       say(`focused at=${at}`);
     });
     view.addEventListener("domicile-guest-keydown", (event) => {
-      const { extensionCommand, extensionId } = event;
-      const bound = extensionId === expected ? extensionCommand : "none";
-      say(`key at=${at} command=${bound}`);
-      if (extensionId !== null) {
-        host.runExtensionCommand(extensionId, extensionCommand);
+      const listed = JSON.parse(host.extensionCommands ?? "[]").find(
+        ({ id }) => id === expected,
+      );
+      const pressed =
+        event.ctrlKey && event.shiftKey && event.code === "KeyL"
+          ? listed?.commands.find(({ keys }) => keys === "Ctrl+Shift+L")
+          : undefined;
+      say(`key at=${at} command=${pressed?.name ?? "none"}`);
+      if (pressed !== undefined) {
+        host.runExtensionCommand(expected, pressed.name);
       }
     });
     view.addEventListener("domicile-context-menu", (event) => {

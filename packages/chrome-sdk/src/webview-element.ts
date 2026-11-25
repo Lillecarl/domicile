@@ -142,10 +142,11 @@ export const WEBVIEW_FOCUS_REQUEST_EVENT = "domicile-focus-request";
 
 /**
  * A `KeyboardEvent` fired for a Ctrl, Alt or Meta chord the page did not
- * `preventDefault`. Bubbles.
+ * `preventDefault`, or that is bound to an extension's command. Bubbles.
  *
  * Guest keys never reach the shell's document, so this is how a shell sees
- * them. The page handles the key first, as in Chrome. It is not named
+ * them. The page handles the key first, as in Chrome, and never gets a command's
+ * keys: run those with `extensionCommandFor`. It is not named
  * `keydown` so existing `keydown` listeners do not see it. Plain keys are
  * never forwarded, so typed text such as passwords stays in the guest.
  */

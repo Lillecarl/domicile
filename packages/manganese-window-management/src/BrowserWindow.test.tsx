@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { acceleratorOf } from "@domicile-desktop/sdk/app-menu";
 import type { Domicile } from "@domicile-desktop/sdk/desktop/desktop";
 import { FakeDomicileHost } from "@domicile-desktop/sdk/fake-host";
 import {
@@ -198,27 +199,14 @@ const zoomable = (element: HTMLWebViewElement, factor: number): number[] => {
   return asked;
 };
 
-/**
- * Fires a chord pressed in the guest page, as the engine forwards it: one the
- * page did not handle, or the keys of `extension`'s `command`.
- */
+/** Fires a chord pressed in the guest page, as the engine forwards it. */
 const guestPresses = (
   element: HTMLWebViewElement,
   init: KeyboardEventInit,
-  bound: Pick<DomicileGuestKeyEvent, "extensionCommand" | "extensionId"> = {
-    extensionCommand: null,
-    extensionId: null,
-  },
 ): void => {
   fireEvent(
     element,
-    Object.assign(
-      new KeyboardEvent(WEBVIEW_GUEST_KEYDOWN_EVENT, {
-        bubbles: true,
-        ...init,
-      }),
-      bound,
-    ),
+    new KeyboardEvent(WEBVIEW_GUEST_KEYDOWN_EVENT, { bubbles: true, ...init }),
   );
 };
 
@@ -1965,6 +1953,27 @@ describe("BrowserWindow", () => {
             ...silentDomicile,
             extensions: {
               ...silentDomicile.extensions,
+              commands: [
+                {
+                  commands: [
+                    {
+                      description: "",
+                      global: false,
+                      keys: acceleratorOf("Ctrl+Shift+L"),
+                      name: "fill",
+                    },
+                    {
+                      description: "",
+                      global: false,
+                      keys: acceleratorOf("Ctrl+R"),
+                      name: "fill",
+                    },
+                  ],
+                  id: "bitwarden",
+                  name: "Bitwarden",
+                  profile: "default",
+                },
+              ],
               runCommand: (id, name) => {
                 ran.push(`${name} of ${id}`);
               },
@@ -1973,23 +1982,25 @@ describe("BrowserWindow", () => {
         }),
       );
       const calls = driven(view(container));
-      guestPresses(view(container), init, {
-        extensionCommand: "fill",
-        extensionId: "bitwarden",
-      });
+      guestPresses(view(container), init);
       return [...calls, ...ran];
     };
 
     it("runs the extension command its keys are bound to", () => {
       expect(
-        pressesExtensionKeys({ ctrlKey: true, key: "L", shiftKey: true }),
+        pressesExtensionKeys({
+          code: "KeyL",
+          ctrlKey: true,
+          key: "L",
+          shiftKey: true,
+        }),
       ).toStrictEqual(["fill of bitwarden"]);
     });
 
     it("keeps its own keys from an extension", () => {
-      expect(pressesExtensionKeys({ ctrlKey: true, key: "r" })).toStrictEqual([
-        "reload",
-      ]);
+      expect(
+        pressesExtensionKeys({ code: "KeyR", ctrlKey: true, key: "r" }),
+      ).toStrictEqual(["reload"]);
     });
 
     it("leaves a chord that is not a browser's alone", () => {

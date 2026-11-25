@@ -391,7 +391,7 @@ void HTMLWebViewElement::DidRecalcStyle(const StyleRecalcChange change) {
 
 bool HTMLWebViewElement::IsRendered() const {
   const LayoutObject* layout = GetLayoutObject();
-  return layout && layout->StyleRef().Visibility() == EVisibility::kVisible;
+  return layout && layout->Style().Visibility() == EVisibility::kVisible;
 }
 
 void HTMLWebViewElement::ShowSoonIfUnloaded() {

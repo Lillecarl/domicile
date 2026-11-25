@@ -71,9 +71,9 @@ export const HostShell = (_root, desktop) => {
     if (menus === 1) {
       event.runExtensionItem(item.id);
     } else {
-      // Once the new page has committed and loaded.
-      view.addEventListener("domicile-page-change", () => {
-        if (view.url.includes("again=1")) {
+      // Once the new page has loaded: the URL changes before it commits.
+      view.addEventListener("domicile-loading-change", () => {
+        if (!view.loading && view.url.includes("again=1")) {
           event.runExtensionItem(item.id);
           say("ran a stale item");
         }

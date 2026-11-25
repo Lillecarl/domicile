@@ -966,7 +966,7 @@ bool WebViewGuest::IsAttached() const {
 }
 
 bool WebViewGuest::IsShown() const {
-  const content::WebContents* outer = guest_contents_->GetOuterWebContents();
+  content::WebContents* outer = guest_contents_->GetOuterWebContents();
   return attaching_ ||
          (outer != nullptr &&
           (guest_contents_->GetVisibility() != content::Visibility::HIDDEN ||

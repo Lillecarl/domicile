@@ -1,8 +1,9 @@
 //! The Wayland thread's side of casting: routes requests and fills lent
 //! buffers with each source's frames.
 //!
-//! - A cast window's commit is kept as a [`Snapshot`] before the client's
-//!   buffer is released, so no client buffer is held for a stream.
+//! - A commit of a cast window or one of its subsurfaces is kept as a
+//!   [`Snapshot`] before the client's buffer is released, so no client buffer
+//!   is held for a stream.
 //! - A monitor or region is drawn from the engine's display captures (see
 //!   [`captures`](crate::casting::captures)). A region across monitors is one
 //!   piece per monitor (see [`region`](crate::casting::region)).
@@ -112,16 +113,17 @@ pub struct Streams {
     /// Each window's last frame size, offered when a stream starts.
     sizes: HashMap<String, (u32, u32)>,
     /// How many buffer pixels span each window's surface point, for the
-    /// pointer over it and its subsurfaces in a shot of it.
+    /// pointer over it.
     densities: HashMap<String, (f64, f64)>,
-    /// Each cast window's last frame.
+    /// The last frame of each cast window and of its subsurfaces.
     shots: HashMap<String, Shot>,
     /// The subsurfaces of cast windows whose last frame could not be read.
     unreadable: HashSet<String>,
-    /// Each window's last frame the engine shows, for a shot of it alone.
+    /// Each surface's last frame the engine shows, for a shot of its window
+    /// alone, and for a cast that has kept no commit of it.
     shown: HashMap<String, Shown>,
     /// Each surface's subsurfaces as its frames draw them, bottom to top, for
-    /// a shot of its window alone.
+    /// shots and casts of its window.
     children: HashMap<String, Vec<Child>>,
     /// The window under the pointer, and where, in its box's logical pixels.
     pointer: Option<(String, (f64, f64))>,
@@ -173,7 +175,7 @@ struct Shooting {
     developed: Developed,
 }
 
-/// A window's last frame and how to read it.
+/// A surface's last frame and how to read it.
 struct Shot {
     snapshot: Snapshot,
     sampled: Sampled,
@@ -1686,7 +1688,8 @@ impl Streams {
             .collect()
     }
 
-    /// Window `app_id` showed `frame`, which a shot of it alone reads.
+    /// Surface `app_id` showed `frame`, which shots and casts of its window
+    /// read.
     pub fn shown(&mut self, app_id: &str, frame: Shown) {
         self.shown.insert(app_id.to_string(), frame);
     }

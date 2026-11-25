@@ -47,10 +47,10 @@ pub type Developed = Box<dyn FnOnce(Result<Desk, String>) + Send>;
 /// thread, so it must not block.
 pub type DevelopedWindow = Box<dyn FnOnce(Result<Shot, String>) + Send>;
 
-/// The last frame a window showed, which the engine still holds.
+/// The last frame a surface showed, which the engine still holds.
 pub struct Shown {
     pub dmabuf: Dmabuf,
-    /// The part of the buffer that is the window, in buffer pixels, with
+    /// The part of the buffer that is the surface, in buffer pixels, with
     /// `(0, 0, 0, 0)` for all of it, and the turn that makes it upright.
     pub sampled: Sampled,
     /// How many buffer pixels span one of the surface's points across and

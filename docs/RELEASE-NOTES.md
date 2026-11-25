@@ -14,6 +14,10 @@ Each agent session has a seat of its own, so an agent clicks and types in one na
 
 [Agents](AGENTS.md) · [Agent seats](architecture/AGENT-SEATS.md) · [`domicile pointer`](CLI.md#domicile-pointer---agent-session-xy-clickdouble-clickright-clickmiddle-click) · [`domicile idle-time`](CLI.md#domicile-idle-time---json)
 
+### Fixes
+
+- Setting a site's permission lets a site ask again that Chrome stopped for unanswered requests. [Browser windows](SHELL-BROWSER-WINDOWS.md)
+
 ## 1.3.0
 
 _November 24, 2026_

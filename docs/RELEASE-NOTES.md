@@ -55,6 +55,7 @@ Each agent gets its own pointer, keyboard and clipboard, in native and browser w
 
 - An agent's Ctrl+C in a browser page goes to the agent's clipboard, not the user's, and its Ctrl+V pastes its own copy.
 - A `Popover` grows no taller than the room on its screen, and its body scrolls the rest; a child with `min-block-size: 0` shrinks to scroll a part of itself. `Select` and `Autocomplete` lists cap at the room too.
+- A desktop on a second tty gives the session back to another compositor that still runs on the first, such as niri, when it exits. It no longer stops `graphical-session.target`, which stopped that compositor too. [Portals](PORTALS.md)
 - An extension that asks for a page's language, such as Ghostery, is refused and the desktop stays up. [Extensions](SHELL-EXTENSIONS.md)
 - A picker's event has its anchor in the `<webview>`'s coordinates, wherever the `<webview>` is on the desktop. [Browser windows](SHELL-BROWSER-WINDOWS.md)
 - Setting a site's permission lets a site ask again that Chrome stopped for unanswered requests. [Browser windows](SHELL-BROWSER-WINDOWS.md)

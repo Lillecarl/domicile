@@ -125,9 +125,14 @@ pub fn end(
     match running(earlier, control) {
         Some(Running::Domicile) => restore(manager, earlier),
         Some(Running::Other) => {
-            restore(manager, earlier)?;
+            let theirs: Vec<String> = earlier
+                .iter()
+                .filter(|assignment| !is_of(assignment, VARIABLE))
+                .cloned()
+                .collect();
+            restore(manager, &theirs)?;
             call(manager, "StopUnit", &(TARGET, "replace"))?;
-            activate_in(manager, earlier)?;
+            activate_in(manager, &theirs)?;
             restart_portal_frontend(manager)
         }
         None => {
@@ -187,14 +192,18 @@ enum Running {
 /// A Domicile desktop answers on its control socket, another compositor on its
 /// Wayland socket. A relative `WAYLAND_DISPLAY` is in `XDG_RUNTIME_DIR`, which
 /// also holds `control` ([`crate::control_socket::address`]), and an absolute
-/// one replaces the whole path.
+/// one replaces the whole path. Another compositor may hold the control socket
+/// of a killed Domicile desktop, which set it before that compositor started.
 fn running(earlier: &[String], control: &Path) -> Option<Running> {
-    let (listening, running) = match (socket(earlier), value(earlier, "WAYLAND_DISPLAY")) {
-        (Some(socket), _) => (PathBuf::from(socket), Running::Domicile),
-        (None, Some(display)) => (control.with_file_name(display), Running::Other),
-        (None, None) => return None,
-    };
-    UnixStream::connect(listening).is_ok().then_some(running)
+    let answers = |listening: PathBuf| UnixStream::connect(listening).is_ok();
+    let display = value(earlier, "WAYLAND_DISPLAY");
+    if socket(earlier).is_some_and(|socket| answers(PathBuf::from(socket))) {
+        Some(Running::Domicile)
+    } else if display.is_some_and(|display| answers(control.with_file_name(display))) {
+        Some(Running::Other)
+    } else {
+        None
+    }
 }
 
 /// The assignments of [`VARIABLES`] in `manager`'s environment.
@@ -210,12 +219,13 @@ fn held(manager: &zbus::Connection) -> Result<Vec<String>, zbus::Error> {
     )?;
     Ok(environment
         .into_iter()
-        .filter(|assignment| {
-            VARIABLES
-                .iter()
-                .any(|name| assignment.split_once('=').map(|(key, _)| key) == Some(*name))
-        })
+        .filter(|assignment| VARIABLES.iter().any(|name| is_of(assignment, name)))
         .collect())
+}
+
+/// Whether `assignment` assigns `name`.
+fn is_of(assignment: &str, name: &str) -> bool {
+    assignment.split_once('=').map(|(key, _)| key) == Some(name)
 }
 
 /// The control socket among `assignments`.

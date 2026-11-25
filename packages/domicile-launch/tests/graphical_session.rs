@@ -328,8 +328,7 @@ fn a_desk_that_ends_hands_the_session_back_to_another_compositor() {
     // niri on tty1, this desk on tty2. niri's unit binds to
     // `graphical-session.target`, so the shutdown target would stop niri too.
     // A relative `WAYLAND_DISPLAY` is in `XDG_RUNTIME_DIR`, beside the control
-    // socket.
-    // An absolute one can be anywhere.
+    // socket. An absolute one can be anywhere.
     let directory = tempfile::tempdir().unwrap();
     let elsewhere = tempfile::tempdir().unwrap();
     let absolute = elsewhere.path().join("wayland-9");
@@ -359,6 +358,30 @@ fn a_desk_that_ends_hands_the_session_back_to_another_compositor() {
             ]
         );
     }
+}
+
+#[test]
+fn a_killed_desks_control_socket_does_not_hide_the_compositor_that_runs() {
+    // A killed launcher leaves its variables in the user manager. niri then
+    // sets its own over them, which leaves the dead control socket.
+    let directory = tempfile::tempdir().unwrap();
+    let _serving =
+        std::os::unix::net::UnixListener::bind(directory.path().join("wayland-1")).unwrap();
+    let ours = directory.path().join("domicile-ipc.2.sock");
+    let (_server, client, heard) = paired();
+    let mut earlier = niri("wayland-1");
+    earlier.push(format!(
+        "DOMICILE_SOCK={}",
+        directory.path().join("domicile-ipc.1.sock").display()
+    ));
+    end(&client, &ours, &earlier).unwrap();
+    assert_eq!(
+        heard.lock().unwrap().first(),
+        Some(&Heard::UnsetAndSetEnvironment(
+            vec!["DOMICILE_SOCK".into()],
+            niri("wayland-1")
+        ))
+    );
 }
 
 #[test]

@@ -1366,12 +1366,17 @@ void WebViewGuest::BindPagePicker(
 void WebViewGuest::Pick(mojom::WebViewPickerPtr picker,
                         PickCallback callback) {
   // The anchor arrives in the frame's local root's DIPs. A frame in another
-  // process has a view of its own; the page's root is the element's box.
+  // process has a view of its own. The page's main frame view is the element's
+  // box; the root is the shell's page, which the element is somewhere in.
   content::RenderFrameHost* frame =
       content::RenderFrameHost::FromID(page_pickers_.current_context());
-  if (frame && frame->GetView()) {
-    const gfx::PointF origin = frame->GetView()->TransformPointToRootCoordSpaceF(
-        gfx::PointF(picker->anchor.origin()));
+  content::RenderWidgetHostView* page =
+      guest_contents_ ? guest_contents_->GetPrimaryMainFrame()->GetView()
+                      : nullptr;
+  if (frame && frame->GetView() && page) {
+    const gfx::PointF origin = page->TransformRootPointToViewCoordSpace(
+        frame->GetView()->TransformPointToRootCoordSpaceF(
+            gfx::PointF(picker->anchor.origin())));
     picker->anchor.set_origin(gfx::ToFlooredPoint(origin));
   }
   open_picker_ = page_pickers_.current_receiver();

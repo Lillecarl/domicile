@@ -1021,14 +1021,7 @@ impl Streams {
             ToWayland::Ended { stream } => {
                 self.clients.remove(&stream);
                 match self.casts.remove(&stream).map(|cast| cast.shows) {
-                    Some(Shows::Window(_)) => {
-                        let cast: HashSet<String> = self
-                            .windows()
-                            .iter()
-                            .flat_map(|app_id| shots::surfaces(app_id, &self.children))
-                            .collect();
-                        self.shots.retain(|surface, _| cast.contains(surface));
-                    }
+                    Some(Shows::Window(_)) => self.forget_what_is_not_cast(),
                     Some(Shows::Desk { .. }) => {
                         if let Some(capturer) = capturer {
                             self.captures.forget(stream, capturer);
@@ -1051,6 +1044,17 @@ impl Streams {
             }
         }
         self.next_due()
+    }
+
+    /// Forgets the frames of the surfaces in no cast window.
+    fn forget_what_is_not_cast(&mut self) {
+        let cast: HashSet<String> = self
+            .windows()
+            .iter()
+            .flat_map(|app_id| shots::surfaces(app_id, &self.children))
+            .collect();
+        self.shots.retain(|surface, _| cast.contains(surface));
+        self.unreadable.retain(|surface| cast.contains(surface));
     }
 
     /// The streams of the windows `surface` is, or is in, each with its window.
@@ -1688,6 +1692,7 @@ impl Streams {
             self.children.insert(app_id.to_string(), children)
         };
         if before.as_ref() != self.children.get(app_id) {
+            self.forget_what_is_not_cast();
             for (stream, window) in self.streams_of(app_id) {
                 let Some(shot) = self.shots.get(&window) else {
                     continue;
@@ -2938,6 +2943,20 @@ mod tests {
 
         assert_eq!(told(&heard), [Told::Filled(vec![(0, 0, 100, 50)])]);
         assert_eq!(layers(&streams).len(), 1, "nor are its own drawn");
+    }
+
+    /// An unmapped subsurface that is mapped again shows its new frame, which
+    /// it committed while its window did not list it.
+    #[test]
+    fn a_subsurface_listed_again_does_not_show_its_old_frame() {
+        let (mut streams, heard, now) = a_filling_cast();
+        let listed = streams.children["app-1"].clone();
+
+        streams.children("app-1", Vec::new(), None, now);
+        assert_eq!(told(&heard), [Told::Filled(vec![(0, 0, 100, 50)])]);
+        streams.children("app-1", listed, None, now);
+
+        assert_eq!(layers(&streams).len(), 1, "nor do its own");
     }
 
     #[test]

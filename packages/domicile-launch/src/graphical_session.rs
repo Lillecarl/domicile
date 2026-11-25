@@ -18,6 +18,7 @@
 //! Only a desktop running as the login session does this. A nested desktop
 //! leaves the session to its host.
 
+use std::collections::HashMap;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 
@@ -33,6 +34,9 @@ pub const TARGET: &str = "domicile-session.target";
 /// `graphical-session.target` up. This unit `Conflicts=` the graphical session,
 /// like niri's `niri-shutdown.target`.
 pub const SHUTDOWN: &str = "domicile-session-shutdown.target";
+
+/// The portal frontend's unit.
+const FRONTEND: &str = "xdg-desktop-portal.service";
 
 /// `XDG_CURRENT_DESKTOP` for a desktop. Matches the names of
 /// `domicile-mimeapps.list` and `domicile-portals.conf`.
@@ -103,7 +107,9 @@ pub fn begin(
 /// - `earlier`'s desktop still answers: its variables are set again, and the
 ///   [`VARIABLES`] it lacks are unset. When it is another compositor, [`TARGET`]
 ///   is stopped too, as no Domicile desktop is the session. That leaves a
-///   `graphical-session.target` the compositor holds up running.
+///   `graphical-session.target` the compositor holds up running. The bus
+///   daemon gets the variables and the portal frontend restarts, which a
+///   Domicile desktop does itself when it gets the portal backend's name.
 /// - Otherwise starts [`SHUTDOWN`], then unsets the environment from
 ///   [`begin`]. Uses `replace-irreversibly`, as niri does, so no later job can
 ///   cancel the shutdown.
@@ -120,7 +126,9 @@ pub fn end(
         Some(Running::Domicile) => restore(manager, earlier),
         Some(Running::Other) => {
             restore(manager, earlier)?;
-            call(manager, "StopUnit", &(TARGET, "replace"))
+            call(manager, "StopUnit", &(TARGET, "replace"))?;
+            activate_in(manager, earlier)?;
+            restart_portal_frontend(manager)
         }
         None => {
             call(manager, "StartUnit", &(SHUTDOWN, "replace-irreversibly"))?;
@@ -136,6 +144,36 @@ fn restore(manager: &zbus::Connection, earlier: &[String]) -> Result<(), zbus::E
         .filter(|name| value(earlier, name).is_none())
         .collect();
     call(manager, "UnsetAndSetEnvironment", &(lacking, earlier))
+}
+
+/// Sets `earlier` in the bus daemon's activation environment, for the services
+/// it starts directly. The daemon has no call to unset a variable.
+fn activate_in(bus: &zbus::Connection, earlier: &[String]) -> Result<(), zbus::Error> {
+    let environment: HashMap<&str, &str> = earlier
+        .iter()
+        .filter_map(|assignment| assignment.split_once('='))
+        .collect();
+    zbus::block_on(bus.call_method(
+        Some("org.freedesktop.DBus"),
+        "/org/freedesktop/DBus",
+        Some("org.freedesktop.DBus"),
+        "UpdateActivationEnvironment",
+        &(environment,),
+    ))
+    .map(drop)
+}
+
+/// Restarts the portal frontend if it runs. It reads `XDG_CURRENT_DESKTOP`
+/// once, when it starts. A system without the frontend has none to restart.
+fn restart_portal_frontend(manager: &zbus::Connection) -> Result<(), zbus::Error> {
+    match call(manager, "TryRestartUnit", &(FRONTEND, "replace")) {
+        Err(zbus::Error::MethodError(name, ..))
+            if name == "org.freedesktop.systemd1.NoSuchUnit" =>
+        {
+            Ok(())
+        }
+        restarted => restarted,
+    }
 }
 
 /// The desktop a session was taken over from, while it still runs.

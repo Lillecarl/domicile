@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -13,11 +14,46 @@ enum Heard {
     UnsetAndSetEnvironment(Vec<String>, Vec<String>),
     StartUnit(String, String),
     StopUnit(String, String),
+    TryRestartUnit(String, String),
+    UpdateActivationEnvironment(BTreeMap<String, String>),
+}
+
+#[derive(Debug, zbus::DBusError)]
+#[zbus(prefix = "org.freedesktop.systemd1")]
+enum Refused {
+    #[zbus(error)]
+    ZBus(zbus::Error),
+    NoSuchUnit(String),
+    JobTypeNotApplicable(String),
+}
+
+/// What the manager says to restarting the portal frontend.
+#[derive(Clone, Copy)]
+enum Frontend {
+    Restarts,
+    NotInstalled,
+    Refuses,
 }
 
 struct Manager {
     heard: Arc<Mutex<Vec<Heard>>>,
     environment: Vec<String>,
+    frontend: Frontend,
+}
+
+/// The bus daemon, which keeps an activation environment of its own.
+struct Daemon {
+    heard: Arc<Mutex<Vec<Heard>>>,
+}
+
+#[zbus::interface(name = "org.freedesktop.DBus")]
+impl Daemon {
+    fn update_activation_environment(&self, environment: BTreeMap<String, String>) {
+        self.heard
+            .lock()
+            .unwrap()
+            .push(Heard::UpdateActivationEnvironment(environment));
+    }
 }
 
 #[zbus::interface(name = "org.freedesktop.systemd1.Manager")]
@@ -56,6 +92,24 @@ impl Manager {
         zbus::OwnedObjectPath::try_from("/org/freedesktop/systemd1/job/2").unwrap()
     }
 
+    fn try_restart_unit(
+        &self,
+        name: String,
+        mode: String,
+    ) -> Result<zbus::OwnedObjectPath, Refused> {
+        self.heard
+            .lock()
+            .unwrap()
+            .push(Heard::TryRestartUnit(name.clone(), mode));
+        match self.frontend {
+            Frontend::Restarts => {
+                Ok(zbus::OwnedObjectPath::try_from("/org/freedesktop/systemd1/job/3").unwrap())
+            }
+            Frontend::NotInstalled => Err(Refused::NoSuchUnit(name)),
+            Frontend::Refuses => Err(Refused::JobTypeNotApplicable(name)),
+        }
+    }
+
     #[zbus(property)]
     fn environment(&self) -> Vec<String> {
         self.environment.clone()
@@ -71,6 +125,14 @@ fn paired() -> (zbus::Connection, zbus::Connection, Arc<Mutex<Vec<Heard>>>) {
 fn paired_with(
     environment: &[&str],
 ) -> (zbus::Connection, zbus::Connection, Arc<Mutex<Vec<Heard>>>) {
+    paired_with_frontend(environment, Frontend::Restarts)
+}
+
+/// The same, with the manager answering for the portal frontend as `frontend`.
+fn paired_with_frontend(
+    environment: &[&str],
+    frontend: Frontend,
+) -> (zbus::Connection, zbus::Connection, Arc<Mutex<Vec<Heard>>>) {
     let (theirs, ours) = UnixStream::pair().unwrap();
     let heard = Arc::new(Mutex::new(Vec::new()));
     let environment = environment.iter().map(|line| line.to_string()).collect();
@@ -82,7 +144,20 @@ fn paired_with(
                 zbus::connection::Builder::unix_stream(theirs)
                     .server(guid)
                     .p2p()
-                    .serve_at("/org/freedesktop/systemd1", Manager { heard, environment })
+                    .serve_at(
+                        "/org/freedesktop/DBus",
+                        Daemon {
+                            heard: Arc::clone(&heard),
+                        },
+                    )
+                    .serve_at(
+                        "/org/freedesktop/systemd1",
+                        Manager {
+                            heard,
+                            environment,
+                            frontend,
+                        },
+                    )
                     .build(),
             )
             .unwrap()
@@ -273,8 +348,28 @@ fn a_desk_that_ends_hands_the_session_back_to_another_compositor() {
             [
                 Heard::UnsetAndSetEnvironment(vec!["DOMICILE_SOCK".into()], niri(display)),
                 Heard::StopUnit(TARGET.into(), "replace".into()),
+                // The compositor names the desktop to the bus daemon too, and
+                // a running portal frontend keeps the name it started under.
+                Heard::UpdateActivationEnvironment(BTreeMap::from([
+                    ("XDG_CURRENT_DESKTOP".into(), "niri".into()),
+                    ("WAYLAND_DISPLAY".into(), display.into()),
+                    ("XDG_SESSION_TYPE".into(), "wayland".into()),
+                ])),
+                Heard::TryRestartUnit("xdg-desktop-portal.service".into(), "replace".into()),
             ]
         );
+    }
+}
+
+#[test]
+fn a_session_handed_back_needs_no_portal_frontend_but_reports_one_not_restarted() {
+    let directory = tempfile::tempdir().unwrap();
+    let _serving =
+        std::os::unix::net::UnixListener::bind(directory.path().join("wayland-1")).unwrap();
+    let ours = directory.path().join("domicile-ipc.2.sock");
+    for (frontend, handed_back) in [(Frontend::NotInstalled, true), (Frontend::Refuses, false)] {
+        let (_server, client, _heard) = paired_with_frontend(&[], frontend);
+        assert_eq!(end(&client, &ours, &niri("wayland-1")).is_ok(), handed_back);
     }
 }
 

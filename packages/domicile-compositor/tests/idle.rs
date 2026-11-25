@@ -210,17 +210,11 @@ fn a_pointer_ignored_on_disk_leaves_a_dark_desk_to_its_keys() {
             .say(&ChromeMessage::Activity { input: None, kind })
             .expect("the chrome socket takes activity");
     }
-    // Answered after the activity, which would have lit the desk first.
-    chrome
-        .say(&ChromeMessage::SystemRequest {
-            id: 3,
-            request: SystemRequest::IdleHolds,
-        })
-        .expect("the chrome socket takes a system call");
+    // Settled on the Wayland thread, after the activity, which would have lit
+    // the desk first.
+    watch(&mut chrome, 3, 1);
     let heard = chrome
-        .wait_for(|message| {
-            lit(message) || matches!(message, HostMessage::SystemReply { id: 3, .. })
-        })
+        .wait_for(|message| lit(message) || idle(3, true)(message))
         .expect("the page hears something");
     assert!(!lit(&heard), "the pointer lit the desk");
 

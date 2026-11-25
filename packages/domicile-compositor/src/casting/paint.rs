@@ -211,6 +211,33 @@ mod tests {
         assert_eq!(blue(&target), [1, 9]);
     }
 
+    /// Without a renderer, a scaled layer cut at its window's top left reads
+    /// only its own buffer.
+    #[test]
+    fn a_scaled_layer_cut_at_the_top_left_is_painted_on_the_cpu() {
+        let snapshot = Snapshot::Pixels {
+            bytes: (0..25).flat_map(|blue| [blue, 0, 0, 255]).collect(),
+            stride: 20,
+            alpha: true,
+            size: (5, 5),
+        };
+        let layer = Layer {
+            snapshot: &snapshot,
+            from: (0, 0, 5, 5),
+            to: (-5, -5, 10, 10),
+            transform: Transform::Normal,
+        }
+        .cut((0, 0, 5, 5))
+        .expect("half of it is inside");
+        let mut target = [0; 100];
+
+        paint(&[layer], &mut target, 20, Pixel::Bgra, None).expect("painted on the CPU");
+
+        let blue = blue(&target);
+        assert_eq!(blue[..5], [12, 12, 13, 13, 14]);
+        assert_eq!(blue[20..], [22, 22, 23, 23, 24]);
+    }
+
     /// Each pixel's blue byte.
     fn blue(target: &[u8]) -> Vec<u8> {
         target.chunks(4).map(|pixel| pixel[0]).collect()

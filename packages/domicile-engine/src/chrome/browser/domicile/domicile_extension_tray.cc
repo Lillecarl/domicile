@@ -809,18 +809,7 @@ class ExtensionTray final
     if (in.empty()) {
       in = registry.profiles().default_profile;
     }
-    std::vector<ExtensionCommands> all;
-    for (const scoped_refptr<const Extension>& extension :
-         extensions::ExtensionRegistry::Get(actions_)->enabled_extensions()) {
-      if (!extensions::ui_util::ShouldDisplayInExtensionSettings(*extension)) {
-        continue;
-      }
-      ExtensionCommands commands = CommandsOf(*actions_, *extension, in);
-      if (!commands.commands.empty()) {
-        all.push_back(std::move(commands));
-      }
-    }
-    std::string json = ExtensionCommandsAsJson(all);
+    std::string json = ExtensionCommandsAsJson(CommandsIn(*actions_, in));
     if (json != sent_commands_) {
       sent_commands_ = std::move(json);
       client_->CommandsChanged(sent_commands_);

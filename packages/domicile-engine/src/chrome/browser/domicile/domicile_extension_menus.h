@@ -6,6 +6,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 #include "chrome/browser/extensions/menu_manager.h"
 #include "components/domicile/browser/extension_menu.h"
@@ -60,6 +61,12 @@ void RunActionMenuItem(content::BrowserContext& context,
 ExtensionCommands CommandsOf(content::BrowserContext& context,
                              const extensions::Extension& extension,
                              const std::string& profile);
+
+// CommandsOf every extension with commands whose keys work in `context`'s
+// pages: those Chrome lists to the user, and in a private profile those
+// allowed there.
+std::vector<ExtensionCommands> CommandsIn(content::BrowserContext& context,
+                                          const std::string& profile);
 
 // Sends commands.onCommand for `command` on `tab`, null for none, after
 // granting activeTab on it, as ExtensionKeybindingRegistry::CommandExecuted

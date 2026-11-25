@@ -35,6 +35,7 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/permissions/active_tab_permission_granter.h"
+#include "extensions/browser/ui_util.h"
 #include "extensions/common/api/commands/commands_handler.h"
 #include "extensions/common/api/extension_action/action_info.h"
 #include "extensions/common/command.h"
@@ -167,7 +168,6 @@ void RunItem(content::BrowserContext& context,
                  "dropping the click.";
     return;
   }
-  // The extension command guard greps for this line.
   LOG(INFO) << "domicile: the shell ran a menu item of "
             << item->extension_id() << ".";
   manager->ExecuteCommand(&context, tab, frame, params, id);
@@ -210,12 +210,11 @@ bool TakesKey(content::WebContents& page,
       ui::GetAcceleratorFromNativeWebKeyboardEvent(event);
   content::BrowserContext& context = *page.GetBrowserContext();
   CommandService* service = CommandService::Get(&context);
-  for (const scoped_refptr<const Extension>& extension :
-       extensions::ExtensionRegistry::Get(&context)->enabled_extensions()) {
-    for (const ExtensionCommand& command :
-         CommandsOf(context, *extension, std::string()).commands) {
+  for (const ExtensionCommands& extension :
+       CommandsIn(context, std::string())) {
+    for (const ExtensionCommand& command : extension.commands) {
       if (!command.keys.empty() &&
-          service->FindCommandByName(extension->id(), command.name)
+          service->FindCommandByName(extension.id, command.name)
                   .accelerator() == pressed) {
         return true;
       }
@@ -352,6 +351,24 @@ ExtensionCommands CommandsOf(content::BrowserContext& context,
     }
   }
   return commands;
+}
+
+std::vector<ExtensionCommands> CommandsIn(content::BrowserContext& context,
+                                          const std::string& profile) {
+  std::vector<ExtensionCommands> all;
+  for (const scoped_refptr<const Extension>& extension :
+       extensions::ExtensionRegistry::Get(&context)->enabled_extensions()) {
+    if (!extensions::ui_util::ShouldDisplayInExtensionSettings(*extension) ||
+        (context.IsOffTheRecord() &&
+         !extensions::util::IsIncognitoEnabled(extension.get(), &context))) {
+      continue;
+    }
+    ExtensionCommands commands = CommandsOf(context, *extension, profile);
+    if (!commands.commands.empty()) {
+      all.push_back(std::move(commands));
+    }
+  }
+  return all;
 }
 
 void SendCommand(content::BrowserContext& context,

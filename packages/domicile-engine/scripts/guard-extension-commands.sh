@@ -18,8 +18,8 @@
 # `contextMenus.onClicked` with it checked; and that running
 # `_execute_action` asked the shell for the fixture's popup.
 #
-# Not here: the items of a page's own context menu, which need a right click in
-# a page (guard-webview-context-menu.sh).
+# Not here: keys pressed in a page, and the items of its own context menu
+# (guard-extension-page.sh).
 #
 # HOW IT CAN FAIL. NEGATIVE=1 runs the control: the list empty. The shell must
 # still hear `extensioncommandschanged` with no fixture in it, its menu must be

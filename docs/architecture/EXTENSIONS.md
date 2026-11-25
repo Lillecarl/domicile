@@ -495,6 +495,7 @@ Engine guards in `packages/domicile-engine/scripts/`:
 - `guard-extension-reload.sh`
 - `guard-extension-tray.sh`
 - `guard-extension-commands.sh`
+- `guard-extension-page.sh`
 - `guard-extension-open-popup.sh`
 - `guard-extension-side-panel.sh`
 - `guard-webview-content-script.sh`

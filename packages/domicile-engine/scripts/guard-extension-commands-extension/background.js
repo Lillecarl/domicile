@@ -1,5 +1,5 @@
-// What guard-extension-commands.sh's shell ran, said on the badge, which the
-// tray carries back to it.
+// What guard-extension-commands.sh's and guard-extension-page.sh's shells ran,
+// said on the badge, which the tray carries back to them.
 
 // Off `globalThis` because `chrome` is an extension's global, which the
 // linter this repository runs over every script does not know.
@@ -12,6 +12,7 @@ const say = (text) => {
 // `ready` once the listeners below are registered: a command sent before the
 // worker's first run reaches nothing.
 contextMenus.removeAll(() => {
+  contextMenus.create({ contexts: ["page"], id: "page", title: "Page item" });
   contextMenus.create(
     {
       contexts: ["action"],

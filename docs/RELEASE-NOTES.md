@@ -54,6 +54,10 @@ An effect can draw the element through a mesh, a grid for cloth or instances for
 
 [Design](architecture/MOTION.md#shader-primitive)
 
+### Fixes
+
+- A picker's event has its anchor in the `<webview>`'s coordinates, wherever the `<webview>` is on the desktop. [Browser windows](SHELL-BROWSER-WINDOWS.md)
+
 ## 1.3.0
 
 _November 24, 2026_

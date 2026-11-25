@@ -385,9 +385,10 @@ on. `idle.lock_after_seconds` is how long before it locks.
   idle; the desktop still locks when the shell asks and before the machine
   sleeps ([Locking](SHELL-IDLE-AND-LOCK.md#locking)). `0` is an error.
 - `idle.ignore_pointer` ignores pointer motion, buttons, wheels and touchpad
-  gestures, for both timeouts and for lighting dark screens. Keys, touch
-  screens, unlock attempts and `domicile wake-displays` still count. Defaults
-  to `false` ([IDLE.md](IDLE.md#ignoring-the-pointer)).
+  gestures, for both timeouts, the shell's idle watches, the idle time apps
+  read, and lighting dark screens. Keys, touch screens, unlock attempts and
+  `domicile wake-displays` still count. Defaults to `false`
+  ([IDLE.md](IDLE.md#ignoring-the-pointer)).
 - Apps can block blanking and locking (for example, during a video) with
   `zwp_idle_inhibit_manager_v1`. This involves only the app and the
   compositor.

@@ -961,15 +961,17 @@ pub enum HostMessage {
 
     /// Answers [`ChromeMessage::WhichIdleTime`] on the asking connection only:
     /// whole seconds since the last input from a keyboard, pointer, touch or
-    /// tablet, or since the compositor started when there has been none. Idle
-    /// inhibitors don't reset it, as they don't reset Electron's
+    /// tablet, less the pointer's with `idle.ignore_pointer`, or since the
+    /// compositor started when there has been none. Idle inhibitors don't
+    /// reset it, as they don't reset Electron's
     /// `powerMonitor.getSystemIdleTime`.
     IdleTime {
         seconds: u64,
         /// The same, counting only this computer's own devices and leaving
-        /// out emulated input, such as an agent's. Agents wait on it so they
-        /// don't move the pointer or focus out from under the user. Always
-        /// since the compositor started on a headless desk.
+        /// out emulated input, such as an agent's. The pointer counts even
+        /// with `idle.ignore_pointer`. Agents wait on it so they don't move
+        /// the pointer or focus out from under the user. Always since the
+        /// compositor started on a headless desk.
         local_seconds: u64,
     },
 

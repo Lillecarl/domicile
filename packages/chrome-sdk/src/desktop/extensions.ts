@@ -82,7 +82,7 @@ export type Extensions = {
   on: On<ExtensionsListeners>;
   /**
    * Runs command `name` of extension `id` on the active page, as its keys do
-   * in Chrome. The action's own, `_execute_action`, is `activate`, and a
+   * in Chrome. The action's own, `_execute_action`, runs the action, and is a
    * `popup` event when the action has a popup.
    */
   runCommand: (id: string, name: string) => void;

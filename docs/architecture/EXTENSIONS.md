@@ -294,16 +294,18 @@ interface DomicileExtension {
   - `extensionCommands` has every extension with commands, with an action or
     without, each with the keys `CommandService` assigned at install
     (`CommandsOf` in `domicile_extension_menus.cc`). It is JSON, as a window's
-    `menu` is, so it needs no interface per row.
+    `menu` is, so it needs no interface per row. `CommandService` keeps Chrome's
+    own accelerators from extensions, and a patch lifts that: a desk has none.
   - `runExtensionCommand` does what `ExtensionKeybindingRegistry` does for a
     key: it grants `activeTab` on the active tab, then sends
     `commands.onCommand` with that tab.
   - A command's keys never go to the page. `PreHandleKeyboardEvent` finds the
     command in the page's profile and asks every shell document; when none
     listens, the browser runs it on that page, if the page is still there.
-    Chrome's registry on the shell's window binds none (patch 0279).
-  - `_execute_action` is `activateExtension`, and asks the shell for the popup
-    as `action.openPopup()` does.
+    Chrome's registry on the shell's window binds none (patch 0280).
+  - `_execute_action` goes through Chrome's `ExtensionActionRunner`, and asks
+    the shell for the popup as `action.openPopup()` does. With no active tab it
+    is `activateExtension`.
   - Over a private page the extension is not allowed in, nothing runs.
 - **The action's menu** (`chrome.contextMenus`, the `action` context):
 

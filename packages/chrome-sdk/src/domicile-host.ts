@@ -1168,7 +1168,7 @@ export type DomicileHost = {
    * Run command `name` of extension `id`, one of `extensionCommands`, as its
    * keys do in Chrome: the extension is granted activeTab on the active tab
    * and hears `commands.onCommand`. The action's own command,
-   * `_execute_action`, is activateExtension(), and `extensionpopuprequested`
+   * `_execute_action`, runs the action, and is `extensionpopuprequested`
    * when the action has a popup. A command that is gone does nothing; an
    * empty id or name throws. Over the tray's pipe, as activateExtension().
    */

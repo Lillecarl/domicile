@@ -149,14 +149,15 @@ domicile.extensions.on("commandPressed", ({ id, name, profile }) => {
 });
 ```
 
-- The keys are those Chrome gives an extension, so none is one of Chrome's own
-  shortcuts, such as Ctrl+T. The desk's shortcuts (`grabShortcut`) come first.
+- An extension may have any key, Chrome's own shortcuts too, such as Ctrl+T.
+  The desk's shortcuts (`grabShortcut`) come first, then extensions' keys, then
+  the page, then `domicile-guest-keydown`.
 - `extensions.commands` lists every extension with commands, with an action or
   without, and the keys bound to them. `extensions.on("commands")` reports
   changes. The list is that of the profile given to `extensions.setProfile`.
 - `runCommand` acts on the active tab, as a key does in Chrome.
-- `_execute_action` clicks the action. For one with a popup the shell hears
-  `extensions.on("popup")`.
+- `_execute_action` runs the action as Chrome's key does: nothing when it is
+  disabled, and `extensions.on("popup")` when it has a popup.
 
 ## Menus
 

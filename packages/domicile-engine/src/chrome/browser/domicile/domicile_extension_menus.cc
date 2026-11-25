@@ -237,7 +237,12 @@ base::OnceClosure CommandPressed(content::WebContents& page,
   for (const ExtensionCommands& extension :
        CommandsIn(context, std::string())) {
     for (const ExtensionCommand& command : extension.commands) {
-      if (!command.keys.empty() &&
+      // As ExtensionKeybindingRegistry: a key nothing listens for is the page's.
+      // Global commands are not keys of a page.
+      if (!command.keys.empty() && !command.global &&
+          (Command::IsActionRelatedCommand(command.name) ||
+           extensions::EventRouter::Get(&context)->ExtensionHasEventListener(
+               extension.id, "commands.onCommand")) &&
           service->FindCommandByName(extension.id, command.name)
                   .accelerator() == pressed) {
         return base::BindOnce(

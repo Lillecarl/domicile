@@ -48,7 +48,7 @@ NEGATIVE="${NEGATIVE:-0}"
 # `packages/domicile-engine/tests/test-extension-commands-guard.sh` holds the
 # id and the keys to it.
 readonly ID="cobncddhpfhclknjbapgflpohofecjhg"
-readonly FILL="Ctrl+Shift+Y"
+readonly FILL="Ctrl+Shift+L"
 readonly ACTION="Ctrl+Shift+U"
 
 EXTENSION="$SCRIPTS/guard-extension-commands-extension"

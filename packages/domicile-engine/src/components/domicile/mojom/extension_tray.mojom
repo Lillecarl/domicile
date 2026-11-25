@@ -108,8 +108,8 @@ interface ExtensionTray {
   // Runs command `name` of extension `id` (chrome.commands), as its keys do in
   // Chrome: grants activeTab on the active tab, then dispatches
   // `commands.onCommand` with that tab. The action's own command
-  // (`_execute_action`) is Activate, and PopupRequested when the action has a
-  // popup there. Ignored for an extension or command that is gone, and over a
+  // (`_execute_action`) runs the action, and is PopupRequested when the action
+  // has a popup there. Ignored for an extension or command that is gone, and over a
   // private page the extension is not allowed in.
   RunCommand(string id, string name);
 

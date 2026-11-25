@@ -6,6 +6,7 @@
 //
 //   GUARD shell-loaded             this module ran
 //   GUARD focused at=…             a page took focus, and the tray its profile
+//   GUARD popup at=… url=…         the action's key asked for its popup
 //   GUARD taking commands          it listens for `extensioncommandpressed`
 //                                  now: the default page took focus again
 //   GUARD pressed name=… profile=… it was given the `?expect=` extension's
@@ -49,6 +50,10 @@ export const HostShell = (_root, desktop) => {
     }
   });
 
+  host.addEventListener("extensionpopuprequested", ({ popup, profile }) => {
+    say(`popup at=${profile} url=${popup}`);
+  });
+
   let defaultFocuses = 0;
   const takeCommands = () => {
     host.addEventListener("extensioncommandpressed", ({ data }) => {
@@ -66,11 +71,14 @@ export const HostShell = (_root, desktop) => {
     if (menus === 1) {
       event.runExtensionItem(item.id);
     } else {
+      // Once the new page has committed and loaded.
+      view.addEventListener("domicile-page-change", () => {
+        if (view.url.includes("again=1")) {
+          event.runExtensionItem(item.id);
+          say("ran a stale item");
+        }
+      });
       view.setAttribute("src", `${src}?at=default&again=1`);
-      setTimeout(() => {
-        event.runExtensionItem(item.id);
-        say("ran a stale item");
-      }, 3000);
     }
   };
 

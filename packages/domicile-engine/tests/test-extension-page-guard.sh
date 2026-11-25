@@ -61,33 +61,35 @@ says() { # $1 MEASURED, $2 what the sentence must contain
 }
 
 expect "every step done passes" "pass" \
-  "$(verdict "page 1 1 0 1 0 1 1 1 2 1 1 1")"
+  "$(verdict "page 1 1 0 1 0 1 1 1 2 1 1 1 1")"
 expect "no list sent blames the stand-in's connection" "yes" \
-  "$(says "page 0 0 0 0 0 0 0 0 0 0 0 0" "never sent")"
+  "$(says "page 0 0 0 0 0 0 0 0 0 0 0 0 1" "never sent")"
 expect "a page not loaded is named" "yes" \
-  "$(says "page 1 0 0 0 0 0 0 0 0 0 0 0" "never loaded")"
+  "$(says "page 1 0 0 0 0 0 0 0 0 0 0 0 1" "never loaded")"
 expect "a key the page got is the failure" "yes" \
-  "$(says "page 1 1 1 0 0 1 1 1 1 1 1 1" "THE DEFAULT PAGE GOT")"
+  "$(says "page 1 1 1 0 0 1 1 1 1 1 1 1 1" "THE DEFAULT PAGE GOT")"
 expect "a command not run blames RunCommandIn" "yes" \
-  "$(says "page 1 1 0 0 0 1 1 1 1 1 1 1" "RunCommandIn")"
+  "$(says "page 1 1 0 0 0 1 1 1 1 1 1 1 1" "RunCommandIn")"
 expect "a key the work page got is the failure" "yes" \
-  "$(says "page 1 1 0 1 1 0 1 1 1 1 1 1" "the work page got")"
+  "$(says "page 1 1 0 1 1 0 1 1 1 1 1 1 1" "the work page got")"
 expect "a command run in another profile is named" "yes" \
-  "$(says "page 1 1 0 1 0 0 1 1 2 1 1 1" "the default profile's copy")"
+  "$(says "page 1 1 0 1 0 0 1 1 2 1 1 1 1" "the default profile's copy")"
 expect "a private key the page never got is the failure" "yes" \
-  "$(says "page 1 1 0 1 0 1 0 1 2 1 1 1" "never got the key")"
+  "$(says "page 1 1 0 1 0 1 0 1 2 1 1 1 1" "never got the key")"
 expect "a command not named to a listening shell is the failure" "yes" \
-  "$(says "page 1 1 0 1 0 1 1 0 3 1 1 1" "never named the command")"
+  "$(says "page 1 1 0 1 0 1 1 0 3 1 1 1 1" "never named the command")"
 expect "a command run under a listening shell is the failure" "yes" \
-  "$(says "page 1 1 0 1 0 1 1 1 3 1 1 1" "the shell listened for")"
+  "$(says "page 1 1 0 1 0 1 1 1 3 1 1 1 1" "the shell listened for")"
 expect "another number of runs fails" "yes" \
-  "$(says "page 1 1 0 1 0 1 1 1 4 1 1 1" "another number")"
+  "$(says "page 1 1 0 1 0 1 1 1 4 1 1 1 1" "another number")"
 expect "no item blames PageMenuOf" "yes" \
-  "$(says "page 1 1 0 1 0 1 1 1 2 0 0 0" "PageMenuOf")"
+  "$(says "page 1 1 0 1 0 1 1 1 2 0 0 0 1" "PageMenuOf")"
 expect "an item not run blames RunContextMenuExtensionItem" "yes" \
-  "$(says "page 1 1 0 1 0 1 1 1 2 1 0 0" "runExtensionItem()")"
+  "$(says "page 1 1 0 1 0 1 1 1 2 1 0 0 1" "runExtensionItem()")"
 expect "a stale item run is the failure" "yes" \
-  "$(says "page 1 1 0 1 0 1 1 1 2 1 1 0" "A PAGE THAT IS GONE")"
+  "$(says "page 1 1 0 1 0 1 1 1 2 1 1 0 1" "A PAGE THAT IS GONE")"
+expect "an action's key with no popup is the failure" "yes" \
+  "$(says "page 1 1 0 1 0 1 1 1 2 1 1 1 0" "RunCommandIn's action")"
 expect "the sharp control passes" "pass" "$(verdict "control 1 1 1 0 1")"
 expect "a control whose page heard no key fails" "fail" \
   "$(verdict "control 1 1 0 0 1")"
@@ -102,7 +104,7 @@ expect "an unknown leg fails" "fail" "$(verdict "")"
 read_from() { # $1 the readonly's name, $2 the guard
   sed -n "s/^readonly $1=\"\(.*\)\"\$/\1/p" "$2"
 }
-for name in ID FILL; do
+for name in ID FILL ACTION; do
   expect "the guard's $name is the commands guard's" \
     "$(read_from "$name" "$SCRIPTS/guard-extension-commands.sh")" \
     "$(read_from "$name" "$GUARD")"

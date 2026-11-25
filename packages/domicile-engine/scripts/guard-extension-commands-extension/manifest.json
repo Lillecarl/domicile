@@ -12,7 +12,7 @@
     },
     "fill": {
       "description": "Fill in",
-      "suggested_key": { "default": "Ctrl+Shift+Y" }
+      "suggested_key": { "default": "Ctrl+Shift+L" }
     }
   },
   "description": "Two commands, an item in its action's menu and one in a page's, for guard-extension-commands.sh and guard-extension-page.sh.",

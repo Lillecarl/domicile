@@ -112,8 +112,8 @@ the same id, so an extension author picks up an edit without a restart.
   moved. A copy from the Web Store stays.
 - Each profile without it installs it
   ([BROWSER-PROFILES.md](BROWSER-PROFILES.md#engine)).
-- The reply follows the last of them. A profile's failure refuses the command
-  and is named in it.
+- The reply follows the default profile's load. Another profile's failure is
+  logged.
 
 Chromium disables unpacked extensions outside developer mode
 (`DISABLE_UNSUPPORTED_DEVELOPER_EXTENSION`). The installer sets

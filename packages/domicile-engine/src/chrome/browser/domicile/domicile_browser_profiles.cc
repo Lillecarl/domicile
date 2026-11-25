@@ -665,6 +665,12 @@ void BrowserProfileRegistry::OnMirroredUnpackedLoaded(
 
 void BrowserProfileRegistry::ReloadUnpackedElsewhere(Profile& from,
                                                      const std::string& id) {
+  const extensions::Extension* loaded =
+      extensions::ExtensionRegistry::Get(&from)->GetInstalledExtension(id);
+  CHECK(loaded) << "extension " << id << " just loaded";
+  // Not each copy's own: a manifest `key` fixes the id wherever the directory
+  // is.
+  const base::FilePath directory = loaded->path();
   for (Profile* profile : ReadyExtensionProfiles()) {
     const extensions::Extension* extension =
         extensions::ExtensionRegistry::Get(profile)->GetInstalledExtension(id);
@@ -675,8 +681,6 @@ void BrowserProfileRegistry::ReloadUnpackedElsewhere(Profile& from,
       continue;
     }
     const BrowserProfile* as = AsBrowserProfile(*profile);
-    // A copy: the reload frees the extension.
-    const base::FilePath directory = extension->path();
     LoadUnpackedInto(
         *profile, directory,
         base::BindOnce(

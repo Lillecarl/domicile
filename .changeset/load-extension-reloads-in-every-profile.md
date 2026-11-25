@@ -3,4 +3,4 @@
 "domicile": patch
 ---
 
-Loading an unpacked extension again, as the Settings app's **Load unpacked folder** does, reloads it in every browser profile that has it. It ends once the last profile has reloaded, and names each profile that failed.
+Loading an unpacked extension again, as the Settings app's **Load unpacked folder** does, reloads it in every browser profile that has it.

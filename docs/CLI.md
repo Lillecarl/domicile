@@ -561,13 +561,12 @@ abcdefghijklmnopabcdefghijklmnop
 ```
 
 - An extension already loaded from that directory reloads in place and keeps
-  its id. Run it again after each edit. It returns once the last profile has
-  reloaded.
+  its id. Run it again after each edit. It returns once the default profile has
+  reloaded; a failure in another is in `domicile logs`.
 - A relative directory is relative to where the command runs.
 - It stays across restarts until it is uninstalled, as one loaded from the
   Settings app does ([Extensions](architecture/EXTENSIONS.md#from-the-settings-app)).
-- A directory the engine cannot load prints why, naming each profile it did not
-  load in when others took it, and exits nonzero.
+- A directory the engine cannot load prints why and exits nonzero.
 
 ## `domicile status [--json]`
 

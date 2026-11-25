@@ -373,8 +373,8 @@ The supervisor connects, sends one JSON line, reads one reply, and closes.
 - `load_unpacked`, `uninstall_extension` and `config_extensions` are the
   Settings app's too ([EXTENSIONS.md](/docs/architecture/EXTENSIONS.md#from-the-settings-app)).
   `domicile load-extension` sends `load_unpacked` as well. It replies once the
-  extension has loaded, or reloaded, in every browser profile, or with why it
-  did not and in which.
+  extension has loaded, or reloaded, in the default browser profile, or with why
+  it did not. The other profiles follow.
 - `extensions` and `set_extension_enabled` are the Settings app's too, in
   place of `chrome.management`
   ([APP-MODULES.md](/docs/architecture/APP-MODULES.md#domiciles-own-state)).

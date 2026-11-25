@@ -22,8 +22,10 @@ namespace domicile {
 enum class ActivityKind {
   // A keyboard.
   kKey,
-  // A mouse, touchpad or tablet: motion, buttons, wheels and gestures.
+  // A mouse, touchpad or tablet: buttons, wheels and gestures.
   kPointer,
+  // A mouse, touchpad or tablet that moved the pointer.
+  kPointerMotion,
   // A touch screen.
   kTouch,
   // None of these, like activity reported with no event.

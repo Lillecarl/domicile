@@ -41,8 +41,10 @@ pub enum PointerAxisSource {
 pub enum ActivityKind {
     /// A keyboard.
     Key,
-    /// A mouse, touchpad or tablet: motion, buttons, wheels and gestures.
+    /// A mouse, touchpad or tablet: buttons, wheels and gestures.
     Pointer,
+    /// A mouse, touchpad or tablet that moved the pointer.
+    PointerMotion,
     /// A touch screen.
     Touch,
     /// None of these, like activity reported with no event.
@@ -554,17 +556,17 @@ pub enum ChromeMessage {
 
     /// Somebody used the keyboard, pointer or touchpad, wherever it went.
     ///
-    /// The browser sends it for its own input: keys and touches at most every
-    /// 200 ms, and all else at most every 200 ms. Input to a browser window or
-    /// the shell's page reaches the compositor no other way, and the idle clock
-    /// must hear it.
+    /// The browser sends it for its own input: keys, touches and the pointer's
+    /// own at most every 200 ms, and pointer motion at most every 200 ms. Input
+    /// to a browser window or the shell's page reaches the compositor no other
+    /// way, and the idle clock must hear it.
     Activity {
         /// What the input was, for the log: the event, and the device it came
         /// from when known, e.g. `"MouseMoved from Logitech USB Receiver"`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         input: Option<String>,
-        /// What the input came from, for `idle.ignore_pointer`. `None` from an
-        /// engine that does not say.
+        /// What the input came from, for `idle.ignore_pointer_motion`. `None`
+        /// from an engine that does not say.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         kind: Option<ActivityKind>,
     },
@@ -961,16 +963,16 @@ pub enum HostMessage {
 
     /// Answers [`ChromeMessage::WhichIdleTime`] on the asking connection only:
     /// whole seconds since the last input from a keyboard, pointer, touch or
-    /// tablet, less the pointer's with `idle.ignore_pointer`, or since the
-    /// compositor started when there has been none. Idle inhibitors don't
+    /// tablet, less pointer motion with `idle.ignore_pointer_motion`, or since
+    /// the compositor started when there has been none. Idle inhibitors don't
     /// reset it, as they don't reset Electron's
     /// `powerMonitor.getSystemIdleTime`.
     IdleTime {
         seconds: u64,
         /// The same, counting only this computer's own devices and leaving
-        /// out emulated input, such as an agent's. The pointer counts even
-        /// with `idle.ignore_pointer`. Agents wait on it so they don't move
-        /// the pointer or focus out from under the user. Always since the
+        /// out emulated input, such as an agent's. Pointer motion counts even
+        /// with `idle.ignore_pointer_motion`. Agents wait on it so they don't
+        /// move the pointer or focus out from under the user. Always since the
         /// compositor started on a headless desk.
         local_seconds: u64,
     },

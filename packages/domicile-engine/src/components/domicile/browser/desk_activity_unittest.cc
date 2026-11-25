@@ -68,6 +68,7 @@ TEST(DeskActivityTest, AnInputIsNamedWithTheDeviceItCameFrom) {
 TEST(DeskActivityTest, AKindIsNamedAsTheCompositorReadsIt) {
   EXPECT_EQ(ActivityKindName(ActivityKind::kKey), "key");
   EXPECT_EQ(ActivityKindName(ActivityKind::kPointer), "pointer");
+  EXPECT_EQ(ActivityKindName(ActivityKind::kPointerMotion), "pointer_motion");
   EXPECT_EQ(ActivityKindName(ActivityKind::kTouch), "touch");
   EXPECT_EQ(ActivityKindName(ActivityKind::kOther), "other");
 }

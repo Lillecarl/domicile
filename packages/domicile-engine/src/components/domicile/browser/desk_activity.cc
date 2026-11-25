@@ -25,6 +25,8 @@ std::string_view ActivityKindName(ActivityKind kind) {
       return "key";
     case ActivityKind::kPointer:
       return "pointer";
+    case ActivityKind::kPointerMotion:
+      return "pointer_motion";
     case ActivityKind::kTouch:
       return "touch";
     case ActivityKind::kOther:

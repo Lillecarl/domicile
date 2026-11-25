@@ -38,7 +38,7 @@ FILTER='PinchMetadataTest.*:ScrollMetadataTest.*:FrameSinkBrokerTest.*:WindowDif
 # DeskCursorThemeSource 3, XCursorTheme 5, XCursorThemeDirectory 4,
 # SyncedFrame 7, RenderProcess 3, ShellDeath 5, ProbeWait 3, ScreenCapture 7,
 # ScreenChoice 3, WebViewPartition 5, WillNavigate 4, DeskActivity 5,
-# DeskActivityReporter 5, DeskPointer 5, PointerWarp 10, PointerConfinementBoxes 4, PageMatches 8, ForceDark 2, HiddenFromCaptures 7,
+# DeskActivityReporter 6, DeskPointer 5, PointerWarp 10, PointerConfinementBoxes 4, PageMatches 8, ForceDark 2, HiddenFromCaptures 7,
 # LocaleFallback 2, DomicileLcdTextActivation 2, Rtkit 1, DeskGestures 14,
 # NativeGestureSequence 3, EdgeSwipe 10, DeskPointerHiding 2, PointerHiding 8,
 # InputMethodLines 7, DeskModifierTaps 13, TapModifierOf 1, IdentityDialog 11,
@@ -51,6 +51,8 @@ FILTER='PinchMetadataTest.*:ScrollMetadataTest.*:FrameSinkBrokerTest.*:WindowDif
 # DomicileMonitorTwinActivation 1, CursorDisplay 7, DomicileHiddenPageTiles 4,
 # ChannelDisconnectOrder 2, BrokerSocket 3.
 #
+# 1033, and it was 1032 — a click a moving mouse does not hide is one more
+# DeskActivityReporter case. Before that
 # 1032, and it was 1027 — which input is reported, and as what kind, are five
 # DeskActivityReporter cases. Before that
 # 1027, and it was 1025 — an input's kind and the throttle of keys' own reports
@@ -372,7 +374,7 @@ FILTER='PinchMetadataTest.*:ScrollMetadataTest.*:FrameSinkBrokerTest.*:WindowDif
 # so the floor sat 12 below the truth and a whole suite could have stopped
 # linking with room to spare. That is the failure this exists to catch, so the
 # number is the real one.
-FLOOR=1032
+FLOOR=1033
 
 # From inside the out directory, because this is a component build and the
 # binary loads its own .so files from beside it.

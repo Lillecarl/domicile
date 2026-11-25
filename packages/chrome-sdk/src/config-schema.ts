@@ -259,7 +259,7 @@ export const idleConfigSchema = z.strictObject({
     .min(1)
     .nullish()
     .transform((value) => value ?? undefined),
-  ignore_pointer: z.boolean().prefault(false),
+  ignore_pointer_motion: z.boolean().prefault(false),
   lock_after_seconds: z
     .number()
     .int()
@@ -547,7 +547,7 @@ export const configSchema = z.strictObject({
   files: filesConfigSchema.prefault({ omit: ["**/.*"] }),
   idle: idleConfigSchema.prefault({
     blank_after_seconds: null,
-    ignore_pointer: false,
+    ignore_pointer_motion: false,
     lock_after_seconds: null,
   }),
   input: inputConfigSchema.prefault({

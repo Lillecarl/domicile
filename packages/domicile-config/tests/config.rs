@@ -381,12 +381,12 @@ fn rejects_a_lock_timeout_of_no_time_at_all() {
 }
 
 #[test]
-fn a_desk_counts_its_pointer_unless_it_asks_not_to() {
-    assert!(!Config::parse("{}").unwrap().idle.ignore_pointer);
-    let idle = Config::parse(r#"{ "idle": { "ignore_pointer": true } }"#)
+fn a_desk_counts_its_pointers_motion_unless_it_asks_not_to() {
+    assert!(!Config::parse("{}").unwrap().idle.ignore_pointer_motion);
+    let idle = Config::parse(r#"{ "idle": { "ignore_pointer_motion": true } }"#)
         .unwrap()
         .idle;
-    assert!(idle.ignore_pointer);
+    assert!(idle.ignore_pointer_motion);
 }
 
 // ---- lock -----------------------------------------------------------------

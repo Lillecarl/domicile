@@ -39,10 +39,18 @@ ui::TouchEvent Touch() {
                         ui::PointerDetails(ui::EventPointerType::kTouch, 0));
 }
 
-ui::MouseEvent Mouse() {
-  return ui::MouseEvent(ui::EventType::kMouseMoved, gfx::PointF(10, 10),
-                        gfx::PointF(10, 10), base::TimeTicks::Now(),
-                        ui::EF_NONE, ui::EF_NONE);
+ui::MouseEvent Mouse(ui::EventType type) {
+  return ui::MouseEvent(type, gfx::PointF(10, 10), gfx::PointF(10, 10),
+                        base::TimeTicks::Now(), ui::EF_LEFT_MOUSE_BUTTON,
+                        ui::EF_LEFT_MOUSE_BUTTON);
+}
+
+ui::MouseEvent Move() {
+  return Mouse(ui::EventType::kMouseMoved);
+}
+
+ui::MouseEvent Click() {
+  return Mouse(ui::EventType::kMousePressed);
 }
 
 ui::MouseWheelEvent Wheel() {
@@ -118,39 +126,62 @@ class DeskActivityReporterTest : public testing::Test {
 TEST_F(DeskActivityReporterTest, AnEventIsOfTheDeviceItCameFrom) {
   EXPECT_EQ(ActivityKindOf(Key()), ActivityKind::kKey);
   EXPECT_EQ(ActivityKindOf(Touch()), ActivityKind::kTouch);
-  EXPECT_EQ(ActivityKindOf(Mouse()), ActivityKind::kPointer);
+  EXPECT_EQ(ActivityKindOf(Move()), ActivityKind::kPointerMotion);
+  EXPECT_EQ(ActivityKindOf(Mouse(ui::EventType::kMouseDragged)),
+            ActivityKind::kPointerMotion);
+  EXPECT_EQ(ActivityKindOf(Click()), ActivityKind::kPointer);
+  EXPECT_EQ(ActivityKindOf(Mouse(ui::EventType::kMouseReleased)),
+            ActivityKind::kPointer);
   EXPECT_EQ(ActivityKindOf(Wheel()), ActivityKind::kPointer);
   EXPECT_EQ(ActivityKindOf(Scroll()), ActivityKind::kPointer);
   EXPECT_EQ(ActivityKindOf(Pinch()), ActivityKind::kPointer);
   EXPECT_EQ(ActivityKindOf(ui::CancelModeEvent()), ActivityKind::kOther);
 }
 
-// The detector reports the mouse and then nothing for 200 ms.
+// The detector reports the motion and then nothing for 200 ms.
 TEST_F(DeskActivityReporterTest, AMovingMouseHidesNoKey) {
-  Dispatch(Mouse());
+  Dispatch(Move());
   Pass(base::Milliseconds(10));
   Dispatch(Key());
   Pass(base::Milliseconds(10));
-  Dispatch(Mouse());
+  Dispatch(Move());
 
-  EXPECT_EQ(reported(), Kinds({ActivityKind::kPointer, ActivityKind::kKey}));
+  EXPECT_EQ(reported(),
+            Kinds({ActivityKind::kPointerMotion, ActivityKind::kKey}));
+}
+
+TEST_F(DeskActivityReporterTest, AMovingMouseHidesNoClick) {
+  Dispatch(Move());
+  Pass(base::Milliseconds(10));
+  Dispatch(Click());
+  Pass(base::Milliseconds(10));
+  Dispatch(Move());
+
+  EXPECT_EQ(reported(),
+            Kinds({ActivityKind::kPointerMotion, ActivityKind::kPointer}));
 }
 
 // Both the detector and the source hear it.
-TEST_F(DeskActivityReporterTest, AKeyOrATouchIsReportedOnce) {
+TEST_F(DeskActivityReporterTest, AKeyATouchOrAClickIsReportedOnce) {
   Dispatch(Key());
   EXPECT_EQ(reported(), Kinds({ActivityKind::kKey}));
 
   Pass(base::Milliseconds(200));
   Dispatch(Touch());
   EXPECT_EQ(reported(), Kinds({ActivityKind::kKey, ActivityKind::kTouch}));
+
+  Pass(base::Milliseconds(200));
+  Dispatch(Click());
+  EXPECT_EQ(reported(), Kinds({ActivityKind::kKey, ActivityKind::kTouch,
+                               ActivityKind::kPointer}));
 }
 
-TEST_F(DeskActivityReporterTest, KeysAndTouchesShareAThrottle) {
+TEST_F(DeskActivityReporterTest, KeysTouchesAndClicksShareAThrottle) {
   Dispatch(Key());
   Pass(base::Milliseconds(199));
   Dispatch(Key());
   Dispatch(Touch());
+  Dispatch(Click());
   EXPECT_EQ(reported(), Kinds({ActivityKind::kKey}));
 
   Pass(base::Milliseconds(1));

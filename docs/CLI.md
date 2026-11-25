@@ -573,7 +573,8 @@ capturing   -
 
 Print how many whole seconds nobody has used the desktop: since the last key,
 pointer, touch or tablet input, or since the desktop started when there has
-been none. With [`idle.ignore_pointer`](IDLE.md#ignoring-the-pointer) the
+been none. With
+[`idle.ignore_pointer_motion`](IDLE.md#ignoring-pointer-motion) a moving
 pointer doesn't reset it. Idle inhibitors don't either. Electron apps read it
 for `powerMonitor.getSystemIdleTime`, so Slack and the like can mark you away.
 
@@ -583,9 +584,9 @@ for `powerMonitor.getSystemIdleTime`, so Slack and the like can mark you away.
 
 `--json` prints `{"seconds": 42, "local_seconds": 90}` instead.
 `local_seconds` counts only this computer's own keyboard, pointer and touch,
-leaving out emulated input such as an agent's. The pointer counts here even
-with `idle.ignore_pointer`. Agents wait on it before they move the pointer or
-focus.
+leaving out emulated input such as an agent's. Pointer motion counts here even
+with `idle.ignore_pointer_motion`. Agents wait on it before they move the
+pointer or focus.
 
 ## `domicile disable-while-typing [on|off|toggle]`
 

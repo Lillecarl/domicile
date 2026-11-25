@@ -45,14 +45,15 @@ ActivityKind ActivityKindOf(const ui::Event& event);
 
 // Reports the desk's input and its kind.
 //
-// `ui::UserActivityDetector` watches for all but keys and touches: it sees each
-// event as the platform dispatches it, whatever page it is for, at most every
-// 200 ms, and skips the mouse moves aura synthesizes under a still pointer.
+// `ui::UserActivityDetector` watches for pointer motion: it sees each event as
+// the platform dispatches it, whatever page it is for, at most every 200 ms,
+// and skips the mouse moves aura synthesizes under a still pointer.
 //
 // Its 200 ms are shared by every kind of input, so a moving mouse hides keys
-// from it, and the compositor may ignore the mouse (`idle.ignore_pointer`).
-// Keys and touches are heard from the platform's event source instead, at most
-// every 200 ms of their own.
+// and clicks from it, and the compositor may ignore that motion
+// (`idle.ignore_pointer_motion`). Keys, touches and the pointer's other input
+// are heard from the platform's event source instead, at most every 200 ms of
+// their own.
 class DeskActivityReporter : public ui::UserActivityObserver,
                              public ui::PlatformEventObserver {
  public:
@@ -81,7 +82,7 @@ class DeskActivityReporter : public ui::UserActivityObserver,
   const raw_ptr<const base::TickClock> clock_;
   const Report report_;
 
-  // Keys and touches share it, since both always count.
+  // All that is heard from the source shares it, since all of it counts.
   ActivityThrottle throttle_;
 
   base::ScopedObservation<ui::UserActivityDetector, ui::UserActivityObserver>

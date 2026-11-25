@@ -66,8 +66,8 @@ pub struct Idle<S> {
     blank_after: Option<Duration>,
     /// `None` for a desktop that locks only when its shell asks.
     lock_after: Option<Duration>,
-    /// Whether the pointer is no sign of somebody here.
-    ignore_pointer: bool,
+    /// Whether pointer motion is no sign of somebody here.
+    ignore_pointer_motion: bool,
     /// When [`Idle::lock_due`] fired, if it has since the last input.
     locked_at: Option<Instant>,
     /// The last input, or creation time if there has been none.
@@ -88,7 +88,7 @@ impl<S: StillThere + PartialEq> Idle<S> {
         Idle {
             blank_after: idle.blank_after(),
             lock_after: idle.lock_after(),
-            ignore_pointer: idle.ignore_pointer,
+            ignore_pointer_motion: idle.ignore_pointer_motion,
             locked_at: None,
             stirred_at: now,
             stage: Stage::Lit,
@@ -103,9 +103,9 @@ impl<S: StillThere + PartialEq> Idle<S> {
         self.blank_after.is_some() || self.lock_after.is_some()
     }
 
-    /// Whether the pointer does not count as input. See [`somebody_is_here`].
-    pub fn ignores_pointer(&self) -> bool {
-        self.ignore_pointer
+    /// Whether pointer motion does not count as input. See [`somebody_is_here`].
+    pub fn ignores_pointer_motion(&self) -> bool {
+        self.ignore_pointer_motion
     }
 
     /// How long the desk has gone without input as of `now`, or `None` while
@@ -384,26 +384,31 @@ pub fn from_this_computer(request: &ClientRequest, engine_takes_input: bool) -> 
 /// own behalf do not count either, or a repainting clock would keep the
 /// screens on.
 ///
-/// With `ignore_pointer` (`idle.ignore_pointer`) the pointer does not count
-/// either. Nor does browser input that is not known to be a key or a touch, as
-/// from an engine that names no kind: the pointer may have made it.
-pub fn somebody_is_here(request: &ClientRequest, ignore_pointer: bool) -> Option<&'static str> {
-    let pointer = |named| (!ignore_pointer).then_some(named);
+/// With `ignore_pointer_motion` (`idle.ignore_pointer_motion`) pointer motion
+/// does not count either. Nor does browser input that may be motion, as from an
+/// engine that names no kind.
+pub fn somebody_is_here(
+    request: &ClientRequest,
+    ignore_pointer_motion: bool,
+) -> Option<&'static str> {
+    let motion = |named| (!ignore_pointer_motion).then_some(named);
     match request {
         ClientRequest::Key { .. } => Some("a key"),
         // The browser's own input.
         ClientRequest::Activity { kind, .. } => {
             const NAMED: &str = "input the browser saw";
             match kind {
-                Some(ActivityKind::Key | ActivityKind::Touch) => Some(NAMED),
-                Some(ActivityKind::Pointer | ActivityKind::Other) | None => pointer(NAMED),
+                Some(ActivityKind::Key | ActivityKind::Pointer | ActivityKind::Touch) => {
+                    Some(NAMED)
+                }
+                Some(ActivityKind::PointerMotion | ActivityKind::Other) | None => motion(NAMED),
             }
         }
-        ClientRequest::PointerButton { .. } => pointer("a click"),
-        ClientRequest::PointerAxis { .. } => pointer("a scroll"),
-        ClientRequest::PointerPinch { .. } => pointer("a pinch"),
-        ClientRequest::PointerSwipe { .. } => pointer("a swipe"),
-        ClientRequest::PointerHold { .. } => pointer("a hold"),
+        ClientRequest::PointerButton { .. } => Some("a click"),
+        ClientRequest::PointerAxis { .. } => Some("a scroll"),
+        ClientRequest::PointerPinch { .. } => Some("a pinch"),
+        ClientRequest::PointerSwipe { .. } => Some("a swipe"),
+        ClientRequest::PointerHold { .. } => Some("a hold"),
         ClientRequest::Touch { .. } => Some("a touch"),
         ClientRequest::PointerLeave
         | ClientRequest::GestureOwnerGone { .. }
@@ -463,9 +468,9 @@ pub fn somebody_is_here(request: &ClientRequest, ignore_pointer: bool) -> Option
         // The browser restates a still pointer after a window changes, and
         // turning the screens off changes them.
         ClientRequest::PointerMotion { moved: false, .. } => None,
-        ClientRequest::PointerMotion { moved: true, .. } => pointer("the pointer moving"),
+        ClientRequest::PointerMotion { moved: true, .. } => motion("the pointer moving"),
         // Sent only for a hand on the mouse, never for a still pointer.
-        ClientRequest::PointerRelative { .. } => pointer("the pointer moving"),
+        ClientRequest::PointerRelative { .. } => motion("the pointer moving"),
         // The page answering a game's ask, not a hand.
         ClientRequest::PointerConstrained { .. } => None,
         // The lock screen's own field forwards no `Key`s, so an unlock attempt
@@ -1296,8 +1301,51 @@ mod tests {
     }
 
     #[test]
-    fn a_desk_that_ignores_its_pointer_counts_no_pointer_input() {
+    fn a_desk_that_ignores_pointer_motion_counts_none() {
         for request in [
+            ClientRequest::PointerMotion {
+                app_id: "app-1".into(),
+                x: 4.0,
+                y: 8.0,
+                moved: true,
+            },
+            ClientRequest::PointerRelative {
+                app_id: "app-1".into(),
+                dx: 2.0,
+                dy: 1.0,
+                dx_unaccel: 1.0,
+                dy_unaccel: 0.5,
+            },
+            browser_saw(Some(ActivityKind::PointerMotion)),
+            browser_saw(Some(ActivityKind::Other)),
+            // An engine that names no kind: it may be motion.
+            browser_saw(None),
+        ] {
+            assert_eq!(somebody_is_here(&request, true), None, "{request:?}");
+            assert!(
+                somebody_is_here(&request, false).is_some(),
+                "{request:?} counts where motion does"
+            );
+        }
+    }
+
+    #[test]
+    fn a_desk_that_ignores_pointer_motion_counts_everything_else() {
+        for request in [
+            ClientRequest::Key {
+                keycode: 30,
+                pressed: true,
+            },
+            ClientRequest::Touch {
+                owner: 1,
+                app_id: "app-1".into(),
+                touch: Touch::Down {
+                    id: 1,
+                    time: 1,
+                    x: 4.0,
+                    y: 8.0,
+                },
+            },
             ClientRequest::PointerButton {
                 button: 272,
                 pressed: true,
@@ -1331,50 +1379,8 @@ mod tests {
                 owner: 1,
                 hold: Hold::End { canceled: false },
             },
-            ClientRequest::PointerMotion {
-                app_id: "app-1".into(),
-                x: 4.0,
-                y: 8.0,
-                moved: true,
-            },
-            ClientRequest::PointerRelative {
-                app_id: "app-1".into(),
-                dx: 2.0,
-                dy: 1.0,
-                dx_unaccel: 1.0,
-                dy_unaccel: 0.5,
-            },
-            browser_saw(Some(ActivityKind::Pointer)),
-            browser_saw(Some(ActivityKind::Other)),
-            // An engine that names no kind: the pointer may have made it.
-            browser_saw(None),
-        ] {
-            assert_eq!(somebody_is_here(&request, true), None, "{request:?}");
-            assert!(
-                somebody_is_here(&request, false).is_some(),
-                "{request:?} counts where the pointer does"
-            );
-        }
-    }
-
-    #[test]
-    fn a_desk_that_ignores_its_pointer_counts_everything_else() {
-        for request in [
-            ClientRequest::Key {
-                keycode: 30,
-                pressed: true,
-            },
-            ClientRequest::Touch {
-                owner: 1,
-                app_id: "app-1".into(),
-                touch: Touch::Down {
-                    id: 1,
-                    time: 1,
-                    x: 4.0,
-                    y: 8.0,
-                },
-            },
             browser_saw(Some(ActivityKind::Key)),
+            browser_saw(Some(ActivityKind::Pointer)),
             browser_saw(Some(ActivityKind::Touch)),
             // The way back in whichever engine runs.
             ClientRequest::Unlock {
@@ -1394,19 +1400,19 @@ mod tests {
     }
 
     #[test]
-    fn a_reloaded_clock_takes_up_whether_the_pointer_counts() {
+    fn a_reloaded_clock_takes_up_whether_pointer_motion_counts() {
         let start = Instant::now();
         let mut counting = desk(start);
-        assert!(!counting.ignores_pointer());
+        assert!(!counting.ignores_pointer_motion());
         let ignoring = Idle::after(
             &IdleConfig {
-                ignore_pointer: true,
+                ignore_pointer_motion: true,
                 ..IdleConfig::default()
             },
             start,
         )
         .takes_over_from(&mut counting);
-        assert!(ignoring.ignores_pointer());
+        assert!(ignoring.ignores_pointer_motion());
     }
 
     #[test]

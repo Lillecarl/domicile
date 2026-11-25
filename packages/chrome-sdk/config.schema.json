@@ -387,9 +387,9 @@
           "minimum": 1,
           "type": ["integer", "null"]
         },
-        "ignore_pointer": {
+        "ignore_pointer_motion": {
           "default": false,
-          "description": "Whether the pointer is ignored as a sign of somebody at the desktop.\n\nPointer motion, buttons, wheels and touchpad gestures then hold off\nneither timeout and light no dark screen. Keys, touch screens, unlock\nattempts and `domicile wake-displays` still do. For a mouse that\nreports motion by itself.",
+          "description": "Whether pointer motion is ignored as a sign of somebody at the desktop.\n\nIt then holds off neither timeout and lights no dark screen. Keys,\ntouch screens, clicks, wheels, touchpad gestures, unlock attempts and\n`domicile wake-displays` still do. For a mouse that reports motion by\nitself.",
           "type": "boolean"
         },
         "lock_after_seconds": {
@@ -1081,7 +1081,7 @@
       "$ref": "#/$defs/IdleConfig",
       "default": {
         "blank_after_seconds": null,
-        "ignore_pointer": false,
+        "ignore_pointer_motion": false,
         "lock_after_seconds": null
       }
     },

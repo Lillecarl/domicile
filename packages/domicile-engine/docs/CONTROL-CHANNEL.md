@@ -179,10 +179,11 @@ The engine has two channels to the rest of Domicile:
   [ENGINE-FORK.md](/docs/architecture/ENGINE-FORK.md#a-compositor-restart).
 - **`activity`** is the browser's, not the page's. `StartDeskActivity`
   (`chrome/browser/domicile/domicile_desk_activity.h`) watches
-  `ui::UserActivityDetector`, and `ui::PlatformEventSource` for keys and
-  touches, each at most every 200 ms. Every control channel sends it while a
-  compositor is connected, with `kind`: `key`, `pointer`, `touch` or `other`
-  ([IDLE.md](/docs/IDLE.md#ignoring-the-pointer)). See
+  `ui::UserActivityDetector` for pointer motion, and `ui::PlatformEventSource`
+  for keys, touches and the pointer's other input, each at most every 200 ms.
+  Every control channel sends it while a compositor is connected, with `kind`:
+  `key`, `pointer`, `pointer_motion`, `touch` or `other`
+  ([IDLE.md](/docs/IDLE.md#ignoring-pointer-motion)). See
   `components/domicile/browser/desk_activity.h` and `desk_activity_reporter.h`.
 - **`desk_pointer`** is the browser's too. `StartDeskPointer`
   (`chrome/browser/domicile/domicile_desk_pointer.h`) watches aura's mouse

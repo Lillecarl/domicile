@@ -533,7 +533,8 @@ in {
             blank_after_seconds = lib.mkOption {
               description = ''
                 Seconds without input before the screens blank. Any key, click,
-                scroll or pointer movement wakes them; see `ignore_pointer`.
+                scroll or pointer movement wakes them; see
+                `ignore_pointer_motion`.
 
                 `null`, the default, never blanks. A blank screen looks like a
                 crash, so this is opt-in.
@@ -561,12 +562,12 @@ in {
               default = null;
               example = 900;
             };
-            ignore_pointer = lib.mkOption {
+            ignore_pointer_motion = lib.mkOption {
               description = ''
-                Whether pointer motion, buttons, wheels and touchpad gestures
-                are ignored for both timeouts and for lighting dark screens.
-                Keys and touch screens still count. For a mouse that reports
-                motion by itself.
+                Whether pointer motion is ignored for both timeouts and for
+                lighting dark screens. Keys, touch screens, clicks, wheels and
+                touchpad gestures still count. For a mouse that reports motion
+                by itself.
 
                 Applied on reload.
               '';

@@ -27,6 +27,7 @@ fn activity_says_what_it_came_from_as_the_engine_names_it() {
     for (named, kind) in [
         ("key", ActivityKind::Key),
         ("pointer", ActivityKind::Pointer),
+        ("pointer_motion", ActivityKind::PointerMotion),
         ("touch", ActivityKind::Touch),
         ("other", ActivityKind::Other),
     ] {

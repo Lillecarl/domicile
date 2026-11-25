@@ -29,8 +29,8 @@ Leave a key out to never do it.
 
 - Any key or pointer motion lights the screens again.
 - If your mouse moves by itself and keeps the screens on, add
-  `"ignore_pointer": true` to `idle` in the config file. Only keys, touch
-  screens and unlocking count then, not the mouse or touchpad.
+  `"ignore_pointer_motion": true` to `idle` in the config file. Moving the
+  pointer doesn't count then. Keys, clicks, scrolling and touch screens do.
 - The two run on their own clocks, so the screen can lock before it blanks.
 - Videos that are playing keep the screens on. So does the eye in the
   [top bar](TOP-BAR.md), until you click it again.

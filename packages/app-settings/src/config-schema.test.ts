@@ -13,7 +13,7 @@ describe(readSettings, () => {
     expect(read.map(({ idle }) => idle)).toEqual(
       Ok({
         blank_after_seconds: undefined,
-        ignore_pointer: false,
+        ignore_pointer_motion: false,
         lock_after_seconds: undefined,
       }),
     );

@@ -5,15 +5,26 @@
 
 #include <utility>
 
+#include "base/notreached.h"
 #include "base/time/tick_clock.h"
 #include "ui/events/event.h"
+#include "ui/events/types/event_type.h"
 
 namespace domicile {
 namespace {
 
 // Whether the reporter hears `kind` from the event source itself.
 bool HeardFromEventSource(ActivityKind kind) {
-  return kind == ActivityKind::kKey || kind == ActivityKind::kTouch;
+  switch (kind) {
+    case ActivityKind::kKey:
+    case ActivityKind::kPointer:
+    case ActivityKind::kTouch:
+      return true;
+    case ActivityKind::kPointerMotion:
+    case ActivityKind::kOther:
+      return false;
+  }
+  NOTREACHED();
 }
 
 }  // namespace
@@ -27,8 +38,14 @@ ActivityKind ActivityKindOf(const ui::Event& event) {
   }
   // A platform's own gestures are a touchpad's. A touch screen's are made from
   // touches, past the platform's event source.
-  if (event.IsMouseEvent() || event.IsScrollEvent() || event.IsGestureEvent()) {
+  if (event.type() == ui::EventType::kMousePressed ||
+      event.type() == ui::EventType::kMouseReleased ||
+      event.IsMouseWheelEvent() || event.IsScrollEvent() ||
+      event.IsGestureEvent()) {
     return ActivityKind::kPointer;
+  }
+  if (event.IsMouseEvent()) {
+    return ActivityKind::kPointerMotion;
   }
   return ActivityKind::kOther;
 }

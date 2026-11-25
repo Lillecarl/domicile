@@ -5,7 +5,10 @@ use std::time::Instant;
 
 use smithay::reexports::{
     calloop::timer::{TimeoutAction, Timer},
-    wayland_server::{protocol::wl_buffer, Resource as _},
+    wayland_server::{
+        protocol::{wl_buffer, wl_surface::WlSurface},
+        Resource as _,
+    },
 };
 use smithay::wayland::{
     compositor::with_states,
@@ -15,7 +18,7 @@ use tracing::{debug, info, warn};
 
 use crate::buffer_transform::Sampled;
 use crate::client_damage::Region;
-use crate::engine_session::{Child, EngineSession};
+use crate::engine_session::EngineSession;
 use crate::surface_commit::{committed_buffer, Mapping};
 use crate::{casting, engine};
 use crate::{CalloopData, DomicileCompositor, Gpu};
@@ -212,13 +215,14 @@ impl DomicileCompositor {
         self.arm_the_cast_deadline(due);
     }
 
-    /// Hands a surface's subsurfaces to the casts of its window.
-    pub fn cast_children(&mut self, app_id: &str, children: Vec<Child>) {
-        let renderer = self.gpu.as_mut().map(Gpu::renderer);
-        let due = self
-            .casting
-            .children(app_id, children, renderer, Instant::now());
-        self.arm_the_cast_deadline(due);
+    /// Fill the casts of `surface`'s window if its subsurfaces changed and no
+    /// frame of its own has drawn them.
+    pub fn cast_restacked(&mut self, surface: &WlSurface) {
+        if let Some(app_id) = self.app_id_of(surface) {
+            let renderer = self.gpu.as_mut().map(Gpu::renderer);
+            let due = self.casting.restacked(&app_id, renderer, Instant::now());
+            self.arm_the_cast_deadline(due);
+        }
     }
 
     /// The engine captured a frame of a display, for monitor and region

@@ -124,7 +124,12 @@ pub struct Streams {
     shown: HashMap<String, Shown>,
     /// Each surface's subsurfaces as its frames draw them, bottom to top, for
     /// shots and casts of its window.
+    /// A surface is in one list at most, or a chain of lists could close on
+    /// itself: each is read at its own surface's commits, and a client may
+    /// move subsurfaces between them.
     children: HashMap<String, Vec<Child>>,
+    /// The surfaces whose `children` changed since a cast drew them.
+    restacked: HashSet<String>,
     /// The window under the pointer, and where, in its box's logical pixels.
     pointer: Option<(String, (f64, f64))>,
     /// Where the engine reports the pointer.
@@ -307,6 +312,7 @@ impl Streams {
             unreadable: HashSet::new(),
             shown: HashMap::new(),
             children: HashMap::new(),
+            restacked: HashSet::new(),
             pointer: None,
             engine_pointer: EnginePointer::default(),
             screens: Vec::new(),
@@ -397,23 +403,61 @@ impl Streams {
             .shown
             .get(app_id)
             .ok_or_else(|| format!("window {app_id} has shown no frame"))?;
-        let size = shots::sampled(shown).upright_size();
-        shots::window(size, &self.surfaces_shown(app_id, shown), renderer)
+        let renderer = renderer.ok_or("no GPU renderer to read the window's frame")?;
+        let snapshots = self
+            .snapshots(app_id, |dmabuf| {
+                Ok(Snapshot::Texture(renderer.import_dmabuf(dmabuf, None)?))
+            })
+            .map_err(|why| why.to_string())?;
+        let surfaces: Vec<_> = self
+            .surfaces_shown(app_id, shown, |surface| snapshots.contains_key(surface))
+            .into_iter()
+            .map(|(surface, to)| {
+                let sampled = shots::sampled(&self.shown[&surface]);
+                (&snapshots[&surface], sampled, to)
+            })
+            .collect();
+        shots::window(shots::sampled(shown).upright_size(), &surfaces, renderer)
     }
 
-    /// The last frame each surface of window `app_id` showed, bottom first,
-    /// beside where it goes in a shot of the window, which showed `shown`.
-    fn surfaces_shown(&self, app_id: &str, shown: &Shown) -> Vec<(&Shown, Rect)> {
+    /// The frame each surface of window `app_id` last showed, without the
+    /// subsurfaces that do not `import`. Fails if the window's own does not.
+    fn snapshots(
+        &self,
+        app_id: &str,
+        mut import: impl FnMut(&Dmabuf) -> Result<Snapshot, FillError>,
+    ) -> Result<HashMap<String, Snapshot>, FillError> {
+        let mut snapshots = HashMap::new();
+        for surface in shots::surfaces(app_id, &self.children) {
+            let Some(shown) = self.shown.get(&surface) else {
+                continue;
+            };
+            match import(&shown.dmabuf) {
+                Ok(snapshot) => {
+                    snapshots.insert(surface, snapshot);
+                }
+                Err(why) if surface == app_id => return Err(why),
+                Err(why) => tracing::error!(%surface, %why, "a subsurface could not be shot"),
+            }
+        }
+        Ok(snapshots)
+    }
+
+    /// The surfaces of window `app_id` that are `drawn`, bottom first, beside
+    /// where each goes in a shot of the window, which showed `shown`.
+    fn surfaces_shown(
+        &self,
+        app_id: &str,
+        shown: &Shown,
+        drawn: impl Fn(&str) -> bool,
+    ) -> Vec<(String, Rect)> {
         shots::stack(
             app_id,
             shots::sampled(shown).upright_size(),
             shown.pixels_a_point,
             &self.children,
-            |child| self.shown.contains_key(child),
+            drawn,
         )
-        .into_iter()
-        .map(|(surface, to)| (&self.shown[&surface], to))
-        .collect()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1201,8 +1245,11 @@ impl Streams {
                 return self.next_due();
             }
         }
+        let restacked = self.restacked.remove(frame.app_id);
         for (stream, app_id) in streams {
-            let damage = if app_id == frame.app_id {
+            let damage = if restacked {
+                self.whole(&app_id)
+            } else if app_id == frame.app_id {
                 damage_in_view(frame.damage, frame.sampled)
             } else {
                 self.place_in(&app_id, frame.app_id)
@@ -1727,27 +1774,41 @@ impl Streams {
             shot.sampled = sampled;
             shot.pixels_a_point = pixels_a_point;
         }
+        self.restacked.remove(app_id);
         self.redraw(app_id, renderer, now);
         self.next_due()
     }
 
-    /// Surface `app_id`'s subsurfaces are now `children`, bottom to top. Fills
-    /// the streams of its window if that changes them. Returns when to call
+    /// Surface `app_id`'s subsurfaces are now `children`, bottom to top. Its
+    /// next frame draws them, or [`Streams::restacked`] if none comes.
+    pub fn children(&mut self, app_id: &str, children: Vec<Child>) {
+        let before = self.children.get(app_id).map_or(&[][..], Vec::as_slice);
+        if before == children {
+            return;
+        }
+        for (parent, listed) in &mut self.children {
+            let count = listed.len();
+            listed.retain(|old| children.iter().all(|new| new.app_id != old.app_id));
+            if listed.len() != count {
+                self.restacked.insert(parent.clone());
+            }
+        }
+        self.children.insert(app_id.to_string(), children);
+        self.children.retain(|_, listed| !listed.is_empty());
+        self.restacked.insert(app_id.to_string());
+        self.forget_what_is_not_cast();
+    }
+
+    /// Fills the streams of surface `app_id`'s window if its subsurfaces
+    /// changed and no frame of its own has drawn them. Returns when to call
     /// [`Streams::tick`], if a filled frame waits.
-    pub fn children(
+    pub fn restacked(
         &mut self,
         app_id: &str,
-        children: Vec<Child>,
         renderer: Option<&mut GlesRenderer>,
         now: Instant,
     ) -> Option<Instant> {
-        let before = if children.is_empty() {
-            self.children.remove(app_id)
-        } else {
-            self.children.insert(app_id.to_string(), children)
-        };
-        if before.as_ref() != self.children.get(app_id) {
-            self.forget_what_is_not_cast();
+        if self.restacked.remove(app_id) {
             self.redraw(app_id, renderer, now);
         }
         self.next_due()
@@ -1756,17 +1817,22 @@ impl Streams {
     /// Draws the whole of each stream that shows `surface`.
     fn redraw(&mut self, surface: &str, mut renderer: Option<&mut GlesRenderer>, now: Instant) {
         for (stream, window) in self.streams_of(surface) {
-            let Some(shot) = self.shots.get(&window) else {
-                continue;
-            };
-            let (width, height) = shot.sampled.upright_size();
-            self.offer(
-                stream,
-                vec![(0, 0, width as i32, height as i32)],
-                renderer.as_deref_mut(),
-                now,
-            );
+            let whole = self.whole(&window);
+            if !whole.is_empty() {
+                self.offer(stream, whole, renderer.as_deref_mut(), now);
+            }
         }
+    }
+
+    /// All of cast window `app_id`, in its pixels, or nothing if it has no
+    /// frame.
+    fn whole(&self, app_id: &str) -> Vec<Rect> {
+        self.shots
+            .get(app_id)
+            .map(|shot| shot.sampled.upright_size())
+            .map(|(width, height)| (0, 0, width as i32, height as i32))
+            .into_iter()
+            .collect()
     }
 
     /// A window closed: its streams end.
@@ -1775,6 +1841,7 @@ impl Streams {
         self.densities.remove(app_id);
         self.shown.remove(app_id);
         self.children.remove(app_id);
+        self.restacked.remove(app_id);
         self.shots.remove(app_id);
         self.unreadable.remove(app_id);
         let gone: Vec<_> = self
@@ -2802,14 +2869,14 @@ mod tests {
         streams.children(
             "app-1",
             vec![child("subsurface-1", false), child("subsurface-2", true)],
-            None,
-            Instant::now(),
         );
         let places = |streams: &Streams| {
             streams
-                .surfaces_shown("app-1", &streams.shown["app-1"])
+                .surfaces_shown("app-1", &streams.shown["app-1"], |surface| {
+                    streams.shown.contains_key(surface)
+                })
                 .iter()
-                .map(|(shown, to)| (shown.dmabuf.width(), *to))
+                .map(|(surface, to)| (streams.shown[surface].dmabuf.width(), *to))
                 .collect::<Vec<_>>()
         };
 
@@ -2842,24 +2909,64 @@ mod tests {
     #[test]
     fn a_surfaces_subsurfaces_are_kept_until_it_goes() {
         let mut streams = streams();
-        let child = Child {
-            app_id: "subsurface-1".into(),
-            position: (0.0, 0.0),
-            size: (1.0, 1.0),
-            above: true,
-        };
 
-        let now = Instant::now();
-        streams.children("app-1", vec![child.clone()], None, now);
-        streams.children("app-2", vec![child.clone()], None, now);
-        streams.children("app-2", Vec::new(), None, now);
+        streams.children("app-1", vec![small("subsurface-1")]);
+        streams.children("app-2", vec![small("subsurface-2")]);
+        streams.children("app-2", Vec::new());
         assert_eq!(
             streams.children,
-            HashMap::from([("app-1".to_string(), vec![child])])
+            HashMap::from([("app-1".to_string(), vec![small("subsurface-1")])])
         );
 
         streams.window_gone("app-1");
         assert!(streams.children.is_empty());
+        assert!(!streams.restacked.contains("app-1"));
+    }
+
+    fn small(app_id: &str) -> Child {
+        Child {
+            app_id: app_id.into(),
+            position: (0.0, 0.0),
+            size: (1.0, 1.0),
+            above: true,
+        }
+    }
+
+    /// A client moves a subsurface under its own subsurface's, and only the
+    /// new parent is read again.
+    #[test]
+    fn a_surface_listed_by_its_own_subsurface_leaves_its_old_list() {
+        let mut streams = streams();
+        streams.children("app-1", vec![small("subsurface-1")]);
+        streams.children("subsurface-1", vec![small("subsurface-2")]);
+
+        streams.children("subsurface-2", vec![small("subsurface-1")]);
+
+        assert_eq!(
+            super::shots::surfaces("app-1", &streams.children),
+            ["app-1"]
+        );
+    }
+
+    #[test]
+    fn a_shot_leaves_out_a_subsurface_that_does_not_import() {
+        let mut streams = streams();
+        streams.shown("app-1", shown((200, 100), (1.0, 1.0)));
+        streams.shown("subsurface-1", shown((20, 20), (1.0, 1.0)));
+        streams.children("app-1", vec![small("subsurface-1")]);
+        let import_all_but = |width: u32| {
+            streams.snapshots("app-1", |dmabuf| {
+                if dmabuf.width() == width {
+                    Err(FillError::NotABuffer)
+                } else {
+                    Ok(shot_of((200, 100), Transform::Normal).snapshot)
+                }
+            })
+        };
+
+        let snapshots = import_all_but(20).expect("the window's own imports");
+        assert_eq!(snapshots.into_keys().collect::<Vec<_>>(), ["app-1"]);
+        assert!(import_all_but(200).is_err());
     }
 
     /// A 100x50 window cast at two pixels a point, with a subsurface over it
@@ -2872,19 +2979,15 @@ mod tests {
             size,
             above: true,
         };
-        let now = Instant::now();
         streams.children(
             "app-1",
             vec![child("subsurface-1", (30.0, 5.0), (30.0, 10.0))],
-            None,
-            now,
         );
         streams.children(
             "subsurface-1",
             vec![child("subsurface-2", (1.0, 1.0), (2.0, 2.0))],
-            None,
-            now,
         );
+        streams.restacked.clear();
         for (surface, size) in [
             ("app-1", (100, 50)),
             ("subsurface-1", (60, 20)),
@@ -3087,11 +3190,36 @@ mod tests {
         let (mut streams, heard, now) = a_filling_cast();
         let listed = streams.children["app-1"].clone();
 
-        streams.children("app-1", Vec::new(), None, now);
+        streams.children("app-1", Vec::new());
+        streams.restacked("app-1", None, now);
         assert_eq!(told(&heard), [Told::Filled(vec![(0, 0, 100, 50)])]);
-        streams.children("app-1", listed, None, now);
+        streams.children("app-1", listed);
 
         assert_eq!(layers(&streams).len(), 1, "nor do its own");
+    }
+
+    /// A fill between the two would draw the subsurfaces' new places over the
+    /// window's old frame.
+    #[test]
+    fn a_frame_that_moves_a_subsurface_is_cast_once_and_whole() {
+        let (mut streams, heard, now) = a_filling_cast();
+        let mut moved = streams.children["app-1"].clone();
+        moved[0].position = (0.0, 0.0);
+
+        streams.children("app-1", moved);
+        assert_eq!(told(&heard), []);
+        streams.kept(
+            Committed {
+                damage: Some((0, 0, 1, 1)),
+                ..commit("app-1", (100, 50))
+            },
+            Ok(shot_of((100, 50), Transform::Normal).snapshot),
+            None,
+            now,
+        );
+        streams.restacked("app-1", None, now);
+
+        assert_eq!(told(&heard), [Told::Filled(vec![(0, 0, 100, 50)])]);
     }
 
     /// A resize through its viewport or geometry, without a new buffer.

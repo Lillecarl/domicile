@@ -13,7 +13,6 @@ use domicile_protocol::{ShotArea, ShotRect, ShotWindow};
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::allocator::Buffer as _;
 use smithay::backend::renderer::gles::GlesRenderer;
-use smithay::backend::renderer::ImportDma as _;
 
 use smithay::utils::Transform;
 
@@ -88,30 +87,17 @@ pub fn compose(
 }
 
 /// A window `size` pixels big, read back through `renderer`: each of
-/// `surfaces`, bottom first, drawn over the rectangle beside it, and cut to
-/// the window.
+/// `surfaces`, bottom first, the part of it that is the surface drawn over the
+/// rectangle beside it, and cut to the window.
 pub fn window(
     size: (u32, u32),
-    surfaces: &[(&Shown, Rect)],
-    renderer: Option<&mut GlesRenderer>,
+    surfaces: &[(&Snapshot, Sampled, Rect)],
+    renderer: &mut GlesRenderer,
 ) -> Result<Shot, String> {
-    let renderer = renderer.ok_or("no GPU renderer to read the window's frame")?;
-    let snapshots = surfaces
-        .iter()
-        .map(|(shown, _)| {
-            renderer
-                .import_dmabuf(&shown.dmabuf, None)
-                .map(Snapshot::Texture)
-                .map_err(|why| why.to_string())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     let whole = (0, 0, size.0 as i32, size.1 as i32);
     let layers: Vec<Layer> = surfaces
         .iter()
-        .zip(&snapshots)
-        .filter_map(|((shown, to), snapshot)| {
-            Layer::placed(snapshot, sampled(shown), *to).cut(whole)
-        })
+        .filter_map(|(snapshot, sampled, to)| Layer::placed(snapshot, *sampled, *to).cut(whole))
         .collect();
     compose(size, &layers, Some(renderer)).map_err(|why| why.to_string())
 }
@@ -186,8 +172,8 @@ fn stack_onto(
         let to = (
             left,
             top,
-            ((at.0 + child.size.0) * across).round() as i32 - left,
-            ((at.1 + child.size.1) * down).round() as i32 - top,
+            (((at.0 + child.size.0) * across).round() as i32).saturating_sub(left),
+            (((at.1 + child.size.1) * down).round() as i32).saturating_sub(top),
         );
         stack_onto(
             stacked,

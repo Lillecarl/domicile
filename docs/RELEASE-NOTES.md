@@ -78,6 +78,11 @@ An effect can draw the element through a mesh, a grid for cloth or instances for
 
 [`idle`](SHELL-CONFIG.md#idle)
 
+### Also new
+
+- Extensions' keys and menus: `extensions.commands` and `runCommand()` run `chrome.commands`, `extensions.menu()` has an action's `chrome.contextMenus` items, and a page's context menu event carries `extensionItems`. [Commands](SHELL-EXTENSIONS.md#commands) · [Menus](SHELL-EXTENSIONS.md#menus)
+- **The engine runs extensions' keys.** A page does not get the keys of its profile's extensions, except those `extensions.reserveKeys()` names for your shell. Listen for `extensions.on("commandPressed")` to run the commands yourself. [Commands](SHELL-EXTENSIONS.md#commands)
+
 ### Fixes
 
 - An extension that asks for a page's language, such as Ghostery, is refused and the desktop stays up. [Extensions](SHELL-EXTENSIONS.md)

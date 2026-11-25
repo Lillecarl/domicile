@@ -14,6 +14,10 @@ Each agent session has a seat of its own, so an agent clicks and types in one na
 
 [Agents](AGENTS.md) · [Agent seats](architecture/AGENT-SEATS.md) · [`domicile pointer`](CLI.md#domicile-pointer---agent-session-xy-clickdouble-clickright-clickmiddle-click) · [`domicile idle-time`](CLI.md#domicile-idle-time---json)
 
+### Also new
+
+- `domicile load-extension <directory>` loads an unpacked extension into every browser profile of the running desktop, or reloads it in place after an edit, and prints its id. [`domicile load-extension`](CLI.md#domicile-load-extension-directory)
+
 ## 1.3.0
 
 _November 24, 2026_

@@ -167,7 +167,8 @@ class BrowserProfileRegistry final
   Profile& HomeOf(content::BrowserContext& context) const;
 
   // Reloads the unpacked extension `id` in every loaded profile but `from`,
-  // where it just reloaded: each profile runs its own copy.
+  // where it just reloaded: each profile runs its own copy. One without it
+  // installs it.
   void ReloadUnpackedElsewhere(Profile& from, const std::string& id);
 
   // A page was made in, or destroyed from, `context`, a private profile's.

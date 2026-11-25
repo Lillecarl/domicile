@@ -110,7 +110,7 @@ the same id, so an extension author picks up an edit without a restart.
 - Each profile with an unpacked copy of the extension reloads it from the same
   directory, which is another one when an extension with a manifest `key`
   moved. A copy from the Web Store stays.
-- Each profile without it installs it
+- Each other running profile installs it
   ([BROWSER-PROFILES.md](BROWSER-PROFILES.md#engine)).
 - The reply follows the default profile's load. Another profile's failure is
   logged.

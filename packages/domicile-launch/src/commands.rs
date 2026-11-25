@@ -697,6 +697,8 @@ pub const COMMANDS: &[Command] = &[
             "Loads the unpacked Chrome extension in `<directory>` into every browser \
              profile, and prints its id. An extension already loaded from that \
              directory reloads in place and keeps its id. Nothing restarts.",
+            "The id follows the directory, with symlinks resolved, unless the \
+             manifest has a `key`.",
             "It stays across restarts until it is uninstalled, as one loaded from \
              the Settings app does.",
         ],

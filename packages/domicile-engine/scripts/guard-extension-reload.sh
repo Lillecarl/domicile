@@ -265,6 +265,11 @@ did not load, or it threw, and the engine log has its console"
 compare: openBrowserWindow opened no window, or routing did not put localhost \
 in work (ProfileForUrl)"
   ;;
+"reloaded 1 11 - "* | "edited 1 11 - "* | "reloaded 1 11 "*" - "* | \
+  "edited 1 11 "*" - "*)
+  FAILURE="a window's page never loaded, so nothing was sent: the server did \
+not answer, or the <webview> drew no page"
+  ;;
 "reloaded 1 11 none none "* | "edited 1 11 none none "*)
   FAILURE="the first load_unpacked reached no profile: the engine refused it, \
 or --domicile-command-socket was not bound. Its answer is below"
@@ -280,7 +285,8 @@ extension in the default profile and not in work \
   ;;
 "reloaded 1 11 none,first,second,third none,first,second "*)
   FAILURE="THE OTHER PROFILE KEPT THE OLD DIRECTORY: the extension moved, and \
-work did not reload from the directory load_unpacked named (UnpackedReloads)"
+work did not reload from the directory load_unpacked named \
+(BrowserProfileRegistry::ReloadUnpackedElsewhere)"
   ;;
 "reloaded 1 11 none,first,second,third none,first,second,third "*)
   FAILURE="every edit ran in both profiles, and the engine did not answer \

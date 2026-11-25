@@ -105,7 +105,7 @@ expect "and names the reload" "yes" \
 expect "a directory the other profile never loaded is a failure" "fail" \
   "$(verdict "reloaded 1 11 $ALL none,first,second 3")"
 expect "and names the choice of directory" "yes" \
-  "$(says "reloaded 1 11 $ALL none,first,second 3" "UnpackedReloads")"
+  "$(says "reloaded 1 11 $ALL none,first,second 3" "ReloadUnpackedElsewhere")"
 expect "a first load the other profile never ran is a failure" "fail" \
   "$(verdict "reloaded 1 11 none,first none 1")"
 expect "and names the mirroring" "yes" \
@@ -120,6 +120,10 @@ expect "and names the command socket" "yes" \
   "$(says "reloaded 1 11 none none 0" "domicile-command-socket")"
 expect "an edit the default profile never ran is a failure" "fail" \
   "$(verdict "reloaded 1 11 none,first none,first 2")"
+expect "a page that never loaded is a failure" "fail" \
+  "$(verdict "reloaded 1 11 - - 0")"
+expect "and names the page" "yes" \
+  "$(says "reloaded 1 11 none - 0" "page never loaded")"
 expect "both windows in one profile is a failure" "fail" \
   "$(verdict "reloaded 1 10 none none 0")"
 expect "and names routing" "yes" \

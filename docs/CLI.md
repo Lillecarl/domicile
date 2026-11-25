@@ -561,7 +561,11 @@ abcdefghijklmnopabcdefghijklmnop
 ```
 
 - An extension already loaded from that directory reloads in place and keeps
-  its id. Run it again after each edit. It returns once the default profile has
+  its id. Run it again after each edit.
+- The id follows the directory, with symlinks resolved, unless the manifest has
+  a `key`. Without one, a link that points elsewhere loads a second extension
+  beside the first.
+- It returns once the default profile has
   reloaded; a failure in another is in `domicile logs`.
 - A relative directory is relative to where the command runs.
 - It stays across restarts until it is uninstalled, as one loaded from the

@@ -110,14 +110,7 @@ pub fn window(
         .iter()
         .zip(&snapshots)
         .filter_map(|((shown, to), snapshot)| {
-            let sampled = sampled(shown);
-            Layer {
-                snapshot,
-                from: sampled.crop,
-                to: *to,
-                transform: sampled.transform,
-            }
-            .cut(whole)
+            Layer::placed(snapshot, sampled(shown), *to).cut(whole)
         })
         .collect();
     compose(size, &layers, Some(renderer)).map_err(|why| why.to_string())

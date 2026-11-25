@@ -2091,13 +2091,7 @@ fn view<'a>(
                     snapshot, sampled, ..
                 } = &shots[&surface];
                 // A subsurface past the window's edge is cut there.
-                Layer {
-                    snapshot,
-                    from: sampled.crop,
-                    to,
-                    transform: sampled.transform,
-                }
-                .cut(whole)
+                Layer::placed(snapshot, *sampled, to).cut(whole)
             })
             .collect();
             Some(View {

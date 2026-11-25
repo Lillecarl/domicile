@@ -111,7 +111,7 @@ mod tests {
         let mut target = [0; 8];
 
         paint(
-            &[Layer::upright(&snapshot, TURNED)],
+            &[Layer::placed(&snapshot, TURNED, (0, 0, 1, 2))],
             &mut target,
             4,
             Pixel::Bgra,
@@ -133,7 +133,7 @@ mod tests {
         let mut target = [0; 8];
 
         paint(
-            &[Layer::upright(&snapshot, TURNED)],
+            &[Layer::placed(&snapshot, TURNED, (0, 0, 1, 2))],
             &mut target,
             4,
             Pixel::Bgra,

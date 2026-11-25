@@ -51,18 +51,11 @@ let
       rsync --recursive --links --perms --chmod=ug+w --checksum --delete "$@" "$from/" "$to/"
     }
   '';
-in
-{
-  inherit claim syncByContent root;
 
-  /**
-    The engine's files, built from the pin and the series in the checkout at
-    `${root}/chromium/src`, and laid out as a release tarball holds them.
-
-    `${root}/chromium` and `${root}/depot_tools` come from a first
-    `gclient sync` by hand. A pin that moves later syncs itself.
-  */
-  engineFiles =
+  # Builds `targets` from the pin and the series in the checkout at
+  # `${root}/chromium/src`, then runs `script` with the tree still held. It
+  # enters the FHS environment as `$fhs`.
+  engineBuild = { name, targets, script }:
     let
       # What Chromium's tools/nix/shell.nix gives a build.
       fhs = pkgs.buildFHSEnv {
@@ -88,7 +81,7 @@ in
         ];
       };
     in
-    pkgs.runCommand "domicile-engine-files" {
+    pkgs.runCommand name {
       __noChroot = true;
       nativeBuildInputs = [ pkgs.util-linux pkgs.git ];
       requiredSystemFeatures = [ "big-parallel" ];
@@ -107,12 +100,57 @@ in
       export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
       export GIT_SSL_CAINFO=$SSL_CERT_FILE CURL_CA_BUNDLE=$SSL_CERT_FILE
       export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*'
-      ${fhs}/bin/domicile-engine-env ${./engine-build.sh} \
-        $PWD/fork ${root}/chromium/src ${root}/depot_tools $PWD/stage
+      fhs=${fhs}/bin/domicile-engine-env
+      $fhs ${./engine-build.sh} \
+        $PWD/fork ${root}/chromium/src ${root}/depot_tools ${toString targets}
+      ${script}
+    '';
+in
+{
+  inherit claim syncByContent root;
+
+  /**
+    The engine's files, laid out as a release tarball holds them.
+
+    `${root}/chromium` and `${root}/depot_tools` come from a first
+    `gclient sync` by hand. A pin that moves later syncs itself.
+  */
+  engineFiles = engineBuild {
+    name = "domicile-engine-files";
+    targets = [ "chrome" "domicile_engine" "third_party/electron_node:node" ];
+    script = ''
+      $fhs ${./engine-stage.sh} ${root}/chromium/src $PWD/stage
       umask 022
       mkdir $out
       cp -r --no-preserve=ownership stage/. $out/
     '';
+  };
+
+  /**
+    The log of the fork's C++ unit tests, built and passing. Apart from
+    `engineFiles`, so an engine build neither builds nor runs them.
+  */
+  engineUnitTests =
+    let
+      scripts = pkgs.lib.fileset.toSource {
+        root = ../.;
+        fileset = pkgs.lib.fileset.unions [
+          ../packages/domicile-engine/scripts/lib-annotate.sh
+          ../packages/domicile-engine/scripts/lib-engine-guard.sh
+          ../packages/domicile-engine/scripts/unit-tests.sh
+        ];
+      };
+    in
+    engineBuild {
+      name = "domicile-engine-unit-tests";
+      targets = [ "domicile_unittests" ];
+      script = ''
+        DOMICILE_CHROMIUM=${root}/chromium/src DOMICILE_ENGINE_OUT=out/Local \
+          $fhs ${scripts}/packages/domicile-engine/scripts/unit-tests.sh 2>&1 | tee log
+        umask 022
+        cp --no-preserve=mode,ownership log $out
+      '';
+    };
 
   /**
     A `buildRustPackage` derivation, built in `${root}/<name>`.

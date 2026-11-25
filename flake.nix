@@ -1030,6 +1030,7 @@
         domicile = domicilePackage;
         # The engine alone, for setting `DOMICILE_ENGINE` yourself.
         engine = domicileEngine;
+        engine-unit-tests = localBuild.engineUnitTests;
         published-engine = publishedEngine;
         # The shell builder on its own, for `DOMICILE_BUILDER`.
         builder = domicileBuilder;

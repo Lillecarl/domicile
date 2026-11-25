@@ -1,9 +1,9 @@
 # Runs in the engine's FHS environment, in a directory it owns.
 #
-#   engine-build.sh <fork's tree> <chromium/src> <depot_tools> <stage>
+#   engine-build.sh <fork's tree> <chromium/src> <depot_tools> <target>...
 set -euo pipefail
 
-fork="$1" src="$2" tools="$3" stage="$4"
+fork="$1" src="$2" tools="$3" targets=("${@:4}")
 export PATH="$tools:$PATH" DEPOT_TOOLS_UPDATE=0 DEPOT_TOOLS_METRICS=0
 chromium="$(dirname "$src")"
 pin="$(grep -v '^#' "$fork/packages/domicile-engine/CHROMIUM_PIN" | tr -d '[:space:]')"
@@ -77,7 +77,6 @@ gn gen out/Local --args='
   import("//build/args/domicile_trim.gn")
   import("//build/args/domicile_node.gn")
 '
-targets=(chrome domicile_engine third_party/electron_node:node)
 # The plan, with nothing compiled. One that cannot be read stops the build.
 plan="$(autoninja -n -C out/Local "${targets[@]}" 2>&1 | tr '\r' '\n')"
 steps="$(grep -oE 'Build Succeeded: [0-9]+ steps' <<<"$plan" | grep -oE '[0-9]+' | tail -1)" ||
@@ -86,21 +85,3 @@ echo "to build: $steps steps"
 refuse_unless_allowed "$steps" "steps to build" 5000
 if [ "$rebuilt" = 1 ]; then rm -f "$allowed"; fi
 autoninja -C out/Local "${targets[@]}"
-
-# What engine-release-package.sh puts in a release tarball.
-mkdir -p "$stage/locales" "$stage/dictionaries"
-cd out/Local
-cp chrome icudtl.dat resources.pak chrome_100_percent.pak libdomicile_engine.so "$stage/"
-for file in chrome_200_percent.pak v8_context_snapshot.bin snapshot_blob.bin \
-  chrome_crashpad_handler libEGL.so libGLESv2.so libvulkan.so.1 \
-  libvk_swiftshader.so vk_swiftshader_icd.json; do
-  if [ -e "$file" ]; then cp "$file" "$stage/"; fi
-done
-cp locales/*.pak "$stage/locales/"
-cp dictionaries/*.bdic "$stage/dictionaries/"
-for file in "$stage"/*; do
-  if [ -f "$file" ] && [ "$(od -An -tx1 -N4 "$file")" = ' 7f 45 4c 46' ]; then
-    "$src/third_party/llvm-build/Release+Asserts/bin/llvm-objcopy" --strip-all "$file"
-  fi
-done
-echo "engine staged"

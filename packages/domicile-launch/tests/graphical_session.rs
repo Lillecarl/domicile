@@ -270,10 +270,10 @@ fn a_desk_that_ends_hands_the_session_back_to_another_compositor() {
         end(&client, &ours, &niri(display)).unwrap();
         assert_eq!(
             *heard.lock().unwrap(),
-            [Heard::UnsetAndSetEnvironment(
-                vec!["DOMICILE_SOCK".into()],
-                niri(display)
-            )]
+            [
+                Heard::UnsetAndSetEnvironment(vec!["DOMICILE_SOCK".into()], niri(display)),
+                Heard::StopUnit(TARGET.into(), "replace".into()),
+            ]
         );
     }
 }

@@ -101,7 +101,9 @@ pub fn begin(
 /// - Another desktop's control socket in `manager`: that desktop took the
 ///   session over later, so it is left alone.
 /// - `earlier`'s desktop still answers: its variables are set again, and the
-///   [`VARIABLES`] it lacks are unset.
+///   [`VARIABLES`] it lacks are unset. When it is another compositor, [`TARGET`]
+///   is stopped too, as no Domicile desktop is the session. That leaves a
+///   `graphical-session.target` the compositor holds up running.
 /// - Otherwise starts [`SHUTDOWN`], then unsets the environment from
 ///   [`begin`]. Uses `replace-irreversibly`, as niri does, so no later job can
 ///   cancel the shutdown.
@@ -114,30 +116,47 @@ pub fn end(
     if socket(&held).is_some_and(|socket| Path::new(socket) != control) {
         return Ok(());
     }
-    if answers(earlier, control) {
-        let lacking: Vec<&str> = VARIABLES
-            .into_iter()
-            .filter(|name| value(earlier, name).is_none())
-            .collect();
-        return call(manager, "UnsetAndSetEnvironment", &(lacking, earlier));
+    match running(earlier, control) {
+        Some(Running::Domicile) => restore(manager, earlier),
+        Some(Running::Other) => {
+            restore(manager, earlier)?;
+            call(manager, "StopUnit", &(TARGET, "replace"))
+        }
+        None => {
+            call(manager, "StartUnit", &(SHUTDOWN, "replace-irreversibly"))?;
+            call(manager, "UnsetEnvironment", &(VARIABLES.to_vec(),))
+        }
     }
-    call(manager, "StartUnit", &(SHUTDOWN, "replace-irreversibly"))?;
-    call(manager, "UnsetEnvironment", &(VARIABLES.to_vec(),))
 }
 
-/// Whether the desktop `earlier` names still runs.
+/// Sets `earlier` in `manager`, and unsets the [`VARIABLES`] it lacks.
+fn restore(manager: &zbus::Connection, earlier: &[String]) -> Result<(), zbus::Error> {
+    let lacking: Vec<&str> = VARIABLES
+        .into_iter()
+        .filter(|name| value(earlier, name).is_none())
+        .collect();
+    call(manager, "UnsetAndSetEnvironment", &(lacking, earlier))
+}
+
+/// The desktop a session was taken over from, while it still runs.
+enum Running {
+    Domicile,
+    Other,
+}
+
+/// What runs of the desktop `earlier` names, if anything.
 ///
 /// A Domicile desktop answers on its control socket, another compositor on its
 /// Wayland socket. A relative `WAYLAND_DISPLAY` is in `XDG_RUNTIME_DIR`, which
 /// also holds `control` ([`crate::control_socket::address`]), and an absolute
 /// one replaces the whole path.
-fn answers(earlier: &[String], control: &Path) -> bool {
-    let listening = match (socket(earlier), value(earlier, "WAYLAND_DISPLAY")) {
-        (Some(socket), _) => PathBuf::from(socket),
-        (None, Some(display)) => control.with_file_name(display),
-        (None, None) => return false,
+fn running(earlier: &[String], control: &Path) -> Option<Running> {
+    let (listening, running) = match (socket(earlier), value(earlier, "WAYLAND_DISPLAY")) {
+        (Some(socket), _) => (PathBuf::from(socket), Running::Domicile),
+        (None, Some(display)) => (control.with_file_name(display), Running::Other),
+        (None, None) => return None,
     };
-    UnixStream::connect(listening).is_ok()
+    UnixStream::connect(listening).is_ok().then_some(running)
 }
 
 /// The assignments of [`VARIABLES`] in `manager`'s environment.

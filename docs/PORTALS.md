@@ -120,7 +120,9 @@ One request channel carries all dialogs. Each interface's backend builds on it.
     it exits, if the first still runs, instead of stopping
     `graphical-session.target` and the frontend (`graphical_session::end`).
     The first can be another compositor, such as niri; it runs while its
-    `WAYLAND_DISPLAY` socket answers.
+    `WAYLAND_DISPLAY` socket answers. For such a compositor the launcher also
+    sets the D-Bus activation environment, restarts the frontend under the
+    compositor's name and stops `domicile-session.target`.
 - **`Secret` goes to the keyring.** `gnome-keyring` or `oo7-portal` implements
   it. It has no UI, and the store must outlive the session.
   `domicile-portals.conf` routes it to the keyring.

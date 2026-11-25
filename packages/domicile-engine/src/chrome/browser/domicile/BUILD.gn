@@ -154,6 +154,7 @@ source_set("domicile") {
     # ui::PlatformEventSource in //ui/events/platform.
     "//components/domicile:cursor_display",
     "//components/domicile:desk_activity",
+    "//components/domicile:desk_activity_reporter",
     # The desk's downloads, for the shell's Downloads pipe.
     "//components/domicile:desk_downloads",
     # Electron apps' windows, for the Electron socket.
@@ -310,7 +311,6 @@ source_set("domicile") {
     "//ui/display",
     # The pointer moves `StartDeskPointer` reports.
     "//ui/events",
-    "//ui/events:events_base",
     "//ui/events/platform",
     # Names the device an input came from, for the idle clock's log.
     "//ui/events/devices",

@@ -182,7 +182,8 @@ The engine has two channels to the rest of Domicile:
   `ui::UserActivityDetector`, and `ui::PlatformEventSource` for keys and
   touches, each at most every 200 ms. Every control channel sends it while a
   compositor is connected, with `kind`: `key`, `pointer`, `touch` or `other`
-  ([IDLE.md](/docs/IDLE.md#ignoring-the-pointer)). See `components/domicile/browser/desk_activity.h`.
+  ([IDLE.md](/docs/IDLE.md#ignoring-the-pointer)). See
+  `components/domicile/browser/desk_activity.h` and `desk_activity_reporter.h`.
 - **`desk_pointer`** is the browser's too. `StartDeskPointer`
   (`chrome/browser/domicile/domicile_desk_pointer.h`) watches aura's mouse
   moves and drags, and sends `at`, in the shell page's CSS pixels, or no `at`

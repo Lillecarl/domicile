@@ -105,6 +105,16 @@ terminal, through the control socket, and prints the id
 already loaded, `UnpackedInstaller::Load` reloads the extension in place with
 the same id, so an extension author picks up an edit without a restart.
 
+`load_unpacked` loads into the default browser profile first. Then:
+
+- Each profile with an unpacked copy of the extension reloads it from the same
+  directory, which is another one when an extension with a manifest `key`
+  moved. A copy from the Web Store stays.
+- Each profile without it installs it
+  ([BROWSER-PROFILES.md](BROWSER-PROFILES.md#engine)).
+- The reply follows the last of them. A profile's failure refuses the command
+  and is named in it.
+
 Chromium disables unpacked extensions outside developer mode
 (`DISABLE_UNSUPPORTED_DEVELOPER_EXTENSION`). The installer sets
 `prefs::kExtensionsUIDeveloperMode` before loading a directory and leaves it
@@ -438,6 +448,7 @@ Engine guards in `packages/domicile-engine/scripts/`:
 
 - `guard-extension-installer.sh`
 - `guard-extension-in-private.sh`
+- `guard-extension-reload.sh`
 - `guard-extension-tray.sh`
 - `guard-extension-open-popup.sh`
 - `guard-extension-side-panel.sh`

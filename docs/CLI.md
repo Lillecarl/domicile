@@ -552,8 +552,8 @@ desktop may take up to five seconds. It ends when the desktop does.
 
 ## `domicile load-extension <directory>`
 
-Load the unpacked Chrome extension in `<directory>` into the browser windows'
-profile, and print its id. Nothing restarts.
+Load the unpacked Chrome extension in `<directory>` into every browser profile,
+and print its id. Nothing restarts.
 
 ```
 $ domicile load-extension ~/src/my-extension
@@ -561,11 +561,13 @@ abcdefghijklmnopabcdefghijklmnop
 ```
 
 - An extension already loaded from that directory reloads in place and keeps
-  its id, in every browser profile. Run it again after each edit.
+  its id. Run it again after each edit. It returns once the last profile has
+  reloaded.
 - A relative directory is relative to where the command runs.
 - It stays across restarts until it is uninstalled, as one loaded from the
   Settings app does ([Extensions](architecture/EXTENSIONS.md#from-the-settings-app)).
-- A directory the engine cannot load prints why and exits nonzero.
+- A directory the engine cannot load prints why, naming each profile it did not
+  load in when others took it, and exits nonzero.
 
 ## `domicile status [--json]`
 

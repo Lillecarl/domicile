@@ -694,9 +694,9 @@ pub const COMMANDS: &[Command] = &[
         summary: "Load or reload an unpacked extension",
         forms: &[],
         about: &[
-            "Loads the unpacked Chrome extension in `<directory>` into the browser \
-             windows' profile, and prints its id. An extension already loaded from \
-             that directory reloads in place and keeps its id. Nothing restarts.",
+            "Loads the unpacked Chrome extension in `<directory>` into every browser \
+             profile, and prints its id. An extension already loaded from that \
+             directory reloads in place and keeps its id. Nothing restarts.",
             "It stays across restarts until it is uninstalled, as one loaded from \
              the Settings app does.",
         ],

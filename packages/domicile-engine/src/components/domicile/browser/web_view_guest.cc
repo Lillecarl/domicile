@@ -2151,15 +2151,9 @@ void StoreSitePermission(content::BrowserContext& context,
                          mojom::WebViewPermissionSetting setting) {
   permissions::PermissionsClient* client =
       permissions::PermissionsClient::Get();
-  HostContentSettingsMap* map = client->GetSettingsMap(&context);
-  const ContentSettingsType type = SettingsTypeFor(permission);
-  map->SetContentSettingDefaultScope(
-      site, site, type,
-      StoredSetting(setting, map->GetDefaultContentSetting(type)));
-  // Chrome stops a site from asking once it was ignored or dismissed some
-  // times, over a setting of ask. The user just chose, so it counts anew.
-  client->GetPermissionDecisionAutoBlocker(&context)
-      ->RemoveEmbargoAndResetCounts(site, type);
+  StoreSitePermission(*client->GetSettingsMap(&context),
+                      *client->GetPermissionDecisionAutoBlocker(&context), site,
+                      permission, setting);
 }
 
 void WebViewGuest::SetSitePermission(

@@ -24,6 +24,7 @@ import {
   openedByMnemonic,
 } from "@domicile-desktop/sdk/app-menu";
 import type { Domicile } from "@domicile-desktop/sdk/desktop/desktop";
+import { extensionCommandOf } from "@domicile-desktop/sdk/extension";
 import {
   WEBVIEW_DIALOG_EVENT,
   WEBVIEW_FOCUS_REQUEST_EVENT,
@@ -594,7 +595,8 @@ export const BrowserWindow = ({
 
   // Keys pressed in the guest never reach this document. The engine forwards
   // chords the page did not handle, and Ctrl+wheel as zoom requests, so sites
-  // keep their own bindings as in Chrome. See `WEBVIEW_GUEST_KEYDOWN_EVENT`.
+  // keep their own bindings as in Chrome, and the keys of extensions' commands,
+  // which come after the browser's. See `WEBVIEW_GUEST_KEYDOWN_EVENT`.
   // An Electron app's views are part of its window, so the app's keys are
   // heard from them too; the browser's keys act on the window's own page, so
   // only that page's run them.
@@ -602,7 +604,7 @@ export const BrowserWindow = ({
     if (view === null || page === null) {
       return undefined;
     } else {
-      const pressed = (event: KeyboardEvent) => {
+      const pressed = (event: DomicileGuestKeyEvent) => {
         altAlone.current =
           event.key === "Alt" && (altAlone.current || !event.repeat);
         // An app's accelerators come before the browser's keys, as its menu
@@ -617,12 +619,18 @@ export const BrowserWindow = ({
             : openedByMnemonic(menuBar.entries, event);
         const command =
           event.target === view ? browserCommandFor(event) : undefined;
+        const extensionCommand = extensionCommandOf(event);
         if (accelerated !== undefined) {
           chooseMenuEntry(accelerated.id);
         } else if (mnemonic !== undefined) {
           setOpenMenu(mnemonic.id);
         } else if (command !== undefined) {
           run(command);
+        } else if (extensionCommand !== undefined) {
+          domicile.extensions.runCommand(
+            extensionCommand.id,
+            extensionCommand.name,
+          );
         }
       };
       const released = (event: KeyboardEvent) => {
@@ -650,7 +658,7 @@ export const BrowserWindow = ({
         view.removeEventListener(WEBVIEW_ZOOM_OUT_REQUEST_EVENT, zoomOut);
       };
     }
-  }, [chooseMenuEntry, menuBar, page, run, view]);
+  }, [chooseMenuEntry, domicile, menuBar, page, run, view]);
 
   // Gives the keyboard to the focused window's page.
   //

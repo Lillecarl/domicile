@@ -23,8 +23,7 @@ the detail, when there is one. Remove a gap when it's fixed.
 - **Manganese's browser window context menus have only Chrome's core items.**
   The event carries extensions' items
   ([SHELL-EXTENSIONS.md](/docs/SHELL-EXTENSIONS.md#menus)), and manganese draws
-  none of them, nor runs extensions' keys.
-- **An input method's candidate list does not show over pages or the
+  none of them.- **An input method's candidate list does not show over pages or the
   shell:** they compose from it, but only native windows show its list.
   [TEXT-INPUT.md](/docs/architecture/TEXT-INPUT.md#plan).
 - **A `wl_shm` window in 10-bit or half-float stays blank after the engine

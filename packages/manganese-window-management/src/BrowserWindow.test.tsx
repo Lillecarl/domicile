@@ -198,14 +198,27 @@ const zoomable = (element: HTMLWebViewElement, factor: number): number[] => {
   return asked;
 };
 
-/** Fires a chord the guest page did not handle, as the engine forwards it. */
+/**
+ * Fires a chord pressed in the guest page, as the engine forwards it: one the
+ * page did not handle, or the keys of `extension`'s `command`.
+ */
 const guestPresses = (
   element: HTMLWebViewElement,
   init: KeyboardEventInit,
+  bound: Pick<DomicileGuestKeyEvent, "extensionCommand" | "extensionId"> = {
+    extensionCommand: null,
+    extensionId: null,
+  },
 ): void => {
   fireEvent(
     element,
-    new KeyboardEvent(WEBVIEW_GUEST_KEYDOWN_EVENT, { bubbles: true, ...init }),
+    Object.assign(
+      new KeyboardEvent(WEBVIEW_GUEST_KEYDOWN_EVENT, {
+        bubbles: true,
+        ...init,
+      }),
+      bound,
+    ),
   );
 };
 
@@ -1871,9 +1884,11 @@ describe("BrowserWindow", () => {
   describe("a browser's keys", () => {
     const keysWindow = ({
       covered = false,
+      domicile = silentDomicile,
       focused = true,
     }: {
       covered?: boolean;
+      domicile?: Domicile;
       focused?: boolean;
     }) => (
       <BrowserWindow
@@ -1881,7 +1896,7 @@ describe("BrowserWindow", () => {
         clickThrough={false}
         covered={covered}
         depth={0}
-        domicile={silentDomicile}
+        domicile={domicile}
         dragging={false}
         focused={focused}
         frame={FRAME}
@@ -1936,6 +1951,45 @@ describe("BrowserWindow", () => {
       fireEvent.keyDown(address(), { ctrlKey: true, key: "R", shiftKey: true });
 
       expect(calls).toStrictEqual(["reload"]);
+    });
+
+    /**
+     * Presses the keys of an extension's command, and returns what ran:
+     * the history controls' calls and the extension's commands.
+     */
+    const pressesExtensionKeys = (init: KeyboardEventInit) => {
+      const ran: string[] = [];
+      const { container } = render(
+        keysWindow({
+          domicile: {
+            ...silentDomicile,
+            extensions: {
+              ...silentDomicile.extensions,
+              runCommand: (id, name) => {
+                ran.push(`${name} of ${id}`);
+              },
+            },
+          },
+        }),
+      );
+      const calls = driven(view(container));
+      guestPresses(view(container), init, {
+        extensionCommand: "fill",
+        extensionId: "bitwarden",
+      });
+      return [...calls, ...ran];
+    };
+
+    it("runs the extension command its keys are bound to", () => {
+      expect(
+        pressesExtensionKeys({ ctrlKey: true, key: "L", shiftKey: true }),
+      ).toStrictEqual(["fill of bitwarden"]);
+    });
+
+    it("keeps its own keys from an extension", () => {
+      expect(pressesExtensionKeys({ ctrlKey: true, key: "r" })).toStrictEqual([
+        "reload",
+      ]);
     });
 
     it("leaves a chord that is not a browser's alone", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { FakeDomicileHost } from "../fake-host";
-import { AppReuse } from "./browser";
+import { AppReuse, Blocking } from "./browser";
 import { desktop } from "./desktop";
 
 describe("browser", () => {
@@ -17,11 +17,13 @@ describe("browser", () => {
     expect(desktop(fake.host).browser.windows).toStrictEqual([
       {
         appId: "",
+        blockedRequests: 0,
         height: 0,
         id: "1",
         ignoresPointer: false,
         isApp: false,
         isCaptured: false,
+        isDiscarded: false,
         isHidden: false,
         isPrivate: false,
         menu: undefined,
@@ -121,6 +123,13 @@ describe("browser", () => {
     ]);
   });
 
+  it("unloads a window's page", () => {
+    const fake = new FakeDomicileHost();
+    desktop(fake.host).browser.discard("1");
+
+    expect(fake.calls).toStrictEqual([["discardBrowserWindow", "1"]]);
+  });
+
   it("opens a window in a profile and moves one to another", () => {
     const fake = new FakeDomicileHost();
     const { browser } = desktop(fake.host);
@@ -166,6 +175,56 @@ describe("browser", () => {
     expect(browser.profiles).toStrictEqual([work]);
     expect(changes).toBe(1);
     stop();
+  });
+
+  it("says which pages may be unloaded while memory is short", () => {
+    const fake = new FakeDomicileHost();
+    const heard: (readonly string[])[] = [];
+    const stop = desktop(fake.host).browser.on("memoryShort", (ids) => {
+      heard.push(ids);
+    });
+
+    fake.dispatch("browsermemoryshort", { data: '["2","1"]' });
+    stop();
+    fake.dispatch("browsermemoryshort", { data: '["2"]' });
+
+    expect(heard).toStrictEqual([["2", "1"]]);
+  });
+
+  it("gives a site's blocking as the engine names it", async () => {
+    const fake = new FakeDomicileHost();
+    fake.block("news.example", "aggressive");
+    const { browser } = desktop(fake.host);
+
+    expect(await browser.blockingFor("https://news.example/")).toBe(
+      Blocking.Aggressive,
+    );
+    expect(await browser.blockingFor("https://other.example/")).toBe(
+      Blocking.Standard,
+    );
+  });
+
+  it("rejects a blocking the engine names that the SDK does not know", async () => {
+    const fake = new FakeDomicileHost();
+    fake.block("news.example", "paranoid");
+    const { browser } = desktop(fake.host);
+
+    await expect(browser.blockingFor("https://news.example/")).rejects.toThrow(
+      "paranoid",
+    );
+  });
+
+  it("sets a site's blocking, and gives it the config's again", async () => {
+    const fake = new FakeDomicileHost();
+    const { browser } = desktop(fake.host);
+
+    await browser.setSiteBlocking("news.example", Blocking.Off);
+    await browser.setSiteBlocking("news.example", undefined);
+
+    expect(fake.calls).toStrictEqual([
+      ["setContentBlockingSite", "news.example", "off"],
+      ["setContentBlockingSite", "news.example", ""],
+    ]);
   });
 
   it("pins a site to a profile and finds the site that routes an address", async () => {

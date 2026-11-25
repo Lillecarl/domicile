@@ -186,6 +186,7 @@ export class FakeDomicileHost {
   readonly #target = new EventTarget();
   readonly #state: DomicileState = { ...UNDESCRIBED };
   #browsersOpened = 0;
+  readonly #blocking = new Map<string, string>();
 
   constructor() {
     const target = this.#target;
@@ -222,6 +223,13 @@ export class FakeDomicileHost {
             calls.push([name, url]);
             return Promise.resolve(this.siteFor(url));
           };
+        } else if (name === "contentBlockingFor") {
+          return (url: string) => {
+            calls.push([name, url]);
+            return Promise.resolve(
+              this.#blocking.get(new URL(url).hostname) ?? "standard",
+            );
+          };
         } else if (name === "pinBrowserSite") {
           return (site: string, profile: string) => {
             calls.push([name, site, profile]);
@@ -246,6 +254,11 @@ export class FakeDomicileHost {
           return (id: string) => {
             calls.push([name, id]);
             this.closeBrowser(id);
+          };
+        } else if (name === "discardBrowserWindow") {
+          return (id: string) => {
+            calls.push([name, id]);
+            this.discardBrowser(id);
           };
         } else if (
           name === "addEventListener" ||
@@ -359,11 +372,13 @@ export class FakeDomicileHost {
         ...(this.#state.browserWindows ?? []),
         {
           appId,
+          blockedRequests: 0,
           height,
           id: this.#browsersOpened.toString(),
           ignoresPointer: false,
           isApp,
           isCaptured: false,
+          isDiscarded: false,
           isHidden,
           isPrivate,
           menu: null,
@@ -433,6 +448,19 @@ export class FakeDomicileHost {
     this.set({
       browserWindows: (this.#state.browserWindows ?? []).map((window) =>
         window.id === id ? { ...window, isCaptured: captured } : window,
+      ),
+    });
+  }
+
+  /**
+   * The engine unloaded browser window `id`'s page, or with `discarded` false
+   * loaded it again, as when a `<webview>` shows it. `discardBrowserWindow`
+   * calls this too.
+   */
+  discardBrowser(id: string, discarded = true): void {
+    this.set({
+      browserWindows: (this.#state.browserWindows ?? []).map((window) =>
+        window.id === id ? { ...window, isDiscarded: discarded } : window,
       ),
     });
   }
@@ -614,6 +642,14 @@ export class FakeDomicileHost {
       }),
     });
     return Promise.resolve();
+  }
+
+  /**
+   * Gives `host` the blocking the engine names `mode`, as `contentBlockingFor`
+   * answers it. A host given none is `"standard"`.
+   */
+  block(host: string, mode: string): void {
+    this.#blocking.set(host, mode);
   }
 
   /**

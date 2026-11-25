@@ -478,6 +478,13 @@
   // `browserWindows` for the current list.
   attribute EventHandler onbrowserwindowschanged;
 
+  // A MessageEvent whose `data` is the ids of the windows whose pages may be
+  // unloaded, hidden longest first, as a JSON array. Fires every few seconds
+  // while the computer is short of memory. The engine unloads the first one's
+  // page, unless this has a listener: the shell then decides, by
+  // discardBrowserWindow().
+  attribute EventHandler onbrowsermemoryshort;
+
   // The desk's browser profiles, in the config's order: sets of sign-ins,
   // site data and extensions, as the config's `browser.profiles` names them.
   // Null until the browser lists them. No [SameObject], for `displays`'
@@ -553,6 +560,14 @@
   [CallWith=ScriptState, RaisesException] undefined closeBrowserWindow(
       DOMString id);
 
+  // Unloads window `id`'s page to free its memory. Its history and scroll
+  // stay, and it loads again when a <webview> next shows the window; what was
+  // typed into it is not kept. Throws TypeError for an empty id. An unknown
+  // window, one a <webview> shows, an extension's popup window, a DevTools
+  // window, and an app module's or Electron app's do nothing.
+  [CallWith=ScriptState, RaisesException] undefined discardBrowserWindow(
+      DOMString id);
+
   // Moves window `id`'s page to browser profile `profile`, one of
   // `browserProfiles`, as a new page under the same id: the window keeps its
   // place, its <webview> shows the new page, and its back and forward list
@@ -587,6 +602,26 @@
   // no such key, and for a profile the desk does not have.
   [CallWith=ScriptState, RaisesException] Promise<undefined> pinBrowserSite(
       DOMString site, DOMString profile);
+
+  // The mode the engine blocks ads and trackers in on `url`'s site: "off",
+  // "standard" or "aggressive", as the config's `content_blocking` or
+  // setContentBlockingSite gave it; "off" while the config blocks nothing.
+  // See docs/architecture/CONTENT-BLOCKING.md. Throws TypeError for a `url`
+  // that is no address.
+  [CallWith=ScriptState, RaisesException] Promise<DOMString>
+      contentBlockingFor(USVString url);
+
+  // Blocks on `site` in `mode` ("off", "standard" or "aggressive") from now
+  // on, kept across restarts; an empty `mode` gives it the config's mode
+  // again. `site` is a host or `*.host`, as the config's
+  // `content_blocking.sites` keys are. A page loads in the new mode from its
+  // next navigation, so reload it to apply. Throws TypeError for an empty
+  // site. Rejects with an OperationError saying why for a site the config's
+  // `content_blocking.sites` name, which only the config changes, for one
+  // that is no host, for a mode that is none of the three, and while the
+  // config blocks nothing.
+  [CallWith=ScriptState, RaisesException] Promise<undefined>
+      setContentBlockingSite(DOMString site, DOMString mode);
 
   // Switches extension `id` on or off in browser profile `profile`, kept
   // across restarts: it runs in that profile's pages, or nowhere in them, and

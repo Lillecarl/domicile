@@ -398,6 +398,12 @@ export type DomicileBrowserWindow = {
    */
   readonly isCaptured: boolean;
   /**
+   * Whether the page is unloaded to free its memory, by discardBrowserWindow()
+   * or by the engine while memory is short. It loads when a <webview> shows
+   * the window.
+   */
+  readonly isDiscarded: boolean;
+  /**
    * The window's identifier on ext-foreign-toplevel-list-v1, which a capture
    * tool such as `grim -T` names it by, as DomicileWindow.toplevelId. Null
    * until the compositor has listed the window.
@@ -493,6 +499,12 @@ export type DomicileBrowserWindow = {
    * plain `<webview>`'s page opened.
    */
   readonly opener: string | null;
+  /**
+   * The requests the engine's content blocking blocked for the page since it
+   * loaded, for a shell's badge. 0 while the config blocks nothing. See
+   * docs/architecture/CONTENT-BLOCKING.md.
+   */
+  readonly blockedRequests: number;
 };
 
 /**
@@ -825,6 +837,14 @@ export type DomicileHostEventMap = {
    * `browserWindows` for the current list.
    */
   browserwindowschanged: Event;
+  /**
+   * A MessageEvent whose `data` is the ids of the windows whose pages may be
+   * unloaded, hidden longest first, as a JSON array. Fires every few seconds
+   * while the computer is short of memory. The engine unloads the first one's
+   * page, unless this has a listener: the shell then decides, by
+   * discardBrowserWindow().
+   */
+  browsermemoryshort: MessageEvent<string>;
   /**
    * Fires when a profile is added, removed, renamed or recolored, the
    * defaults move, a site is pinned, or an extension is installed,
@@ -1293,6 +1313,14 @@ export type DomicileHost = {
    */
   closeBrowserWindow(id: string): void;
   /**
+   * Unloads window `id`'s page to free its memory. Its history and scroll
+   * stay, and it loads again when a <webview> next shows the window; what was
+   * typed into it is not kept. Throws TypeError for an empty id. An unknown
+   * window, one a <webview> shows, an extension's popup window, a DevTools
+   * window, and an app module's or Electron app's do nothing.
+   */
+  discardBrowserWindow(id: string): void;
+  /**
    * Moves window `id`'s page to browser profile `profile`, one of
    * `browserProfiles`, as a new page under the same id: the window keeps its
    * place, its <webview> shows the new page, and its back and forward list
@@ -1327,6 +1355,26 @@ export type DomicileHost = {
    * no such key, and for a profile the desk does not have.
    */
   pinBrowserSite(site: string, profile: string): Promise<void>;
+  /**
+   * The mode the engine blocks ads and trackers in on `url`'s site: "off",
+   * "standard" or "aggressive", as the config's `content_blocking` or
+   * setContentBlockingSite gave it; "off" while the config blocks nothing.
+   * See docs/architecture/CONTENT-BLOCKING.md. Throws TypeError for a `url`
+   * that is no address.
+   */
+  contentBlockingFor(url: string): Promise<string>;
+  /**
+   * Blocks on `site` in `mode` ("off", "standard" or "aggressive") from now
+   * on, kept across restarts; an empty `mode` gives it the config's mode
+   * again. `site` is a host or `*.host`, as the config's
+   * `content_blocking.sites` keys are. A page loads in the new mode from its
+   * next navigation, so reload it to apply. Throws TypeError for an empty
+   * site. Rejects with an OperationError saying why for a site the config's
+   * `content_blocking.sites` name, which only the config changes, for one
+   * that is no host, for a mode that is none of the three, and while the
+   * config blocks nothing.
+   */
+  setContentBlockingSite(site: string, mode: string): Promise<void>;
   /**
    * Switches extension `id` on or off in browser profile `profile`, kept
    * across restarts: it runs in that profile's pages, or nowhere in them, and

@@ -12,6 +12,7 @@
 //! The shell generates this JSON file; people do not edit it. See
 //! `docs/SHELL-CONFIG.md`.
 
+mod content_blocking;
 mod desktop;
 mod files;
 mod input_devices;
@@ -19,6 +20,7 @@ mod pointers;
 mod profile;
 mod startup;
 
+pub use content_blocking::{BlockingMode, ContentBlockingConfig, SiteBlocking};
 pub use desktop::{Desktop, Display};
 pub use files::{FilesConfig, Omit};
 pub use input_devices::{
@@ -1336,6 +1338,7 @@ impl SpellcheckConfig {
 pub struct Config {
     pub agents: AgentsConfig,
     pub browser: BrowserConfig,
+    pub content_blocking: Option<ContentBlockingConfig>,
     pub electron: ElectronConfig,
     pub extensions: ExtensionsConfig,
     pub files: FilesConfig,
@@ -1408,6 +1411,9 @@ impl Config {
     /// Validation the deserializer cannot express.
     fn validate(&self) -> Result<(), ConfigError> {
         self.browser.validate()?;
+        if let Some(content_blocking) = &self.content_blocking {
+            content_blocking.validate()?;
+        }
         self.electron.validate()?;
         self.extensions.validate()?;
         self.idle.validate()?;

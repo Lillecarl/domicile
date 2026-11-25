@@ -334,6 +334,7 @@ class MODULES_EXPORT DomicileHost final
                                                     const String& selector,
                                                     ExceptionState&);
   void closeBrowserWindow(ScriptState*, const String& id, ExceptionState&);
+  void discardBrowserWindow(ScriptState*, const String& id, ExceptionState&);
   void reopenBrowserWindow(ScriptState*,
                            const String& id,
                            const String& profile,
@@ -348,6 +349,13 @@ class MODULES_EXPORT DomicileHost final
                                              const String& site,
                                              const String& profile,
                                              ExceptionState&);
+  ScriptPromise<IDLString> contentBlockingFor(ScriptState*,
+                                              const String& url,
+                                              ExceptionState&);
+  ScriptPromise<IDLUndefined> setContentBlockingSite(ScriptState*,
+                                                     const String& site,
+                                                     const String& mode,
+                                                     ExceptionState&);
   ScriptPromise<IDLUndefined> setBrowserProfileExtensionEnabled(
       ScriptState*,
       const String& profile,
@@ -574,6 +582,8 @@ class MODULES_EXPORT DomicileHost final
       Vector<domicile::mojom::blink::BrowserProfilePtr> profiles,
       const String& default_profile,
       const String& default_private_profile) override;
+  void MemoryShort(const Vector<String>& windows,
+                   MemoryShortCallback handled) override;
 
   // domicile::mojom::blink::CastSinksClient:
   void SinksChanged(

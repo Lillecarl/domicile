@@ -48,6 +48,12 @@ BrowserProfilesSink& BrowserProfilesSlot() {
   return *sink;
 }
 
+// Storage for SetContentBlockingSink's callback.
+ContentBlockingSink& ContentBlockingSlot() {
+  static base::NoDestructor<ContentBlockingSink> sink;
+  return *sink;
+}
+
 // Storage for SetSpellcheckSink's callback.
 SpellcheckSink& SpellcheckSlot() {
   static base::NoDestructor<SpellcheckSink> sink;
@@ -1403,6 +1409,24 @@ void ControlChannel::DispatchLine(const std::string& line,
     return;
   }
 
+  // For this process too, like `spellcheck`: what the engine blocks. See
+  // docs/architecture/CONTENT-BLOCKING.md.
+  if (*type == "content_blocking") {
+    std::optional<content_blocking::Settings> settings =
+        content_blocking::SettingsFromMessage(message);
+    if (!settings) {
+      LOG(ERROR) << "domicile: the compositor sent a `content_blocking` "
+                    "message with a field missing or of the wrong kind. The "
+                    "engine blocks as it did.";
+    } else if (ContentBlockingSlot().is_null()) {
+      LOG(ERROR) << "domicile: the compositor sent `content_blocking` and "
+                    "this engine has nowhere to put it. It blocks as it did.";
+    } else {
+      ContentBlockingSlot().Run(*settings);
+    }
+    return;
+  }
+
   // AN AGENT SEAT'S, for this process like `keymap`: the compositor hands
   // the browser an agent's input over the shell's page, which the browser
   // delivers to the page under it. Every page's channel hears it, and the
@@ -2183,6 +2207,11 @@ void SetAgentInputSink(AgentInputSink sink) {
 void SetSpellcheckSink(SpellcheckSink sink) {
   CHECK(SpellcheckSlot().is_null() || sink.is_null());
   SpellcheckSlot() = std::move(sink);
+}
+
+void SetContentBlockingSink(ContentBlockingSink sink) {
+  CHECK(ContentBlockingSlot().is_null() || sink.is_null());
+  ContentBlockingSlot() = std::move(sink);
 }
 
 void BindControlChannel(mojo::PendingReceiver<mojom::ControlChannel> receiver,

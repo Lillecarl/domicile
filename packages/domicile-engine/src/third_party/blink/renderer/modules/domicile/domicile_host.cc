@@ -2662,6 +2662,18 @@ void DomicileHost::closeBrowserWindow(ScriptState*,
   }
 }
 
+void DomicileHost::discardBrowserWindow(ScriptState*,
+                                        const String& id,
+                                        ExceptionState& exception_state) {
+  if (id.empty()) {
+    exception_state.ThrowTypeError("id must be a browser window's id");
+    return;
+  }
+  if (Ready(exception_state)) {
+    windows_->Discard(id);
+  }
+}
+
 namespace {
 
 // The browser's answer to browserProfileFor().
@@ -2762,6 +2774,50 @@ ScriptPromise<IDLUndefined> DomicileHost::pinBrowserSite(
   auto promise = resolver->Promise();
   windows_->PinSite(site, profile,
                     BindOnce(&ExtensionAnswered, WrapPersistent(resolver)));
+  return promise;
+}
+
+ScriptPromise<IDLString> DomicileHost::contentBlockingFor(
+    ScriptState* script_state,
+    const String& url,
+    ExceptionState& exception_state) {
+  // Resolved against this document, as browserProfileFor's is.
+  const KURL resolved = window_->CompleteURL(url);
+  if (!resolved.IsValid()) {
+    exception_state.ThrowTypeError("url must be an address");
+    return EmptyPromise();
+  }
+  if (!Ready(exception_state)) {
+    return EmptyPromise();
+  }
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLString>>(
+      script_state, exception_state.GetContext());
+  auto promise = resolver->Promise();
+  windows_->ContentBlockingFor(
+      resolved, BindOnce(
+                    [](ScriptPromiseResolver<IDLString>* resolver,
+                       const String& mode) { resolver->Resolve(mode); },
+                    WrapPersistent(resolver)));
+  return promise;
+}
+
+ScriptPromise<IDLUndefined> DomicileHost::setContentBlockingSite(
+    ScriptState* script_state,
+    const String& site,
+    const String& mode,
+    ExceptionState& exception_state) {
+  if (site.empty()) {
+    exception_state.ThrowTypeError("site must be a site, such as a host");
+    return EmptyPromise();
+  }
+  if (!Ready(exception_state)) {
+    return EmptyPromise();
+  }
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(
+      script_state, exception_state.GetContext());
+  auto promise = resolver->Promise();
+  windows_->SetContentBlockingSite(
+      site, mode, BindOnce(&ExtensionAnswered, WrapPersistent(resolver)));
   return promise;
 }
 
@@ -3242,7 +3298,7 @@ void DomicileHost::ListBrowserWindows() {
         window->width, window->height, window->private_browsing,
         window->partition,
         window->profile.empty() ? String() : String(window->profile),
-        window->app, window->app_id, window->captured,
+        window->app, window->app_id, window->captured, window->discarded,
         toplevel_id == browser_toplevel_ids_.end() ? String()
                                                    : toplevel_id->value,
         window->parent.empty() ? String() : String(window->parent), window->x,
@@ -3254,7 +3310,8 @@ void DomicileHost::ListBrowserWindows() {
         window->wants_maximized, window->wants_minimized,
         window->wants_fullscreen, window->urgent, window->ignores_pointer,
         window->shape.empty() ? String() : window->shape,
-        window->opener.empty() ? String() : window->opener));
+        window->opener.empty() ? String() : window->opener,
+        window->blocked_requests));
   }
   browser_windows_ = MakeGarbageCollected<FrozenArray<DomicileBrowserWindow>>(
       std::move(listed));
@@ -3263,6 +3320,26 @@ void DomicileHost::ListBrowserWindows() {
 }
 
 // Stored, like WindowsChanged.
+void DomicileHost::MemoryShort(const Vector<String>& windows,
+                               MemoryShortCallback handled) {
+  const AtomicString& type = domicile_event_names::Browsermemoryshort();
+  if (!HasEventListeners(type)) {
+    std::move(handled).Run(false);
+    return;
+  }
+  auto ids = std::make_unique<JSONArray>();
+  for (const String& id : windows) {
+    ids->PushString(id);
+  }
+  MessageEvent* event = MessageEvent::Create();
+  event->initMessageEvent(type, /*bubbles=*/false, /*cancelable=*/false,
+                          ids->ToJSONString(), /*origin=*/nullptr,
+                          /*last_event_id=*/String(), /*source=*/nullptr,
+                          /*ports=*/nullptr);
+  DispatchEvent(*event);
+  std::move(handled).Run(true);
+}
+
 void DomicileHost::ProfilesChanged(
     Vector<domicile::mojom::blink::BrowserProfilePtr> profiles,
     const String& default_profile,

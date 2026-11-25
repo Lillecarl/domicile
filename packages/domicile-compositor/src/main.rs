@@ -192,8 +192,8 @@ use crate::chrome_hub::{serve_outbound, ChromeHub};
 use crate::client_requests::ClientRequest;
 use crate::clients::{accept_app_client, sees_privileged_globals, ClientState};
 use crate::config_adoption::{
-    hand_over_the_browser_profiles, hand_over_the_extensions, hand_over_the_shell_config,
-    theme_on_the_wire,
+    hand_over_the_browser_profiles, hand_over_the_content_blocking, hand_over_the_extensions,
+    hand_over_the_shell_config, theme_on_the_wire,
 };
 use crate::configure_answers::ConfigureAnswers;
 use crate::dmabuf_import::{headless_renderer, DmabufImporter};
@@ -1154,6 +1154,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             config.spellcheck.enabled,
             config.spellcheck.languages.clone(),
         );
+        // What the engine blocks. See `docs/architecture/CONTENT-BLOCKING.md`.
+        hand_over_the_content_blocking(&mut host, config.content_blocking.as_ref());
         // The theme, so the page paints correctly the first time. Set, not
         // `take_up_the_theme`, since there is nobody to broadcast to yet.
         host.set_theme(theme_on_the_wire(config.theme.mode));

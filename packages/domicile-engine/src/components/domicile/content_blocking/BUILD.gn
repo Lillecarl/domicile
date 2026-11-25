@@ -1,0 +1,115 @@
+# Copyright 2026 Connor Prussin
+# SPDX-License-Identifier: MIT
+
+import("//build/rust/rust_static_library.gni")
+import("//mojo/public/tools/bindings/mojom.gni")
+
+# The engine's content blocking: Brave's adblock-rust, and what the browser
+# asks of it. See docs/architecture/CONTENT-BLOCKING.md.
+
+rust_static_library("bridge") {
+  crate_root = "bridge.rs"
+  allow_unsafe = true
+  sources = [ crate_root ]
+  cxx_bindings = [ crate_root ]
+  visibility = [ ":*" ]
+  deps = [
+    "//third_party/rust/adblock/v0_13:lib",
+    "//third_party/rust/serde_json/v1:lib",
+  ]
+}
+
+source_set("content_blocking") {
+  sources = [
+    "blocker.cc",
+    "blocker.h",
+    "domain_resolver.cc",
+    "domain_resolver.h",
+    "engine.cc",
+    "engine.h",
+    "lists.cc",
+    "lists.h",
+    "request_type.cc",
+    "request_type.h",
+  ]
+  public_deps = [
+    ":bridge",
+    ":settings",
+    "//base",
+    "//services/network/public/mojom",
+    "//url",
+  ]
+  deps = [
+    "//crypto",
+    "//net",
+  ]
+}
+
+# What the compositor says to block, apart from the engine, so the control
+# channel reads it without linking Rust.
+source_set("settings") {
+  sources = [
+    "settings.cc",
+    "settings.h",
+  ]
+  public_deps = [ "//base" ]
+  deps = [ "//url" ]
+}
+
+mojom("mojom") {
+  sources = [ "content_filter.mojom" ]
+  public_deps = [ "//url/mojom:url_mojom_gurl" ]
+}
+
+# Brave's content_cosmetic.ts, bundled by resources/bundle.sh, as a string.
+action("bundle") {
+  script = "resources/embed_script.py"
+  inputs = [ "resources/content_filter_bundle.js" ]
+  outputs = [ "$target_gen_dir/content_filter_bundle.h" ]
+  args = [
+    rebase_path(inputs[0], root_build_dir),
+    rebase_path(outputs[0], root_build_dir),
+    "kContentFilterBundle",
+  ]
+}
+
+# A frame's half of element hiding and scriptlets, which
+# //chrome/renderer gives every frame.
+source_set("renderer") {
+  sources = [
+    "content_filter_agent.cc",
+    "content_filter_agent.h",
+  ]
+  public_deps = [
+    ":mojom",
+    "//content/public/renderer",
+  ]
+  deps = [
+    ":bundle",
+    "//base",
+    "//gin",
+    "//net",
+    "//third_party/blink/public:blink",
+    "//url",
+    "//v8",
+  ]
+}
+
+source_set("unit_tests") {
+  testonly = true
+  sources = [
+    "blocker_unittest.cc",
+    "engine_unittest.cc",
+    "lists_unittest.cc",
+    "request_type_unittest.cc",
+    "settings_unittest.cc",
+  ]
+  deps = [
+    ":content_blocking",
+    ":settings",
+    "//base",
+    "//testing/gmock",
+    "//testing/gtest",
+    "//url",
+  ]
+}

@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 26 Nov 2026 00:00:00 +0000
+Subject: [PATCH] domicile: pages load through the content blocker
+
+A frame's or worker's loads go through domicile::ProxyContentBlocking
+while the config blocks content: after an Electron app's own schemes,
+which answer first, and before extensions' webRequest, which then sees
+only what the blocker let through.
+---
+ chrome/browser/chrome_content_browser_client.cc | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
+index 2935537901..dbffa2f7da 100644
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -4,6 +4,7 @@
+ 
+ #include "chrome/browser/chrome_content_browser_client.h"
+ 
++#include "chrome/browser/domicile/domicile_content_blocking_loader.h"
+ #include "chrome/browser/domicile/domicile_electron_certificates.h"
+ #include "chrome/browser/domicile/domicile_electron_loader.h"
+ #include "chrome/browser/domicile/domicile_electron_page.h"
+@@ -7148,6 +7149,9 @@ void ChromeContentBrowserClient::WillCreateURLLoaderFactory(
+   // for http or https answers its page's request before anything else sees
+   // it, as in Electron.
+   domicile::ProxyElectronNetworkLoads(frame, factory_builder);
++  // Domicile's engine fork: the config's content blocking, after an Electron
++  // app's own schemes and before extensions' webRequest.
++  domicile::ProxyContentBlocking(frame, request_initiator, factory_builder);
+ 
+ #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+   auto* web_request_api =
+-- 
+2.47.0
+

@@ -60,6 +60,11 @@
   // a window you hide, such as behind a tab, laid out while it is captured.
   readonly attribute boolean isCaptured;
 
+  // Whether the page is unloaded to free its memory, by discardBrowserWindow()
+  // or by the engine while memory is short. It loads when a <webview> shows
+  // the window.
+  readonly attribute boolean isDiscarded;
+
   // The window's identifier on ext-foreign-toplevel-list-v1, which a capture
   // tool such as `grim -T` names it by, as DomicileWindow.toplevelId. Null
   // until the compositor has listed the window.
@@ -143,4 +148,9 @@
   // there. Null for none: a window the shell or the user opened, and one a
   // plain `<webview>`'s page opened.
   readonly attribute DOMString? opener;
+
+  // The requests the engine's content blocking blocked for the page since it
+  // loaded, for a shell's badge. 0 while the config blocks nothing. See
+  // docs/architecture/CONTENT-BLOCKING.md.
+  readonly attribute unsigned long blockedRequests;
 };

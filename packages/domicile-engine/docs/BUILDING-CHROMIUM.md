@@ -69,6 +69,34 @@ import("//build/args/domicile_codecs.gn")
 - `--disable-gpu` is the default. `GPU=1` uses the GPU; see
   [ENGINE-FORK-CHROMIUM-NOTES.md](/docs/architecture/ENGINE-FORK-CHROMIUM-NOTES.md#running-on-the-gpu).
 
+## Incremental builds with Nix
+
+Lillecarl's out-of-tree setup builds the engine as Nix derivations that reuse
+one Chromium tree, so a change to a few engine files builds in about six
+minutes:
+[Lillecarl/domicile `local-nix`](https://github.com/Lillecarl/domicile/tree/local-nix)
+(`nix/local-build.nix`). CI does not use it. Background:
+[#2558](https://github.com/cprussin/domicile/issues/2558).
+
+- Needs `sandbox = relaxed` in `nix.conf`: its derivations set
+  `__noChroot = true` to use a checkout outside the store.
+- The output is not reproducible, and is neither of CI's builds (no LTO, PGO or
+  DCHECKs).
+- Its `nix build .#engine-unit-tests` runs the C++ unit tests in that tree.
+  `scripts/unit-tests.sh` runs them against any engine build tree too.
+
+## Vendored Rust crates
+
+Content blocking's crates (adblock and what it needs) are not in this
+repository. `crates/CRATES` names each one's version and `.crate` sha256, and
+`.github/scripts/engine-crates.sh` fetches them into
+`third_party/rust/chromium_crates_io/vendor` after `apply.sh`. To move one:
+change its line, its `Cargo.lock` entry in patch 0286, and gnrt's `BUILD.gn`.
+gnrt runs on a copy of `third_party/rust` and `tools/crates` with nixpkgs'
+cargo: Chromium's cargo links Ubuntu's libcurl. Then `gn format` the
+`BUILD.gn` files it writes, and keep `zune_jpeg/v0_5/README.chromium`'s
+hand-written notes.
+
 ## Rolling the pin
 
 - A repin is a pull request. The engine workflows sync the checkout (see

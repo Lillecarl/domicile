@@ -831,8 +831,8 @@ pub const COMMANDS: &[Command] = &[
              once, and the levels last until the desktop restarts. With nothing \
              it prints the levels; `--reset` goes back to those it started at.",
             "The subsystems are input, displays, windows, rendering, cast, \
-             portals, idle, clipboard, notifications, electron, agents, shell \
-             and session.",
+             portals, idle, clipboard, notifications, electron, \
+             content_blocking, agents, shell and session.",
         ],
         sections: &[],
         examples: &[

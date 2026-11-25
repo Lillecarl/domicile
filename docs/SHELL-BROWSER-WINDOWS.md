@@ -193,6 +193,36 @@ config's `browser.profiles`. See
 - A profile the desk no longer has opens in the default one, or the default
   private one for a private page.
 
+## Ads and trackers
+
+With the config's `content_blocking` ([SHELL-CONFIG.md](SHELL-CONFIG.md#ads-and-trackers)),
+the engine blocks ads and trackers in every browser profile. A shell can show
+and change what it does per site:
+
+```ts
+import { Blocking } from "@domicile-desktop/sdk/desktop/browser";
+
+const site = new URL(window.url).hostname;
+const blocking = await desktop.browser.blockingFor(window.url);
+badge.textContent = String(window.blockedRequests);
+await desktop.browser.setSiteBlocking(site, Blocking.Off);
+view.reload(); // the window's <webview>
+```
+
+- **`blockingFor(url)`** gives `off`, `standard` or `aggressive`: the
+  config's `content_blocking.sites` entry for the site, the one
+  `setSiteBlocking` set, or the config's `mode`. `off` while the config
+  blocks nothing.
+- **`setSiteBlocking(site, blocking)`** keeps a site's mode across restarts;
+  `undefined` gives it the config's again. A site the config's
+  `content_blocking.sites` names keeps the config's mode, and the call
+  rejects. A page loads in the new mode from its next navigation.
+- **`blockedRequests`** on each window counts the requests the engine
+  blocked for its page since it loaded. While the count changes, the window
+  list is sent again at most every quarter second.
+
+See [CONTENT-BLOCKING.md](architecture/CONTENT-BLOCKING.md).
+
 ## Partitions
 
 A partition is storage of its own (cookies, cache, IndexedDB), apart from the
@@ -234,6 +264,18 @@ user's and every other partition, like a separate browser profile:
   `document.visibilityState` is `hidden`, timers slow and nothing paints.
   Showing the view shows the page. The page hears a hide 100ms late, so a
   view that is shown again within that time never reads `hidden`.
+- **Hidden pages are unloaded while memory is short**, much as Chrome unloads
+  tabs: a window no `<webview>` shows, or whose view is not rendered
+  (`display: none`). The engine unloads one every five seconds, the one hidden
+  longest first. A page stays for ten minutes after it is hidden, while it
+  plays audio, records, is captured or holds what the user typed, and in an app
+  window. An unloaded window `isDiscarded`, and keeps its history and scroll;
+  its page loads when a `<webview>` shows it. To extensions the unloaded page's
+  tab closes and a new one opens.
+  - `browser.discard(id)` unloads a hidden one now.
+  - `browser.on("memoryShort", (ids) => …)` hands the choice to your shell:
+    while it listens, the engine unloads nothing. `ids` are the windows it
+    would unload, hidden longest first.
 - **Lay out a hidden window while it `isCaptured`.** A screenshot, a picker's
   preview or a screen cast of the page alone sets it, and `browser.on("change")`
   fires. A page with no layout box draws nothing, so the capture would get no

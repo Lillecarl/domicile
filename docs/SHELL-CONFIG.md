@@ -554,6 +554,39 @@ Text fields in pages, web apps and Electron apps underline misspelled words.
   suggestions on the context menu event. See
   [SHELL-BROWSER-WINDOWS.md](SHELL-BROWSER-WINDOWS.md#the-keyboard).
 
+## Ads and trackers
+
+```json
+{
+  "content_blocking": {
+    "filters": ["||ads.example.com^", "example.com##.banner"],
+    "sites": { "bank.example": "off" }
+  }
+}
+```
+
+The engine blocks ads and trackers in every browser profile, with Brave's
+filter engine. Leave `content_blocking` out to block nothing.
+
+- `lists`: filter lists in Adblock Plus and uBlock Origin syntax, by `https://`
+  or `http://` address or absolute path. Default: EasyList, EasyPrivacy, and
+  uBlock Origin's filters, privacy, unbreak and badware lists. The engine fetches an
+  address again when the list expires, after a day if it names no time.
+- `resources`: the scriptlets and stubs that `##+js()` and `$redirect` rules
+  use. Default: Brave's `adblock-resources`.
+- `filters`: your own rules. They apply in every mode.
+- `mode`: `"standard"` (default) blocks other sites' ads and trackers, and a
+  site's own only when a rule is `$important`. `"aggressive"` blocks a site's
+  own too.
+- `sites`: `"off"`, `"standard"` or `"aggressive"` by host, or `*.host` for it
+  and its subdomains. A frame follows the page you see.
+- `electron_apps`: also blocks in Electron apps. Default `false`.
+
+An extension such as uBlock Origin Lite still works beside it, and the first
+to block wins. To keep Ghostery for its consent banners alone, turn off its
+`blockAds` and `blockTrackers` and keep `blockAnnoyances`. See
+[CONTENT-BLOCKING.md](architecture/CONTENT-BLOCKING.md).
+
 
 `output` has two ways to describe displays:
 

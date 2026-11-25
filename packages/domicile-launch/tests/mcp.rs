@@ -1,11 +1,15 @@
 //! Tests for `domicile mcp`: the Model Context Protocol server over stdio.
 
 use std::cell::{Cell, RefCell};
-use std::io;
+use std::io::{self, BufReader, Cursor, Write};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
 use domicile_launch::accessibility::MOST;
-use domicile_launch::mcp::{serve, Grant, Ran};
+use domicile_launch::mcp::{serve, Grant, Ran, LET_GO_AFTER};
 use domicile_protocol::{AgentReach, AgentWindow, WindowKind};
 use serde_json::{json, Value};
 
@@ -27,12 +31,27 @@ fn served_letting(
         .map(|request| format!("{request}\n"))
         .collect();
     let mut output = Vec::new();
-    serve(input.as_bytes(), &mut output, domicile, admit).unwrap();
+    serve(
+        Cursor::new(input.into_bytes()),
+        &mut output,
+        domicile,
+        admit,
+        LET_GO_AFTER,
+    )
+    .unwrap();
     String::from_utf8(output)
         .unwrap()
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
+}
+
+fn refused(stderr: &str) -> io::Result<Ran> {
+    Ok(Ran {
+        success: false,
+        stdout: String::new(),
+        stderr: stderr.to_string(),
+    })
 }
 
 fn printed(stdout: &str) -> io::Result<Ran> {
@@ -107,6 +126,12 @@ fn initialize_names_the_server_and_offers_tools() {
     ] {
         assert!(instructions.contains(tool), "{instructions}");
     }
+    // Agents let go whenever they wait on anything else, so the user's bar
+    // never shows an agent that isn't working.
+    assert!(
+        instructions.contains("Before you wait on anything else"),
+        "{instructions}"
+    );
 }
 
 #[test]
@@ -185,6 +210,7 @@ fn tools_list_describes_each_tool() {
             "app_set_text",
             "ask_to_use_desktop",
             "stop_using_desktop",
+            "batch",
         ]
     );
     for tool in tools {
@@ -524,9 +550,13 @@ fn an_unknown_method_is_method_not_found() {
 #[test]
 fn a_line_that_is_not_json_is_a_parse_error() {
     let mut output = Vec::new();
-    serve("{not json\n".as_bytes(), &mut output, never_run, |_| {
-        panic!("nothing was called")
-    })
+    serve(
+        Cursor::new("{not json\n"),
+        &mut output,
+        never_run,
+        |_| panic!("nothing was called"),
+        LET_GO_AFTER,
+    )
     .unwrap();
     let reply: Value = serde_json::from_slice(&output).unwrap();
     assert_eq!(reply["id"], Value::Null);
@@ -538,6 +568,27 @@ fn arguments_that_are_not_an_object_are_a_tool_error() {
     let replies = served(&[call("list_windows", json!("all"))], never_run);
     assert_eq!(replies[0]["result"]["isError"], true);
 }
+
+/// The DevTools methods the engine sends for `domicile devtools`, as
+/// `kDevToolsMethods` in the engine's `command_protocol.h` lists them.
+const AGENTS_METHODS: [&str; 16] = [
+    "Accessibility.getFullAXTree",
+    "Accessibility.getPartialAXTree",
+    "Accessibility.queryAXTree",
+    "DOM.focus",
+    "DOM.getBoxModel",
+    "DOM.getContentQuads",
+    "DOM.scrollIntoViewIfNeeded",
+    "Input.dispatchKeyEvent",
+    "Input.dispatchMouseEvent",
+    "Input.insertText",
+    "Page.captureScreenshot",
+    "Page.getLayoutMetrics",
+    "Page.getNavigationHistory",
+    "Page.navigate",
+    "Page.navigateToHistoryEntry",
+    "Page.reload",
+];
 
 /// Stands in for `domicile devtools` on browser window `w1`: answers each
 /// method from `answers` and records every run in `ran`.
@@ -552,11 +603,176 @@ fn page<'a>(
         assert_eq!(args[..2], ["devtools", "w1"]);
         let params: Value = serde_json::from_str(&args[3]).unwrap();
         ran.push((args[2].clone(), params));
+        if !AGENTS_METHODS.contains(&args[2].as_str()) {
+            return refused(&format!("\"{}\" is not a method agents get", args[2]));
+        }
         let answer = answers
             .iter()
             .find(|(method, _)| *method == args[2])
             .map_or(json!({}), |(_, answer)| answer.clone());
         printed(&format!("{answer}\n"))
+    }
+}
+
+/// A reply's text parts, a line each.
+fn texts(reply: &Value) -> String {
+    reply["result"]["content"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|part| part["text"].as_str())
+        .map(|text| format!("{text}\n"))
+        .collect()
+}
+
+/// DOM.getContentQuads's answer for an element at 10,20 to 110,40.
+fn quads() -> (&'static str, Value) {
+    (
+        "DOM.getContentQuads",
+        json!({"quads": [[10, 20, 110, 20, 110, 40, 10, 40]]}),
+    )
+}
+
+#[test]
+fn a_batch_runs_its_steps_in_order_and_reads_the_window_once_at_the_end() {
+    let mut ran = Vec::new();
+    let replies = served(
+        &[call(
+            "batch",
+            json!({"steps": [
+                {"tool": "browser_click", "arguments": {"window": "w1", "ref": "12"}},
+                {"tool": "browser_type", "arguments": {"window": "w1", "text": "hi"}},
+                {"tool": "browser_key", "arguments": {"window": "w1", "key": "Enter"}},
+            ]}),
+        )],
+        page(&[quads()], &mut ran),
+    );
+    assert_eq!(replies[0]["result"]["isError"], false, "{replies:?}");
+    let methods: Vec<&str> = ran.iter().map(|(method, _)| method.as_str()).collect();
+    assert_eq!(
+        methods
+            .iter()
+            .filter(|method| **method == "Accessibility.getFullAXTree")
+            .count(),
+        1,
+        "{methods:?}"
+    );
+    assert_eq!(methods.last(), Some(&"Accessibility.getFullAXTree"));
+    assert!(methods.contains(&"Input.insertText"));
+    let text = texts(&replies[0]);
+    assert!(
+        text.starts_with("1. clicked element 12\n2. typed\n3. pressed Enter\nIn w1: "),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_batch_stops_at_the_first_step_that_fails() {
+    let mut ran = Vec::new();
+    let replies = served(
+        &[call(
+            "batch",
+            json!({"steps": [
+                {"tool": "browser_click", "arguments": {"window": "w1", "ref": "12"}},
+                {"tool": "browser_type", "arguments": {"window": "w1"}},
+                {"tool": "browser_key", "arguments": {"window": "w1", "key": "Enter"}},
+            ]}),
+        )],
+        page(&[quads()], &mut ran),
+    );
+    assert_eq!(replies[0]["result"]["isError"], true);
+    let text = texts(&replies[0]);
+    assert!(text.contains("1. clicked element 12"), "{text}");
+    assert!(text.contains("2. browser_type takes text"), "{text}");
+    assert!(text.contains("Step 3 did not run"), "{text}");
+    assert!(!ran.iter().any(|(_, params)| params["type"] == "keyDown"));
+    // What the click changed is still read.
+    assert_eq!(ran.last().unwrap().0, "Accessibility.getFullAXTree");
+}
+
+#[test]
+fn a_batch_reads_a_native_window_once_and_says_which_steps_did_not_run() {
+    let mut ran: Vec<Vec<String>> = Vec::new();
+    let replies = served(
+        &[call(
+            "batch",
+            json!({"steps": [
+                {"tool": "app_click", "arguments": {"window": "n1", "ref": ":1.7/w/1"}},
+                {"tool": "app_focus", "arguments": {"window": "n1", "ref": ":1.7/w/2"}},
+                {"tool": "app_click", "arguments": {"window": "n1"}},
+                {"tool": "app_click", "arguments": {"window": "n1", "ref": ":1.7/w/3"}},
+                {"tool": "app_click", "arguments": {"window": "n1", "ref": ":1.7/w/4"}},
+            ]}),
+        )],
+        |args| {
+            ran.push(args.to_vec());
+            printed("- button \"OK\"\n")
+        },
+    );
+    let reads = ran.iter().filter(|args| args[0] == "accessibility").count();
+    assert_eq!(reads, 1, "{ran:?}");
+    let text = texts(&replies[0]);
+    assert!(text.contains("Steps 4 to 5 did not run."), "{text}");
+    assert!(text.contains("In n1: "), "{text}");
+}
+
+#[test]
+fn a_batch_reads_nothing_again_once_the_user_stops_it() {
+    let stopped = Rc::new(Cell::new(false));
+    let stopping = Rc::clone(&stopped);
+    let mut ran = Vec::new();
+    let answers = [quads()];
+    let mut acting = page(&answers, &mut ran);
+    let replies = served_letting(
+        &[call(
+            "batch",
+            json!({"steps": [
+                {"tool": "browser_click", "arguments": {"window": "w1", "ref": "12"}},
+                {"tool": "browser_key", "arguments": {"window": "w1", "key": "Enter"}},
+            ]}),
+        )],
+        |args| {
+            // The user presses Stop as the agent clicks.
+            stopping.set(true);
+            acting(args)
+        },
+        |_| {
+            let stopped = Rc::clone(&stopped);
+            Ok(Grant {
+                session: 7,
+                reach: Box::new(|| AgentReach::Desk),
+                stopped: Box::new(move || stopped.get()),
+                did: Box::new(|_| {}),
+            })
+        },
+    );
+    drop(acting);
+    assert_eq!(replies[0]["result"]["isError"], true);
+    assert!(!ran
+        .iter()
+        .any(|(method, _)| method == "Accessibility.getFullAXTree"));
+}
+
+#[test]
+fn a_batch_takes_one_to_twenty_steps() {
+    let step = json!({"tool": "status", "arguments": {}});
+    for steps in [json!(null), json!([]), json!(vec![step; 21])] {
+        let replies = served(&[call("batch", json!({"steps": steps}))], never_run);
+        assert_eq!(replies[0]["result"]["isError"], true, "{steps}");
+    }
+}
+
+#[test]
+fn a_batch_holds_no_batch_and_neither_asks_nor_lets_go() {
+    for tool in ["batch", "ask_to_use_desktop", "stop_using_desktop", "nope"] {
+        let replies = served(
+            &[call(
+                "batch",
+                json!({"steps": [{"tool": tool, "arguments": {}}]}),
+            )],
+            never_run,
+        );
+        assert_eq!(replies[0]["result"]["isError"], true, "{tool}");
     }
 }
 
@@ -629,12 +845,19 @@ fn a_browser_click_scrolls_the_element_into_view_and_clicks_its_middle() {
     );
 }
 
-/// Runtime.evaluate's answer for a page at device pixel ratio 2, so a
+/// Page.getLayoutMetrics's answer for a page at device pixel ratio 2, so a
 /// screenshot's pixels are half the page's.
 fn at_two_x() -> (&'static str, Value) {
     (
-        "Runtime.evaluate",
-        json!({"result": {"type": "number", "value": 2}}),
+        "Page.getLayoutMetrics",
+        json!({
+            "layoutViewport": {"pageX": 0, "pageY": 0, "clientWidth": 2561, "clientHeight": 1440},
+            "cssLayoutViewport": {"pageX": 0, "pageY": 0, "clientWidth": 1280, "clientHeight": 720},
+            // Blink floors the CSS layout viewport, but keeps the visual one
+            // unrounded, so only its ratio is the scale.
+            "visualViewport": {"offsetX": 0, "offsetY": 0, "pageX": 0, "pageY": 0, "clientWidth": 2561.0, "clientHeight": 1440.0, "scale": 1, "zoom": 1},
+            "cssVisualViewport": {"offsetX": 0, "offsetY": 0, "pageX": 0, "pageY": 0, "clientWidth": 1280.5, "clientHeight": 720.0, "scale": 1, "zoom": 1}
+        }),
     )
 }
 
@@ -652,10 +875,7 @@ fn a_browser_click_at_a_point_clicks_there_in_the_pages_pixels() {
     assert_eq!(
         ran[..4],
         [
-            (
-                "Runtime.evaluate".to_string(),
-                json!({"expression": "devicePixelRatio", "returnByValue": true})
-            ),
+            ("Page.getLayoutMetrics".to_string(), json!({})),
             (
                 "Input.dispatchMouseEvent".to_string(),
                 json!({"type": "mouseMoved", "x": 100.0, "y": 50.0})
@@ -1248,6 +1468,100 @@ fn stop_using_desktop_lets_go_of_the_grant_and_the_next_call_asks_again() {
     assert!(text.contains("no longer uses"), "{text}");
     assert_eq!(replies[2]["result"]["isError"], false);
     assert_eq!(asked.get(), 2);
+}
+
+/// Sets its flag when dropped, from any thread.
+struct EndsShared(Arc<AtomicBool>);
+
+impl Drop for EndsShared {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn an_agent_that_calls_nothing_for_a_while_lets_go_and_its_next_call_asks_again() {
+    let ended = Arc::new(AtomicBool::new(false));
+    let asked = Rc::new(Cell::new(0));
+    let (ending, asking) = (Arc::clone(&ended), Rc::clone(&asked));
+    let (input, mut calls) = io::pipe().unwrap();
+    let waiting = thread::spawn(move || {
+        writeln!(calls, "{}", call("screenshot", json!({}))).unwrap();
+        while !ended.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(5));
+        }
+        // Its points are still in the screenshot's pixels.
+        writeln!(calls, "{}", call("click", json!({"x": 1, "y": 1}))).unwrap();
+    });
+    let mut ran = Vec::new();
+    let mut output = Vec::new();
+    serve(
+        BufReader::new(input),
+        &mut output,
+        desk(&mut ran),
+        move |_| {
+            asking.set(asking.get() + 1);
+            let ends = EndsShared(Arc::clone(&ending));
+            Ok(Grant {
+                session: 7,
+                reach: Box::new(|| AgentReach::Desk),
+                stopped: Box::new(|| false),
+                did: Box::new(move |_| {
+                    let _ = &ends;
+                }),
+            })
+        },
+        Duration::from_millis(50),
+    )
+    .unwrap();
+    waiting.join().unwrap();
+    assert_eq!(asked.get(), 2);
+    let replies: Vec<Value> = String::from_utf8(output)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(replies[1]["result"]["isError"], false, "{replies:?}");
+}
+
+#[test]
+fn an_agent_the_user_stopped_is_still_told_so_after_a_while() {
+    let stopped = Rc::new(Cell::new(false));
+    let stopping = Rc::clone(&stopped);
+    let (input, mut calls) = io::pipe().unwrap();
+    let pausing = thread::spawn(move || {
+        writeln!(calls, "{}", call("status", json!({}))).unwrap();
+        thread::sleep(Duration::from_millis(500));
+        writeln!(calls, "{}", call("status", json!({}))).unwrap();
+    });
+    let mut asked = 0;
+    let mut output = Vec::new();
+    serve(
+        BufReader::new(input),
+        &mut output,
+        |_| {
+            stopped.set(true);
+            printed("{}")
+        },
+        |_| {
+            asked += 1;
+            let stopped = Rc::clone(&stopping);
+            Ok(Grant {
+                session: 7,
+                reach: Box::new(|| AgentReach::Desk),
+                stopped: Box::new(move || stopped.get()),
+                did: Box::new(|_| {}),
+            })
+        },
+        Duration::from_millis(50),
+    )
+    .unwrap();
+    pausing.join().unwrap();
+    assert_eq!(asked, 1);
+    let last: Value =
+        serde_json::from_slice(output.split(|byte| *byte == b'\n').nth(1).unwrap()).unwrap();
+    let text = last["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("stopped"), "{text}");
 }
 
 #[test]

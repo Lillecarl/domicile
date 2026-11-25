@@ -57,6 +57,19 @@ export type FetchInit = {
   profile?: string;
 };
 
+/**
+ * How much the engine blocks ads and trackers on a site. See
+ * docs/architecture/CONTENT-BLOCKING.md.
+ */
+export enum Blocking {
+  /** Nothing. */
+  Off = "off",
+  /** Other sites' ads and trackers, and the site's own `$important` ones. */
+  Standard = "standard",
+  /** The site's own ads and trackers too. */
+  Aggressive = "aggressive",
+}
+
 /** What {@link Browser.openApp} does when an app window with its id is open. */
 export enum AppReuse {
   /** Opens another window. */
@@ -92,6 +105,13 @@ export type BrowserListeners = {
    * in one.
    */
   profilesChange: () => void;
+  /**
+   * The computer is short of memory, every few seconds while it is. `ids` are
+   * the windows whose pages may be unloaded, the one hidden longest first.
+   * The engine unloads the first one's page, unless the shell listens: the
+   * shell then decides what to `discard`.
+   */
+  memoryShort: (ids: readonly string[]) => void;
 };
 
 export type Browser = {
@@ -139,6 +159,25 @@ export type Browser = {
    */
   pin: (site: string, profile: string) => Promise<void>;
   /**
+   * How much the engine blocks on `url`'s site, as the config's
+   * `content_blocking` or {@link Browser.setSiteBlocking} has it;
+   * {@link Blocking.Off} while the config blocks nothing. Rejects with a
+   * TypeError for an invalid `url`.
+   */
+  blockingFor: (url: string) => Promise<Blocking>;
+  /**
+   * Blocks on `site` as `blocking` says from now on, kept across restarts;
+   * `undefined` gives it the config's again. `site` is a host or `*.host`, as
+   * the config's `content_blocking.sites` keys are. A page loads in the new
+   * mode from its next navigation, so reload it to apply. Rejects with an
+   * `OperationError` for a site the config's `content_blocking.sites` name,
+   * which only the config changes, and while the config blocks nothing.
+   */
+  setSiteBlocking: (
+    site: string,
+    blocking: Blocking | undefined,
+  ) => Promise<void>;
+  /**
    * Switch extension `id` on or off in browser profile `profile`, kept
    * across restarts; it keeps its data while off. Rejects with an
    * `OperationError` for one in the profile's
@@ -182,6 +221,15 @@ export type Browser = {
   clickMatch: (id: string, selector: string) => Promise<boolean>;
   /** Close window `id`. Its page may ask to stay. */
   close: (id: string) => void;
+  /**
+   * Unload window `id`'s page to free its memory. Its history and scroll
+   * stay, and it loads again when a `<webview>` next shows the window; what
+   * was typed into it is not kept. A mounted `<webview>` that is not rendered
+   * (`display: none`) does not show it. A window a `<webview>` shows, an
+   * extension's popup window, a DevTools window, and an app module's or
+   * Electron app's stay loaded.
+   */
+  discard: (id: string) => void;
   /**
    * The user clicked entry `command` (its `id`) of window `id`'s menu bar;
    * its Electron app runs the entry.
@@ -227,10 +275,12 @@ export type BrowserHost = Pick<
   | "browserProfiles"
   | "browserSiteFor"
   | "browserWindows"
+  | "contentBlockingFor"
   | "clickBrowserWindowMatch"
   | "clickBrowserWindowMenu"
   | "closeBrowserWindow"
   | "countBrowserWindowMatches"
+  | "discardBrowserWindow"
   | "fetchWithCookies"
   | "openAppWindow"
   | "openBrowserWindow"
@@ -240,6 +290,7 @@ export type BrowserHost = Pick<
   | "reopenBrowserWindow"
   | "setBrowserProfileExtensionEnabled"
   | "setBrowserWindowState"
+  | "setContentBlockingSite"
 >;
 
 /** What the shell made a window, as `setWindowState` reports it. */
@@ -264,6 +315,8 @@ export const browser = (host: BrowserHost): Browser => {
     answerPopupMenu: (id, command) => {
       host.answerBrowserWindowPopupMenu(id, command);
     },
+    blockingFor: async (url) =>
+      blockingNamed(await host.contentBlockingFor(url)),
     clickMatch: (id, selector) => host.clickBrowserWindowMatch(id, selector),
     clickMenu: (id, command) => {
       host.clickBrowserWindowMenu(id, command);
@@ -273,6 +326,9 @@ export const browser = (host: BrowserHost): Browser => {
     },
     countMatches: (id, selector) =>
       host.countBrowserWindowMatches(id, selector),
+    discard: (id) => {
+      host.discardBrowserWindow(id);
+    },
     fetch: (
       url,
       {
@@ -294,6 +350,10 @@ export const browser = (host: BrowserHost): Browser => {
     on: on<BrowserListeners>({
       change: (listener) =>
         hostEvent(host, "browserwindowschanged", () => listener()),
+      memoryShort: (listener) =>
+        hostEvent(host, "browsermemoryshort", (event) =>
+          listener(JSON.parse(event.data) as string[]),
+        ),
       profilesChange: (listener) =>
         hostEvent(host, "browserprofileschanged", () => listener()),
     }),
@@ -316,6 +376,8 @@ export const browser = (host: BrowserHost): Browser => {
     },
     setExtensionEnabled: (profile, id, enabled) =>
       host.setBrowserProfileExtensionEnabled(profile, id, enabled),
+    setSiteBlocking: (site, blocking) =>
+      host.setContentBlockingSite(site, blocking ?? ""),
     setWindowState: (id, { fullscreen, maximized, minimized }) => {
       host.setBrowserWindowState(id, maximized, minimized, fullscreen);
     },
@@ -330,6 +392,20 @@ export const browser = (host: BrowserHost): Browser => {
       return windowsOf(host.browserWindows);
     },
   };
+};
+
+/** The engine's name for a site's blocking. */
+const blockingNamed = (name: string): Blocking => {
+  switch (name) {
+    case Blocking.Off:
+      return Blocking.Off;
+    case Blocking.Standard:
+      return Blocking.Standard;
+    case Blocking.Aggressive:
+      return Blocking.Aggressive;
+    default:
+      throw new Error(`the engine names an unknown blocking: ${name}`);
+  }
 };
 
 /** `reuse` as the engine's openAppWindow names it. */

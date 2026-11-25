@@ -99,6 +99,9 @@ struct BrowserWindow {
   // laid out, so a shell keeps a window it hides, such as behind a tab, laid
   // out while it is captured.
   bool captured;
+  // Whether the page is unloaded (Discard). It loads when a <webview> shows
+  // it, so a shell that would rather not draws something else.
+  bool discarded;
   // For an Electron app's view (a WebContentsView), the window that holds
   // it; empty for every window. A view is listed right after its window,
   // bottom first, and only while a window holds it. Its app asks for it at
@@ -150,6 +153,9 @@ struct BrowserWindow {
   // `target="_blank"`; empty for none, as for a window the shell opened or
   // one a plain `<webview>`'s page opened.
   string opener;
+  // The requests the engine's content blocking blocked for the page since it
+  // loaded. See docs/architecture/CONTENT-BLOCKING.md.
+  uint32 blocked_requests;
 };
 
 // What OpenApp does when an app window with its `app_id` is already open.
@@ -212,6 +218,15 @@ interface BrowserWindows {
   // close that raced another, and does nothing.
   Close(string id);
 
+  // Unloads window `id`'s page: its renderer goes, and its history and scroll
+  // stay. The page loads again when a <webview> next shows the window; what
+  // was typed into it is not kept. A <webview> that is mounted and not
+  // rendered (`display: none`) does not show it. An unknown window, one a
+  // <webview> shows,
+  // an extension's popup window, a DevTools window, and an app module's or
+  // Electron app's do nothing, logged.
+  Discard(string id);
+
   // The user clicked entry `command` of window `id`'s menu bar; its app runs
   // the entry. A window that closed meanwhile, or has no menu, is a click
   // that raced it and does nothing. A `command` below 1 is a bad message.
@@ -261,6 +276,18 @@ interface BrowserWindows {
   // name, and a profile the desk does not have.
   PinSite(string site, string profile) => (string error);
 
+  // The mode the engine blocks ads and trackers in on `url`'s site: "off",
+  // "standard" or "aggressive"; "off" while the config blocks nothing. See
+  // docs/architecture/CONTENT-BLOCKING.md.
+  ContentBlockingFor(url.mojom.Url url) => (string mode);
+
+  // Blocks on `site` in `mode` from now on, kept across restarts; an empty
+  // mode gives it the config's again. Pages load in it from their next
+  // navigation. Answers with why not, or an empty string: for a site that is
+  // no host or `*.host`, one the config's `content_blocking.sites` name, a
+  // mode that is none of the three, and while the config blocks nothing.
+  SetContentBlockingSite(string site, string mode) => (string error);
+
   // Switches extension `id` on or off in browser profile `profile`, kept
   // across restarts; the profiles are sent again with the change. Answers
   // with why not, or an empty string: for a profile the desk does not have
@@ -281,4 +308,10 @@ interface BrowserWindowsClient {
   ProfilesChanged(array<BrowserProfile> profiles,
                   string default_profile,
                   string default_private_profile);
+
+  // The computer is short of memory, and `windows` are those whose pages may
+  // be unloaded, the one hidden longest first. Asked every few seconds while
+  // it is short. `handled` when the shell decides what goes, by Discard; the
+  // browser unloads the first window's page when no document does.
+  MemoryShort(array<string> windows) => (bool handled);
 };

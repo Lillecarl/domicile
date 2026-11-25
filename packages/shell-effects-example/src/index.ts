@@ -5,11 +5,15 @@
 // - Meta+1 to Meta+4 turn the cube to a workspace.
 // - Meta+Shift+Q closes the focused window, with the effect the bar picks.
 // - Meta+Return opens kitty; the bar's box runs any command.
+// - `domicile send-shell` runs the same commands: `workspace 2`,
+//   `close-effect cloth`, `kill`.
 
+import { bindKeys } from "@domicile-desktop/sdk/bind-keys";
 import type { Shell as ShellModule } from "@domicile-desktop/sdk/shell";
 
 import type { CloseEffect } from "./close";
 import { CLOSE_EFFECTS, playClose } from "./close";
+import { commandHelp, keybindings, parseCommand } from "./commands";
 import type { CubeSide } from "./cube";
 import {
   CUBE_FACE,
@@ -43,20 +47,20 @@ const TURN = 700;
 const TURN_EASING = "cubic-bezier(0.3, 0, 0.2, 1)";
 
 const STYLE = `
-  body { background: #101014; margin: 0; overflow: hidden; }
+  body { background: #c9ced8; margin: 0; overflow: hidden; }
   .scene { block-size: 100vh; inline-size: 100vw; perspective: 1600px; }
   .cube { block-size: 100%; inline-size: 100%; position: relative;
     transform-style: preserve-3d; }
   .face { backface-visibility: hidden; box-sizing: border-box; display: flex;
     gap: 12px; inset: 0; padding: 12px 12px 88px; position: absolute;
-    background: #1c1c22; }
+    background: linear-gradient(160deg, #eef0f4, #c3c9d4); }
   .face app { border-radius: 10px; flex: 1; }
   .bar { align-items: center; border-radius: 18px; bottom: 16px; display: flex; gap: 8px; left: 50%;
     padding: 10px 14px; position: fixed; translate: -50%;
-    background: rgb(255 255 255 / 0.08); color: white; font: 14px sans-serif; }
-  .bar button, .bar input { background: rgb(255 255 255 / 0.12); border: 0;
+    background: rgb(255 255 255 / 0.25); color: #15171c; font: 14px sans-serif; }
+  .bar button, .bar input { background: rgb(0 0 0 / 0.08); border: 0;
     border-radius: 10px; color: inherit; font: inherit; padding: 6px 10px; }
-  .bar button[aria-pressed="true"] { background: rgb(255 255 255 / 0.35); }
+  .bar button[aria-pressed="true"] { background: rgb(0 0 0 / 0.22); }
 `;
 
 export const Shell: ShellModule = (root, domicile) => {
@@ -100,7 +104,7 @@ export const Shell: ShellModule = (root, domicile) => {
   addEventListener("resize", place);
 
   const shade = () => {
-    glass.style.backdropFilter = glassFilter(devicePixelRatio);
+    glass.form.style.backdropFilter = glassFilter(devicePixelRatio);
   };
   shade();
   onScaleChange(shade);
@@ -174,34 +178,31 @@ export const Shell: ShellModule = (root, domicile) => {
   draw();
   domicile.windows.on("change", draw);
 
-  root.append(glass);
+  root.append(glass.form);
 
-  const workspaceChords = Array.from(
-    { length: WORKSPACES },
-    (_, index) => `Meta+${(index + 1).toString()}`,
-  );
-  for (const chord of [...workspaceChords, "Meta+Shift+Q", "Meta+Return"]) {
-    domicile.keyboard.grab(chord);
-  }
-  domicile.keyboard.on("shortcut", ({ chord }) => {
-    switch (chord) {
-      case "Meta+Shift+Q": {
-        const focused = domicile.windows.focused;
-        if (focused !== undefined) {
-          domicile.windows.close(focused);
+  bindKeys(domicile, keybindings(WORKSPACES), {
+    commands: commandHelp(WORKSPACES),
+    onCommand: (words) =>
+      parseCommand(words, WORKSPACES).map((command) => {
+        switch (command.kind) {
+          case "workspace":
+            turn(command.index);
+            break;
+          case "close-effect":
+            glass.choose(command.effect);
+            break;
+          case "kill": {
+            const focused = domicile.windows.focused;
+            if (focused !== undefined) {
+              domicile.windows.close(focused);
+            }
+            break;
+          }
         }
-        break;
-      }
-      case "Meta+Return":
-        domicile.processes.launch(["kitty"]);
-        break;
-      default: {
-        const workspace = workspaceChords.indexOf(chord);
-        if (workspace !== -1) {
-          turn(workspace);
-        }
-      }
-    }
+        return "ran" as const;
+      }),
+    // This shell has one binding mode.
+    onModeChanged: () => undefined,
   });
 };
 
@@ -247,13 +248,19 @@ const bar = (domicile: Domicile, choose: (kind: CloseEffect) => void) => {
     button.textContent = kind;
     button.setAttribute("aria-pressed", String(index === 0));
     button.addEventListener("click", () => {
-      for (const other of buttons) {
-        other.setAttribute("aria-pressed", String(other === button));
-      }
-      choose(kind);
+      pick(kind);
     });
     return button;
   });
+  const pick = (kind: CloseEffect) => {
+    for (const [index, button] of buttons.entries()) {
+      button.setAttribute(
+        "aria-pressed",
+        String(CLOSE_EFFECTS[index] === kind),
+      );
+    }
+    choose(kind);
+  };
   const input = document.createElement("input");
   input.name = "command";
   input.placeholder = "Run an app, like firefox";
@@ -267,7 +274,7 @@ const bar = (domicile: Domicile, choose: (kind: CloseEffect) => void) => {
     }
     form.reset();
   });
-  return form;
+  return { choose: pick, form };
 };
 
 /**

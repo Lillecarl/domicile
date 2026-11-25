@@ -94,14 +94,16 @@ pub(super) fn described(tool: Browser) -> (&'static str, Value, Vec<&'static str
 }
 
 /// `tools/call`'s result for browser tool `tool` with `arguments`. A read
-/// keeps the window's outline in `read`; an act answers what it changed.
-/// Each read notes the title of the page the window shows in `titles`.
+/// keeps the window's outline in `read`; an act answers what it changed,
+/// unless `quiet`, for a batch that reads the window once at its end. Each
+/// read notes the title of the page the window shows in `titles`.
 pub(super) fn called(
     tool: Browser,
     arguments: &Map<String, Value>,
     domicile: &mut impl FnMut(&[String]) -> io::Result<Ran>,
     read: &mut HashMap<String, String>,
     titles: &mut HashMap<String, String>,
+    quiet: bool,
 ) -> io::Result<Value> {
     let window = match string(arguments, "window") {
         Ok(Some(window)) => window,
@@ -126,47 +128,64 @@ pub(super) fn called(
         Ok(answer) => answer,
         Err(why) => return Ok(said(false, why)),
     };
-    match tool {
-        Browser::Snapshot => {
+    if quiet || !acts(tool) {
+        if tool == Browser::Snapshot {
             let outline = answer["content"][0]["text"]
                 .as_str()
                 .expect("a browser tool answers text");
             read.insert(page.window.clone(), outline.to_string());
-            Ok(answer)
         }
-        Browser::Screenshot => Ok(answer),
+        return Ok(answer);
+    }
+    let did = answer["content"][0]["text"]
+        .as_str()
+        .expect("a browser tool answers text");
+    std::thread::sleep(SETTLE);
+    let changes = read_again(&page.window, page.domicile, read, titles)?;
+    Ok(said(true, format!("{did}\n{changes}")))
+}
+
+/// Whether `tool` acts on a window, rather than reading it.
+pub(super) fn acts(tool: Browser) -> bool {
+    match tool {
+        Browser::Snapshot | Browser::Screenshot => false,
         Browser::Click
         | Browser::Drag
         | Browser::Scroll
         | Browser::Type
         | Browser::Key
-        | Browser::Navigate => {
-            let did = answer["content"][0]["text"]
-                .as_str()
-                .expect("a browser tool answers text");
-            std::thread::sleep(SETTLE);
-            page.view = None;
-            let after = match outline_of(&mut page)? {
-                Ok(after) => after,
-                Err(why) => {
-                    return Ok(said(
-                        true,
-                        format!("{did}\nIt could not be read again: {why}"),
-                    ))
-                }
-            };
-            if let Some(title) = page.title.take() {
-                titles.insert(page.window.clone(), title);
-            }
-            let changes = changed(
-                read.get(&page.window).map(String::as_str),
-                &after,
-                "browser_snapshot",
-            );
-            read.insert(page.window.clone(), after);
-            Ok(said(true, format!("{did}\n{changes}")))
-        }
+        | Browser::Navigate => true,
     }
+}
+
+/// What changed in browser window `window` since it was last read, reading
+/// it again into `read`, or that it could not be read again.
+pub(super) fn read_again(
+    window: &str,
+    domicile: &mut impl FnMut(&[String]) -> io::Result<Ran>,
+    read: &mut HashMap<String, String>,
+    titles: &mut HashMap<String, String>,
+) -> io::Result<String> {
+    let mut page = Page {
+        window: window.to_string(),
+        view: None,
+        domicile,
+        title: None,
+    };
+    let after = match outline_of(&mut page)? {
+        Ok(after) => after,
+        Err(why) => return Ok(format!("It could not be read again: {why}")),
+    };
+    if let Some(title) = page.title.take() {
+        titles.insert(window.to_string(), title);
+    }
+    let changes = changed(
+        read.get(window).map(String::as_str),
+        &after,
+        "browser_snapshot",
+    );
+    read.insert(window.to_string(), after);
+    Ok(changes)
 }
 
 /// A browser window's page, or its view `view`, which `domicile devtools`
@@ -205,19 +224,21 @@ impl<D: FnMut(&[String]) -> io::Result<Ran>> Page<'_, D> {
 
     /// How many of a screenshot's pixels make one of the page's CSS pixels:
     /// its device pixel ratio, which Page.captureScreenshot draws at and
-    /// Input.dispatchMouseEvent divides out.
+    /// Input.dispatchMouseEvent divides out. Page.getLayoutMetrics gives the
+    /// visual viewport's width in device pixels and in CSS pixels, unrounded;
+    /// the layout viewport's are rounded.
     fn scale(&mut self) -> io::Result<Result<f64, String>> {
-        let answer = match self.send(
-            "Runtime.evaluate",
-            json!({"expression": "devicePixelRatio", "returnByValue": true}),
-        )? {
+        let answer = match self.send("Page.getLayoutMetrics", json!({}))? {
             Ok(answer) => answer,
             Err(why) => return Ok(Err(why)),
         };
-        Ok(answer["result"]["value"]
-            .as_f64()
-            .filter(|scale| *scale > 0.0)
-            .ok_or_else(|| format!("the page answered no device pixel ratio: {answer}")))
+        let device = answer["visualViewport"]["clientWidth"].as_f64();
+        let css = answer["cssVisualViewport"]["clientWidth"].as_f64();
+        Ok(device
+            .zip(css)
+            .filter(|(device, css)| *device > 0.0 && *css > 0.0)
+            .map(|(device, css)| device / css)
+            .ok_or_else(|| format!("the page answered no viewport width: {answer}")))
     }
 
     /// The views the window holds, as `domicile list-windows` lists them, or

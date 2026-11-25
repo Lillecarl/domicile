@@ -46,7 +46,7 @@ The engine has two channels to the rest of Domicile:
   `found_files`,
   `clipboard`, `seats`, `theme`,
   `windows_theme`, `appearance`, `focus_changed`, `focus_requested`,
-  `displays`, `keymap`, `extensions`, `force_dark`, `spellcheck`, `tray`, `notifications`, `shell_config`,
+  `displays`, `keymap`, `extensions`, `force_dark`, `spellcheck`, `content_blocking`, `tray`, `notifications`, `shell_config`,
   `idle`, `locked`, `system`, `portal_requests`.
 - **Handled in the browser, never sent to the compositor:** `grab_shortcut`,
   `ungrab_shortcut`, `warp_pointer`, `confine_pointer`, and
@@ -125,6 +125,10 @@ The engine has two channels to the rest of Domicile:
   profile takes it (`chrome/browser/domicile/domicile_spellcheck.h`). The
   dictionaries ship in the engine's `dictionaries/` folder and are never
   downloaded (patch 0246).
+- **`content_blocking`** stops in the browser process. It is the desk's
+  `content_blocking`: the lists, resources, rules and modes the engine
+  blocks with, or `enabled` false for none. See
+  [CONTENT-BLOCKING.md](/docs/architecture/CONTENT-BLOCKING.md).
 - **`grab_shortcut`**: the browser holds the grabbed set and matches it in
   `WebViewGuest::PreHandleKeyboardEvent`. The compositor cannot do this: keys
   typed into a `<webview>` guest never reach it. A match comes back as a

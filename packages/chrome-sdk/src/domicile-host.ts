@@ -802,6 +802,13 @@ export type DomicileHostEventMap = {
   extensionpopuprequested: DomicileExtensionPopupEvent;
   extensioncommandschanged: Event;
   /**
+   * The keys of an extension's command were pressed in a page: a MessageEvent
+   * whose `data` is the extension's `id`, the command's `name` and the page's
+   * `profile`, as JSON. The engine runs the command on that page, unless this
+   * has a listener: the shell then does, by runExtensionCommand().
+   */
+  extensioncommandpressed: MessageEvent<string>;
+  /**
    * Fires when one is installed, uninstalled, switched on or off, or
    * reconfigured, or its icon loads.
    */

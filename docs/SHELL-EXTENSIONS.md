@@ -136,34 +136,27 @@ panel.append(view);
 
 ## Commands
 
-`extensions.commands` lists every extension with commands (`chrome.commands`)
-and the keys bound to them, for example Bitwarden's `autofill_login` on
-Ctrl+Shift+L. `extensions.on("commands")` reports changes. The list is that of
-the profile given to `extensions.setProfile`, so set it as focus moves. Match
-the keys yourself in browser windows:
+The engine runs extensions' keys (`chrome.commands`) as Chrome does: a key
+pressed in a `<webview>` runs the command in that page's profile, and the page
+does not get the key. A shell needs no code for it.
+
+To run them yourself, listen. The engine then runs none:
 
 ```js
-import { extensionCommandFor } from "@domicile-desktop/sdk/extension";
-
-view.addEventListener("domicile-guest-keydown", (event) => {
-  const command = extensionCommandFor(domicile.extensions.commands ?? [], event);
-  if (command !== undefined) {
-    domicile.extensions.runCommand(command.id, command.name);
-  }
+domicile.extensions.on("commandPressed", ({ id, name, profile }) => {
+  domicile.extensions.setProfile(profile);
+  domicile.extensions.runCommand(id, name);
 });
 ```
 
-- An extension may have any key, Ctrl+T and Ctrl+L too: Chrome's own shortcuts
-  are not kept from it. Match your shell's keys first.
-- As in Chrome, a page does not get the keys of its profile's extensions:
-  `domicile-guest-keydown` has them at once. Every `<webview>` in a profile
-  needs a listener, or a command's keys pressed in it do nothing.
-- The engine matches the key the layout makes, and `extensionCommandFor` the
-  key's place on a US layout. Where they differ, the keys do nothing.
+- The keys are those Chrome gives an extension, so none is one of Chrome's own
+  shortcuts, such as Ctrl+T. The desk's shortcuts (`grabShortcut`) come first.
+- `extensions.commands` lists every extension with commands, with an action or
+  without, and the keys bound to them. `extensions.on("commands")` reports
+  changes. The list is that of the profile given to `extensions.setProfile`.
 - `runCommand` acts on the active tab, as a key does in Chrome.
-- `_execute_action` clicks the action. For one with a popup the shell also
-  hears `extensions.on("popup")`.
-- An extension with commands and no action is listed too.
+- `_execute_action` clicks the action. For one with a popup the shell hears
+  `extensions.on("popup")`.
 
 ## Menus
 

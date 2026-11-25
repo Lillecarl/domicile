@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/barrier_callback.h"
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -64,6 +65,7 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
+#include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "ui/gfx/codec/png_codec.h"
@@ -283,6 +285,27 @@ class ExtensionTray final
     return true;
   }
 
+  // Asks this tray's shell whether it runs command `name` of `id`, pressed in
+  // a page of `context`. See mojom::ExtensionTrayClient.CommandPressed.
+  void AskToRun(content::BrowserContext* context,
+                const std::string& id,
+                const std::string& name,
+                base::OnceCallback<void(bool)> handled) {
+    BrowserProfileRegistry& registry = BrowserProfileRegistry::Get();
+    if (&registry.HomeOf(*context) != &profile() || !client_.is_bound()) {
+      std::move(handled).Run(false);
+      return;
+    }
+    std::string in = registry.IdOf(*context);
+    if (in.empty()) {
+      in = registry.profiles().default_profile;
+    }
+    // A document that goes first handles nothing.
+    client_->CommandPressed(id, name, in,
+                            mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+                                std::move(handled), false));
+  }
+
  private:
   // Sends `action.onClicked` for extension `id` on `tab`. Called after the
   // grant, so either may be gone by then, as in
@@ -415,22 +438,12 @@ class ExtensionTray final
       return;
     }
     content::WebContents* tab = TabFor(*extension);
-    if (!extensions::Command::IsActionRelatedCommand(name)) {
-      SendCommand(tab == nullptr ? *actions_ : *tab->GetBrowserContext(),
-                  *extension, name, tab);
-      return;
-    }
-    ExtensionAction* action =
-        extensions::ExtensionActionManager::Get(actions_)->GetExtensionAction(
-            *extension);
-    // A disabled action does nothing, as ExtensionActionRunner has it.
-    if (action == nullptr || !action->GetIsVisible(TabIdOf(tab))) {
-      return;
-    }
-    const GURL popup = action->GetPopupUrl(TabIdOf(tab));
-    Activate(id);
-    if (!popup.is_empty()) {
-      RequestPopup(actions_, id, popup);
+    if (tab != nullptr) {
+      RunCommandIn(*tab, id, name);
+    } else if (!extensions::Command::IsActionRelatedCommand(name)) {
+      SendCommand(*actions_, *extension, name, /*tab=*/nullptr);
+    } else {
+      RunActionWithoutTab(*extension);
     }
   }
 
@@ -498,6 +511,22 @@ class ExtensionTray final
   content::WebContents* TabFor(const Extension& extension) {
     return ActiveDeskTab(
         actions_, extensions::util::IsIncognitoEnabled(&extension, actions_));
+  }
+
+  void RunActionWithoutTab(const Extension& extension) {
+    ExtensionAction* action =
+        extensions::ExtensionActionManager::Get(actions_)->GetExtensionAction(
+            extension);
+    // A disabled action does nothing, as ExtensionActionRunner has it.
+    if (action == nullptr ||
+        !action->GetIsVisible(ExtensionAction::kDefaultTabId)) {
+      return;
+    }
+    const GURL popup = action->GetPopupUrl(ExtensionAction::kDefaultTabId);
+    Activate(extension.id());
+    if (!popup.is_empty()) {
+      RequestPopup(actions_, extension.id(), popup);
+    }
   }
 
   // Whether the active tab is a private page `extension` is not allowed in.
@@ -891,6 +920,19 @@ bool RequestExtensionPopup(content::BrowserContext* context,
     sent = tray->RequestPopup(context, id, popup) || sent;
   }
   return sent;
+}
+
+void AskShellToRunCommand(content::BrowserContext* context,
+                          const std::string& id,
+                          const std::string& name,
+                          base::OnceCallback<void(bool)> handled) {
+  const auto answered = base::BarrierCallback<bool>(
+      Trays().size(), base::BindOnce([](std::vector<bool> answers) {
+                        return std::ranges::contains(answers, true);
+                      }).Then(std::move(handled)));
+  for (ExtensionTray* tray : Trays()) {
+    tray->AskToRun(context, id, name, answered);
+  }
 }
 
 }  // namespace domicile

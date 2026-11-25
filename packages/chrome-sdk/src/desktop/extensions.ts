@@ -17,12 +17,14 @@ import type {
   ExtensionPopup,
   ExtensionSettings,
   InstalledExtension,
+  PressedCommand,
 } from "../extension";
 import {
   extensionCommandsSchema,
   extensionPopupSchema,
   extensionSchema,
   installedExtensionSchema,
+  pressedCommandSchema,
 } from "../extension";
 import { memoizeLast } from "./memoize-last";
 import type { On } from "./subscribe";
@@ -30,6 +32,12 @@ import { hostEvent, on } from "./subscribe";
 
 export type ExtensionsListeners = {
   change: () => void;
+  /**
+   * The keys of an extension's command were pressed in a page. The engine runs
+   * the command on that page, unless the shell listens: the shell then does,
+   * with `runCommand`.
+   */
+  commandPressed: (command: PressedCommand) => void;
   /** `commands` changed. */
   commands: () => void;
   /** `installed` changed. */
@@ -144,6 +152,10 @@ export const extensions = (host: ExtensionsHost): Extensions => {
     on: on<ExtensionsListeners>({
       change: (listener) =>
         hostEvent(host, "extensionschanged", () => listener()),
+      commandPressed: (listener) =>
+        hostEvent(host, "extensioncommandpressed", (event) =>
+          listener(pressedCommandSchema.parse(JSON.parse(event.data))),
+        ),
       commands: (listener) =>
         hostEvent(host, "extensioncommandschanged", () => listener()),
       installed: (listener) =>

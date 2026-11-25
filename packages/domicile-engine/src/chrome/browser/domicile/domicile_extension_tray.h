@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/functional/callback_forward.h"
 #include "components/domicile/mojom/extension_tray.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 
@@ -34,6 +35,14 @@ void BindExtensionTray(content::RenderFrameHost* frame,
 bool RequestExtensionPopup(content::BrowserContext* context,
                            const std::string& id,
                            const GURL& popup);
+
+// Asks every shell document of `context` with a tray client whether its shell
+// runs command `name` of extension `id`, pressed in a page of `context`.
+// `handled` hears true when one does.
+void AskShellToRunCommand(content::BrowserContext* context,
+                          const std::string& id,
+                          const std::string& name,
+                          base::OnceCallback<void(bool)> handled);
 
 }  // namespace domicile
 

@@ -10,6 +10,7 @@
 
 #include "chrome/browser/extensions/menu_manager.h"
 #include "components/domicile/browser/extension_menu.h"
+#include "extensions/common/extension_id.h"
 
 namespace content {
 class BrowserContext;
@@ -76,7 +77,15 @@ void SendCommand(content::BrowserContext& context,
                  const std::string& command,
                  content::WebContents* tab);
 
-// Has guests ask here for the extension items of their context menus.
+// Runs command `name` of extension `id` on `page`'s tab, as its keys do in
+// Chrome. The action's own command clicks the action, or asks the shell for its
+// popup.
+void RunCommandIn(content::WebContents& page,
+                  const extensions::ExtensionId& id,
+                  const std::string& name);
+
+// Has guests ask here for the extension items of their context menus and for
+// the commands their keys run.
 void UseChromeForGuestExtensionMenus();
 
 }  // namespace domicile

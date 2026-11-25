@@ -280,25 +280,28 @@ interface DomicileExtension {
   panel), but ask for no user gesture, which the desk's clicks lack. Phantom
   opens in its side panel by default from 26.37.
 
-- **Commands** (`chrome.commands`). The shell owns the keyboard, so it matches
-  the keys and the browser runs the command:
+- **Commands** (`chrome.commands`). The browser matches the keys in a page and
+  runs the command there, unless the shell listens for
+  `extensioncommandpressed`:
 
   ```ts
   // DomicileHost
   readonly extensionCommands: string | null; // JSON, with extensioncommandschanged
+  onextensioncommandpressed: EventHandler; // data: JSON of id, name, profile
   runExtensionCommand(id: string, name: string): void;
   ```
 
   - `extensionCommands` has every extension with commands, with an action or
     without, each with the keys `CommandService` assigned at install
     (`CommandsOf` in `domicile_extension_menus.cc`). It is JSON, as a window's
-    `menu` is, so it needs no interface per row. `CommandService` keeps Chrome's
-    own accelerators from extensions, and a patch lifts that: a desk has none.
+    `menu` is, so it needs no interface per row.
   - `runExtensionCommand` does what `ExtensionKeybindingRegistry` does for a
     key: it grants `activeTab` on the active tab, then sends
     `commands.onCommand` with that tab.
-  - A command's keys go to the shell (`domicile-guest-keydown`) and never to the
-    page. Chrome's registry on the shell's window binds none (patch 0280).
+  - A command's keys never go to the page. `PreHandleKeyboardEvent` finds the
+    command in the page's profile and asks every shell document; when none
+    listens, the browser runs it on that page, if the page is still there.
+    Chrome's registry on the shell's window binds none (patch 0279).
   - `_execute_action` is `activateExtension`, and asks the shell for the popup
     as `action.openPopup()` does.
   - Over a private page the extension is not allowed in, nothing runs.
@@ -480,8 +483,8 @@ relative to the source window and passes `NaN` without them.
 
 - Changing a command's keys: a desk has no chrome://extensions/shortcuts. The
   keys are those Chrome assigned at install.
-- Global commands: `chrome.commands` says which are, and the shell runs a
-  command's keys in browser windows only. Grab them with `grabShortcut` if
+- Global commands: `chrome.commands` says which are, and the browser runs
+  a command's keys in pages only. Grab them with `grabShortcut` if
   needed.
 - `chrome.contextMenus` on the shell's own page or a native window.
 - Install, permission and "extension added" bubbles (see Installing).

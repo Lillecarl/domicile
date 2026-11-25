@@ -6,15 +6,18 @@
 //
 //   GUARD shell-loaded             this module ran
 //   GUARD focused at=…             a page took focus, and the tray its profile
-//   GUARD key at=… command=…       a page's `domicile-guest-keydown`, with the
-//                                  command of the `?expect=` extension bound to
-//                                  Ctrl+Shift+L, or `none`
+//   GUARD taking commands          it listens for `extensioncommandpressed`
+//                                  now: the default page took focus again
+//   GUARD pressed name=… profile=… it was given the `?expect=` extension's
+//                                  command
 //   GUARD badge at=… text=…        the extension's badge in that profile, which
 //                                  says what its service worker heard
 //   GUARD menu at=… items=…        a page's context menu, and the labels of the
 //                                  items extensions add to it
+//   GUARD ran a stale item         it ran an item of a page that was gone
 //
-// It runs each command a key is bound to, and the first item of a menu.
+// It runs no command. It runs the first item of the first menu, and of the
+// second once its page has navigated.
 //
 // Everything is inside `HostShell`, which the document Domicile writes calls once
 // the module has loaded.
@@ -46,6 +49,31 @@ export const HostShell = (_root, desktop) => {
     }
   });
 
+  let defaultFocuses = 0;
+  const takeCommands = () => {
+    host.addEventListener("extensioncommandpressed", ({ data }) => {
+      const { id, name, profile } = JSON.parse(data);
+      if (id === expected) {
+        say(`pressed name=${name} profile=${profile}`);
+      }
+    });
+    say("taking commands");
+  };
+
+  let menus = 0;
+  const runItem = (view, event, item) => {
+    menus += 1;
+    if (menus === 1) {
+      event.runExtensionItem(item.id);
+    } else {
+      view.setAttribute("src", `${src}?at=default&again=1`);
+      setTimeout(() => {
+        event.runExtensionItem(item.id);
+        say("ran a stale item");
+      }, 3000);
+    }
+  };
+
   const pages = [
     { at: "default", place: (_view) => undefined },
     {
@@ -75,25 +103,16 @@ export const HostShell = (_root, desktop) => {
       view.focus();
       host.setExtensionsProfile(at);
       say(`focused at=${at}`);
-    });
-    view.addEventListener("domicile-guest-keydown", (event) => {
-      const listed = JSON.parse(host.extensionCommands ?? "[]").find(
-        ({ id }) => id === expected,
-      );
-      const pressed =
-        event.ctrlKey && event.shiftKey && event.code === "KeyL"
-          ? listed?.commands.find(({ keys }) => keys === "Ctrl+Shift+L")
-          : undefined;
-      say(`key at=${at} command=${pressed?.name ?? "none"}`);
-      if (pressed !== undefined) {
-        host.runExtensionCommand(expected, pressed.name);
+      defaultFocuses += at === "default" ? 1 : 0;
+      if (at === "default" && defaultFocuses === 2) {
+        takeCommands();
       }
     });
     view.addEventListener("domicile-context-menu", (event) => {
       const items = JSON.parse(event.extensionItems);
       say(`menu at=${at} items=${items.map(({ label }) => label).join(",")}.`);
       if (items.length > 0) {
-        event.runExtensionItem(items[0].id);
+        runItem(view, event, items[0]);
       }
     });
     document.body.append(view);

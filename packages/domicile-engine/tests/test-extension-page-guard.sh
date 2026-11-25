@@ -61,35 +61,37 @@ says() { # $1 MEASURED, $2 what the sentence must contain
 }
 
 expect "every step done passes" "pass" \
-  "$(verdict "page 1 1 1 0 1 1 0 1 0 1 1 1")"
+  "$(verdict "page 1 1 0 1 0 1 1 1 2 1 1 1")"
 expect "no list sent blames the stand-in's connection" "yes" \
   "$(says "page 0 0 0 0 0 0 0 0 0 0 0 0" "never sent")"
 expect "a page not loaded is named" "yes" \
   "$(says "page 1 0 0 0 0 0 0 0 0 0 0 0" "never loaded")"
-expect "a key not named blames CommandPressed" "yes" \
-  "$(says "page 1 1 0 0 0 0 0 0 0 0 0 0" "CommandPressed")"
-expect "a key the page got too is the failure" "yes" \
-  "$(says "page 1 1 1 1 1 1 0 1 0 1 1 1" "THE DEFAULT PAGE GOT")"
-expect "a command not heard blames RunCommand" "yes" \
-  "$(says "page 1 1 1 0 0 1 0 1 0 1 1 1" "RunCommand")"
-expect "a work key not named blames the profile" "yes" \
-  "$(says "page 1 1 1 0 1 0 1 0 0 1 1 1" "the page's own profile")"
+expect "a key the page got is the failure" "yes" \
+  "$(says "page 1 1 1 0 0 1 1 1 1 1 1 1" "THE DEFAULT PAGE GOT")"
+expect "a command not run blames RunCommandIn" "yes" \
+  "$(says "page 1 1 0 0 0 1 1 1 1 1 1 1" "RunCommandIn")"
 expect "a key the work page got is the failure" "yes" \
-  "$(says "page 1 1 1 0 1 1 1 1 0 1 1 1" "the work page got")"
-expect "a command run in another profile blames setExtensionsProfile" "yes" \
-  "$(says "page 1 1 1 0 1 1 0 0 0 1 1 1" "setExtensionsProfile")"
-expect "a private key named to the shell is the failure" "yes" \
-  "$(says "page 1 1 1 0 1 1 0 1 1 0 1 1" "private page named")"
+  "$(says "page 1 1 0 1 1 0 1 1 1 1 1 1" "the work page got")"
+expect "a command run in another profile is named" "yes" \
+  "$(says "page 1 1 0 1 0 0 1 1 2 1 1 1" "the default profile's copy")"
 expect "a private key the page never got is the failure" "yes" \
-  "$(says "page 1 1 1 0 1 1 0 1 0 0 1 1" "never got the key")"
+  "$(says "page 1 1 0 1 0 1 0 1 2 1 1 1" "never got the key")"
+expect "a command not named to a listening shell is the failure" "yes" \
+  "$(says "page 1 1 0 1 0 1 1 0 3 1 1 1" "never named the command")"
+expect "a command run under a listening shell is the failure" "yes" \
+  "$(says "page 1 1 0 1 0 1 1 1 3 1 1 1" "the shell listened for")"
+expect "another number of runs fails" "yes" \
+  "$(says "page 1 1 0 1 0 1 1 1 4 1 1 1" "another number")"
 expect "no item blames PageMenuOf" "yes" \
-  "$(says "page 1 1 1 0 1 1 0 1 0 1 0 0" "PageMenuOf")"
+  "$(says "page 1 1 0 1 0 1 1 1 2 0 0 0" "PageMenuOf")"
 expect "an item not run blames RunContextMenuExtensionItem" "yes" \
-  "$(says "page 1 1 1 0 1 1 0 1 0 1 1 0" "RunContextMenuExtensionItem")"
+  "$(says "page 1 1 0 1 0 1 1 1 2 1 0 0" "runExtensionItem()")"
+expect "a stale item run is the failure" "yes" \
+  "$(says "page 1 1 0 1 0 1 1 1 2 1 1 0" "A PAGE THAT IS GONE")"
 expect "the sharp control passes" "pass" "$(verdict "control 1 1 1 0 1")"
 expect "a control whose page heard no key fails" "fail" \
   "$(verdict "control 1 1 0 0 1")"
-expect "a control whose key named a command fails" "fail" \
+expect "a control whose key ran a command fails" "fail" \
   "$(verdict "control 1 1 1 1 1")"
 expect "a control whose menu had items fails" "fail" \
   "$(verdict "control 1 1 1 0 0")"

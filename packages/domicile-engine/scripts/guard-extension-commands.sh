@@ -48,7 +48,7 @@ NEGATIVE="${NEGATIVE:-0}"
 # `packages/domicile-engine/tests/test-extension-commands-guard.sh` holds the
 # id and the keys to it.
 readonly ID="cobncddhpfhclknjbapgflpohofecjhg"
-readonly FILL="Ctrl+Shift+L"
+readonly FILL="Ctrl+Shift+Y"
 readonly ACTION="Ctrl+Shift+U"
 
 EXTENSION="$SCRIPTS/guard-extension-commands-extension"
@@ -152,7 +152,7 @@ grep -qF "sent the extensions" "$SOCKET_LOG" 2>/dev/null && SENT=1
 HEARD=$(saw '"GUARD commands count=')
 if [ "$NEGATIVE" = "1" ]; then
   # Any row for the fixture at all: an empty list must leave none.
-  MEASURED="control $SENT $HEARD $(saw '"GUARD row ') $(saw '"GUARD none"') $(saw 'domicile: the shell ran command')"
+  MEASURED="control $SENT $HEARD $(saw '"GUARD row ') $(saw '"GUARD none"') $(saw 'domicile: ran command')"
 else
   MEASURED="commands $SENT $HEARD $(saw "\"GUARD row fill=$FILL action=$ACTION\"") $(saw '"GUARD ran badge=c:fill"') $(saw '"GUARD menu type=checkbox label=Remember"') $(saw '"GUARD clicked badge=m:remember:true"') $(saw "\"GUARD popup url=chrome-extension://$ID/popup.html\"")"
 fi

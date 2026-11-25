@@ -2219,6 +2219,28 @@ void DomicileHost::CommandsChanged(const String& commands) {
       *Event::Create(domicile_event_names::Extensioncommandschanged()));
 }
 
+void DomicileHost::CommandPressed(const String& id,
+                                  const String& name,
+                                  const String& profile,
+                                  CommandPressedCallback handled) {
+  const AtomicString& type = domicile_event_names::Extensioncommandpressed();
+  if (!HasEventListeners(type)) {
+    std::move(handled).Run(false);
+    return;
+  }
+  auto command = std::make_unique<JSONObject>();
+  command->SetString("id", id);
+  command->SetString("name", name);
+  command->SetString("profile", profile);
+  MessageEvent* event = MessageEvent::Create();
+  event->initMessageEvent(type, /*bubbles=*/false, /*cancelable=*/false,
+                          command->ToJSONString(), /*origin=*/nullptr,
+                          /*last_event_id=*/String(), /*source=*/nullptr,
+                          /*ports=*/nullptr);
+  DispatchEvent(*event);
+  std::move(handled).Run(true);
+}
+
 // Every installed extension, wholesale, as `extensions` is.
 void DomicileHost::InstalledChanged(
     Vector<domicile::mojom::blink::InstalledExtensionPtr> extensions) {

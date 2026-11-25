@@ -148,6 +148,11 @@ interface ExtensionTrayClient {
   // profile whose actions the tray shows, with an action or without.
   CommandsChanged(string commands);
 
+  // The keys of command `name` of extension `id` were pressed in a page of
+  // browser profile `profile`. `handled` when the shell runs it, by RunCommand;
+  // the browser runs it on that page when no document does.
+  CommandPressed(string id, string name, string profile) => (bool handled);
+
   // Every installed extension, on SetClient and on every change: one
   // installed, uninstalled, switched on or off, or reconfigured.
   InstalledChanged(array<InstalledExtension> extensions);

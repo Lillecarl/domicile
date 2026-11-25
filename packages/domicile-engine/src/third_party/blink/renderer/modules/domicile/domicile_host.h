@@ -553,6 +553,10 @@ class MODULES_EXPORT DomicileHost final
   void ExtensionsChanged(
       Vector<domicile::mojom::blink::TrayExtensionPtr> extensions) override;
   void CommandsChanged(const String& commands) override;
+  void CommandPressed(const String& id,
+                      const String& name,
+                      const String& profile,
+                      CommandPressedCallback handled) override;
   void InstalledChanged(
       Vector<domicile::mojom::blink::InstalledExtensionPtr> extensions)
       override;

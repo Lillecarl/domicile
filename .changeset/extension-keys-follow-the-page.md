@@ -3,4 +3,4 @@
 "domicile": patch
 ---
 
-An extension's key runs the extension in the focused page's browser profile, and the page does not get it. The shell runs it: Chrome's own handler on the shell's window binds no extension keys.
+An extension's key pressed in a page runs its command in that page's browser profile, as in Chrome, and the page does not get it. A shell that listens for `extensioncommandpressed` runs it instead.

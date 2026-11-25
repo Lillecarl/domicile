@@ -88,6 +88,24 @@ describe("extensions", () => {
     });
   });
 
+  it("says which command's keys were pressed in a page", () => {
+    const fake = new FakeDomicileHost();
+    const pressed = { id: action.id, name: "fill", profile: "work" };
+    const heard: unknown[] = [];
+    const stop = desktop(fake.host).extensions.on(
+      "commandPressed",
+      (command) => {
+        heard.push(command);
+      },
+    );
+
+    fake.dispatch("extensioncommandpressed", { data: JSON.stringify(pressed) });
+    stop();
+    fake.dispatch("extensioncommandpressed", { data: JSON.stringify(pressed) });
+
+    expect(heard).toStrictEqual([pressed]);
+  });
+
   it("lists each extension's commands, with undefined for no keys", () => {
     const fake = new FakeDomicileHost();
     expect(desktop(fake.host).extensions.commands).toBeUndefined();

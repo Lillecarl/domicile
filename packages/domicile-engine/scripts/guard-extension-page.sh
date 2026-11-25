@@ -6,9 +6,10 @@
 #
 # WHY THIS EXISTS. guard-extension-commands.sh has the shell run a command
 # itself. Here the keys are pressed in a page: the browser must find the
-# command in the page's own profile, keep the key from the page, and send it
-# to the shell (WebViewGuest::PreHandleKeyboardEvent, CommandPressed).
-# And the items of a page's own context menu need a right click in a page.
+# command in the page's own profile, keep the key from the page, and run the
+# command there, unless the shell listens for it
+# (WebViewGuest::PreHandleKeyboardEvent, CommandPressed). And the items of a
+# page's own context menu need a right click in a page.
 #
 # Headless, with guard-extension-commands.sh's fixture, whose service worker
 # puts what it hears on its badge, and guard-extension-installer.sh's stand-in
@@ -16,17 +17,19 @@
 # shows one page in each, side by side. A click focuses a page, and the keys
 # go to the page with focus.
 #
-# WHAT IT ASSERTS. Ctrl+Shift+L, the fixture's, in the default profile's page:
-# the shell hears `domicile-guest-keydown` with the fixture's keys, the
-# page, which cancels every key, hears nothing, and running the command reaches
-# that profile's service worker. The same in the work profile's. In the private
-# profile's page, where the fixture is off, the page hears the key. A right
-# click in the default's carries the fixture's page item, and running it
-# reaches its service worker.
+# WHAT IT ASSERTS. Ctrl+Shift+Y, the fixture's, in the default profile's page,
+# with a shell that does nothing about extensions' keys: the command reaches
+# that profile's service worker, and the page, which cancels every key, hears
+# nothing. The same in the work profile's. In the private profile's page, where
+# the fixture is off, the page hears the key. Then the shell listens for
+# `extensioncommandpressed` and runs nothing: the key in the default page names
+# the command to it, and the command does not run. A right click in the
+# default's carries the fixture's page item, and running it reaches its service
+# worker. An item run after its page navigated away does nothing.
 #
 # HOW IT CAN FAIL. NEGATIVE=1 runs the control: no extension. The default
-# profile's page must hear the key and the shell no command, and the menu must
-# have no items.
+# profile's page must hear the key, no command may run, and the menu must have
+# no items.
 set -u
 
 SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
@@ -52,14 +55,14 @@ NEGATIVE="${NEGATIVE:-0}"
 # The fixture's id. `packages/domicile-engine/tests/test-extension-page-guard.sh`
 # holds it, and the keys below, to the commands guard's.
 readonly ID="cobncddhpfhclknjbapgflpohofecjhg"
-readonly FILL="Ctrl+Shift+L"
+readonly FILL="Ctrl+Shift+Y"
 readonly ITEM="Page item"
 
 # FILL as a key event.
-KEY_EVDEV=38
-KEY_CODE="KeyL"
-KEY_KEY="L"
-KEY_VKEY=76
+KEY_EVDEV=21
+KEY_CODE="KeyY"
+KEY_KEY="Y"
+KEY_VKEY=89
 
 EXTENSION="$SCRIPTS/guard-extension-commands-extension"
 
@@ -217,11 +220,21 @@ if [ "$NEGATIVE" != "1" ]; then
   press
   focus 2 private
   press
+  click 0 left
+  wait_for_line 40 '"GUARD taking commands"' "$ENGINE_LOG" ||
+    echo "the shell never listened for commands" >&2
+  press
 fi
 click 0 right
 wait_for_line 40 '"GUARD menu at=default' "$ENGINE_LOG" ||
   echo "the shell never got the page's context menu" >&2
 sleep 3
+if [ "$NEGATIVE" != "1" ]; then
+  click 0 right
+  wait_for_line 40 '"GUARD ran a stale item"' "$ENGINE_LOG" ||
+    echo "the shell never ran the second menu's item" >&2
+  sleep 3
+fi
 
 # THE READINGS. The shell's are anchored on the quote Chromium puts after a
 # console message -- see guard-windows-state.sh for why. The pages' are the
@@ -244,12 +257,27 @@ loaded() {
   echo 1
 }
 
+# How many times the command ran.
+ran() {
+  grep -cF "domicile: ran command fill of $ID" "$ENGINE_LOG" 2>/dev/null || true
+}
+# The page the second menu's item was for went, and the item was dropped.
+stale() {
+  if [ "$(grep -cxF "GUARD page-loaded at=default" "$HTTP_LOG")" = "2" ] &&
+    [ "$(grep -cF "domicile: the shell ran a menu item of $ID" "$ENGINE_LOG")" = "1" ] &&
+    [ "$(saw "dropping the extension item")" = "1" ]; then
+    echo 1
+  else
+    echo 0
+  fi
+}
+
 SENT=0
 grep -qF "sent the extensions" "$SOCKET_LOG" 2>/dev/null && SENT=1
 if [ "$NEGATIVE" = "1" ]; then
-  MEASURED="control $SENT $(loaded) $(heard default) $(saw '"GUARD key at=default command=fill"') $(saw '"GUARD menu at=default items=."')"
+  MEASURED="control $SENT $(loaded) $(heard default) $(ran) $(saw '"GUARD menu at=default items=."')"
 else
-  MEASURED="page $SENT $(loaded) $(saw '"GUARD key at=default command=fill"') $(heard default) $(saw '"GUARD badge at=default text=c:fill"') $(saw '"GUARD key at=work command=fill"') $(heard work) $(saw '"GUARD badge at=work text=c:fill"') $(saw '"GUARD key at=private command=fill"') $(heard private) $(saw "\"GUARD menu at=default items=$ITEM.\"") $(saw '"GUARD badge at=default text=m:page:')"
+  MEASURED="page $SENT $(loaded) $(heard default) $(saw '"GUARD badge at=default text=c:fill"') $(heard work) $(saw '"GUARD badge at=work text=c:fill"') $(heard private) $(saw '"GUARD pressed name=fill profile=default"') $(ran) $(saw "\"GUARD menu at=default items=$ITEM.\"") $(saw '"GUARD badge at=default text=m:page:') $(stale)"
 fi
 
 echo
@@ -261,16 +289,18 @@ grep -F 'GUARD ' "$HTTP_LOG" || true
 
 # WHICH END TO BLAME. `packages/domicile-engine/tests/test-extension-page-guard.sh`
 # runs this block directly. MEASURED is "page <sent> <loaded>" then, for the
-# default page and the work page, "<named to the shell> <heard by the page>
-# <ran>", then for the private page "<named> <heard>", then "<menu> <clicked>";
-# or "control <sent> <loaded> <heard> <named> <empty menu>".
+# default page and the work page, "<heard by the page> <ran>", then "<heard by
+# the private page> <named to the listening shell> <times it ran> <menu>
+# <clicked> <stale item dropped>"; or "control <sent> <loaded> <heard> <times it
+# ran> <empty menu>".
 FAILURE=""
 PASSED=""
 case "$MEASURED" in
-"page 1 1 1 0 1 1 0 1 0 1 1 1")
-  PASSED="the fixture's key in a page of each profile named its command to \
-the shell and not to the page, and ran it in that profile; a private page \
-without the fixture kept the key; and the fixture's item in a page's menu ran"
+"page 1 1 0 1 0 1 1 1 2 1 1 1")
+  PASSED="the fixture's key in a page of each profile ran its command in that \
+profile and did not reach the page; a private page without the fixture kept \
+the key; a listening shell was given the command in its place; the fixture's \
+item in a page's menu ran, and not once its page was gone"
   ;;
 "page 0 "* | "control 0 "*)
   FAILURE="the list was never sent: the browser did not connect to the \
@@ -280,63 +310,65 @@ compositor stand-in, so nothing was installed"
   FAILURE="a page never loaded, so its key answers nothing. The lines above \
 say which profile's"
   ;;
-"page 1 1 0 "*)
-  FAILURE="the key in the default page never named the fixture's command to \
-the shell: CommandPressed, PreHandleKeyboardEvent or the element's \
-domicile-guest-keydown. With no GUARD focused above, the harness focused no page"
+"page 1 1 1 "*)
+  FAILURE="THE DEFAULT PAGE GOT THE EXTENSION'S KEY: CommandPressed did not \
+find its command, or PreHandleKeyboardEvent did not handle it"
   ;;
-"page 1 1 1 1 "*)
-  FAILURE="THE DEFAULT PAGE GOT THE EXTENSION'S KEY: PreHandleKeyboardEvent \
-named it to the shell and did not handle it"
+"page 1 1 0 0 "*)
+  FAILURE="the key in the default page did not reach the fixture's \
+commands.onCommand: CommandPressed, AskShellToRunCommand or RunCommandIn. With \
+no GUARD focused above, the harness focused no page"
   ;;
-"page 1 1 1 0 0 "*)
-  FAILURE="the command the default page's key named did not reach the \
-fixture's commands.onCommand: RunCommand, or SendCommand's event"
+"page 1 1 0 1 1 "*)
+  FAILURE="the work page got the extension's key: CommandPressed did not look \
+in the page's own profile, or the fixture is not in it"
   ;;
-"page 1 1 1 0 1 0 "*)
-  FAILURE="the key in the work page never named the fixture's command: \
-CommandPressed did not look in the page's own profile, or the fixture is not \
-in it"
+"page 1 1 0 1 0 0 "*)
+  FAILURE="the command ran in no work profile's service worker: RunCommandIn \
+ran the default profile's copy"
   ;;
-"page 1 1 1 0 1 1 1 "*)
-  FAILURE="the work page got the extension's key"
-  ;;
-"page 1 1 1 0 1 1 0 0 "*)
-  FAILURE="the command ran in no work profile's service worker: the tray did \
-not follow setExtensionsProfile, or ran the default profile's copy"
-  ;;
-"page 1 1 1 0 1 1 0 1 1 "*)
-  FAILURE="the key in the private page named the fixture's command, though \
-the private profile does not have it"
-  ;;
-"page 1 1 1 0 1 1 0 1 0 0 "*)
+"page 1 1 0 1 0 1 0 "*)
   FAILURE="the private page never got the key, and no extension there has it: \
 CommandPressed takes a key that runs nothing"
   ;;
-"page 1 1 1 0 1 1 0 1 0 1 0 "*)
+"page 1 1 0 1 0 1 1 0 "*)
+  FAILURE="the shell listened, and the key never named the command to it: \
+DomicileHost::CommandPressed, or the tray's"
+  ;;
+"page 1 1 0 1 0 1 1 1 3 "*)
+  FAILURE="the engine ran a command the shell listened for"
+  ;;
+"page 1 1 0 1 0 1 1 1 2 0 "*)
   FAILURE="the right click's menu did not carry the fixture's page item and \
 nothing else: PageMenuOf, or the event's extensionItems"
   ;;
-"page 1 1 1 0 1 1 0 1 0 1 1 0")
+"page 1 1 0 1 0 1 1 1 2 1 0 "*)
   FAILURE="runExtensionItem() did not reach the fixture's \
 contextMenus.onClicked: RunContextMenuExtensionItem, or PageMenu::Run"
   ;;
+"page 1 1 0 1 0 1 1 1 2 1 1 0")
+  FAILURE="AN ITEM OF A PAGE THAT IS GONE RAN, or was never run: \
+RunContextMenuExtensionItem"
+  ;;
+"page 1 1 0 1 0 1 1 1 "*)
+  FAILURE="the command ran another number of times than the two keys no shell \
+took"
+  ;;
 "control 1 1 1 0 1")
   PASSED="the control is sharp: with no extension the page heard the key, \
-the shell heard no command, and the page's menu had no items"
+no command ran, and the page's menu had no items"
   ;;
 "control 1 1 0 "*)
   FAILURE="the control's page never heard the key, so a page that hears \
 nothing in the claim answers nothing. With no GUARD focused above, the harness \
 focused no page"
   ;;
-"control 1 1 1 1 "*)
-  FAILURE="the control's key named a command of an extension that is not \
-installed"
-  ;;
 "control 1 1 1 0 0")
   FAILURE="the control's menu never arrived, or had items of an extension \
 that is not installed"
+  ;;
+"control 1 1 1 "*)
+  FAILURE="the control ran a command of an extension that is not installed"
   ;;
 *)
   FAILURE="there is no measurement here of any kind ($MEASURED) -- the run did \

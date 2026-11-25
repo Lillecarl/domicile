@@ -1,11 +1,11 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: lillecarl <carl.andersson@dynamist.se>
 Date: Tue, 24 Nov 2026 00:00:00 +0000
-Subject: [PATCH] domicile: the shell runs extensions' keys
+Subject: [PATCH] domicile: a webview runs extensions' keys
 
 The shell's window is in one profile, so Chrome's registry there would run that
 profile's copy of an extension over every profile's pages, on the shell's own
-tab. The shell runs the copy in the focused page's profile instead.
+tab. The <webview> the keys are pressed in runs the copy in its profile instead.
 ---
  .../ui/views/extensions/extension_keybinding_registry_views.cc | 10 +++-------
  1 file changed, 3 insertions(+), 7 deletions(-)
@@ -25,7 +25,7 @@ diff --git a/chrome/browser/ui/views/extensions/extension_keybinding_registry_vi
 -    return false;
 -  }
 -  return true;
-+  // A desk's shell matches the keys, and runs a command in the profile of the
++  // A <webview> matches the keys, and runs a command in the profile of the
 +  // page it was pressed in.
 +  commands->clear();
 +  return false;

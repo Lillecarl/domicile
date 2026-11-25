@@ -41,6 +41,7 @@
   X(extensionschanged, Extensionschanged)                         \
   X(extensionpopuprequested, Extensionpopuprequested)             \
   X(extensioncommandschanged, Extensioncommandschanged)           \
+  X(extensioncommandpressed, Extensioncommandpressed)             \
   X(installedextensionschanged, Installedextensionschanged)       \
   X(idlechanged, Idlechanged)                                     \
   X(lockedchanged, Lockedchanged)                                 \

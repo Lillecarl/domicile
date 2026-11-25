@@ -17,9 +17,11 @@
 #include "base/memory/weak_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "chrome/browser/domicile/domicile_extension_tray.h"
 #include "chrome/browser/extensions/commands/command_service.h"
 #include "chrome/browser/extensions/context_menu_helpers.h"
 #include "chrome/browser/extensions/context_menu_matcher.h"
+#include "chrome/browser/extensions/extension_action_runner.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "components/domicile/browser/extension_tray_entry.h"
 #include "components/domicile/browser/web_view_guest.h"
@@ -27,6 +29,7 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/context_menu_params.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/weak_document_ptr.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_action.h"
@@ -198,13 +201,34 @@ class PageMenu final : public GuestExtensionMenu {
   content::ContextMenuParams params_;
 };
 
-// Whether `event` in `page` presses the keys of an extension's command, in the
-// page's own profile.
-bool TakesKey(content::WebContents& page,
-              const input::NativeWebKeyboardEvent& event) {
+// Runs command `name` of `id` in `page`, unless the shell does or the page is
+// gone.
+void RunUnlessHandled(content::WeakDocumentPtr page,
+                      const extensions::ExtensionId& id,
+                      const std::string& name,
+                      bool handled) {
+  content::RenderFrameHost* frame = page.AsRenderFrameHostIfValid();
+  if (!handled && frame != nullptr && frame->IsActive()) {
+    RunCommandIn(*content::WebContents::FromRenderFrameHost(frame), id, name);
+  }
+}
+
+void AskThenRun(content::WeakDocumentPtr page,
+                const extensions::ExtensionId& id,
+                const std::string& name) {
+  if (content::RenderFrameHost* frame = page.AsRenderFrameHostIfValid()) {
+    AskShellToRunCommand(frame->GetBrowserContext(), id, name,
+                         base::BindOnce(&RunUnlessHandled, page, id, name));
+  }
+}
+
+// What runs the command whose keys `event` in `page` presses, in the page's
+// own profile. Null for none.
+base::OnceClosure CommandPressed(content::WebContents& page,
+                                 const input::NativeWebKeyboardEvent& event) {
   // Only a tab's, as PageMenuOf's items.
   if (sessions::SessionTabHelper::FromWebContents(&page) == nullptr) {
-    return false;
+    return base::OnceClosure();
   }
   const ui::Accelerator pressed =
       ui::GetAcceleratorFromNativeWebKeyboardEvent(event);
@@ -216,11 +240,13 @@ bool TakesKey(content::WebContents& page,
       if (!command.keys.empty() &&
           service->FindCommandByName(extension.id, command.name)
                   .accelerator() == pressed) {
-        return true;
+        return base::BindOnce(
+            &AskThenRun, page.GetPrimaryMainFrame()->GetWeakDocumentPtr(),
+            extension.id, command.name);
       }
     }
   }
-  return false;
+  return base::OnceClosure();
 }
 
 std::unique_ptr<GuestExtensionMenu> PageMenuOf(
@@ -290,7 +316,7 @@ void DispatchCommand(content::BrowserContext& context,
       std::move(args), &context);
   event->user_gesture = extensions::EventRouter::UserGestureState::kEnabled;
   // The extension command guard greps for this line.
-  LOG(INFO) << "domicile: the shell ran command " << command << " of " << id
+  LOG(INFO) << "domicile: ran command " << command << " of " << id
             << ".";
   extensions::EventRouter::Get(&context)->DispatchEventToExtension(
       id, std::move(event));
@@ -397,9 +423,40 @@ void SendCommand(content::BrowserContext& context,
           tab->GetWeakPtr(), extension.id(), command));
 }
 
+void RunCommandIn(content::WebContents& page,
+                  const extensions::ExtensionId& id,
+                  const std::string& name) {
+  content::BrowserContext& context = *page.GetBrowserContext();
+  const Extension* extension = extensions::ExtensionRegistry::Get(&context)
+                                   ->enabled_extensions()
+                                   .GetByID(id);
+  if (extension == nullptr) {
+    return;
+  }
+  if (!Command::IsActionRelatedCommand(name)) {
+    SendCommand(context, *extension, name, &page);
+    return;
+  }
+  const extensions::ExtensionAction* action =
+      extensions::ExtensionActionManager::Get(&context)->GetExtensionAction(
+          *extension);
+  extensions::ExtensionActionRunner* runner =
+      extensions::ExtensionActionRunner::GetForWebContents(&page);
+  const int tab = sessions::SessionTabHelper::IdForTab(&page).id();
+  // A disabled action does nothing, as in Chrome.
+  if (action == nullptr || runner == nullptr || !action->GetIsVisible(tab)) {
+    return;
+  }
+  LOG(INFO) << "domicile: ran the action of " << id << ".";
+  if (runner->RunAction(extension, /*grant_tab_permissions=*/true) ==
+      extensions::ExtensionAction::ShowAction::kShowPopup) {
+    RequestExtensionPopup(&context, id, action->GetPopupUrl(tab));
+  }
+}
+
 void UseChromeForGuestExtensionMenus() {
   WebViewGuest::SetExtensionMenus(base::BindRepeating(&PageMenuOf));
-  WebViewGuest::SetExtensionKeys(base::BindRepeating(&TakesKey));
+  WebViewGuest::SetExtensionKeys(base::BindRepeating(&CommandPressed));
 }
 
 }  // namespace domicile

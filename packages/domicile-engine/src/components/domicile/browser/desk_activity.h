@@ -58,8 +58,8 @@ class DeskActivity {
   ~DeskActivity();
 
   // Hears what the input was, as `DescribeInput` names it, and its kind.
-  using Listener =
-      base::RepeatingCallback<void(const std::string& input, ActivityKind kind)>;
+  using Listener = base::RepeatingCallback<void(const std::string& input,
+                                                ActivityKind kind)>;
 
   // Calls `heard` on each later `Heard`.
   ListenerId AddListener(Listener heard);

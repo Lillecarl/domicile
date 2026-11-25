@@ -60,6 +60,12 @@ An effect can draw the element through a mesh, a grid for cloth or instances for
 
 [Design](architecture/MOTION.md#shader-primitive)
 
+### The idle clock can ignore pointer motion
+
+`idle.ignore_pointer_motion`, off by default, keeps a drifting mouse or a shaking desk from holding a desktop awake. Keys, touches, clicks and scrolling still do.
+
+[`idle`](SHELL-CONFIG.md#idle)
+
 ## 1.3.0
 
 _November 24, 2026_

@@ -68,7 +68,7 @@ An effect can draw the element through a mesh, a grid for cloth or instances for
 
 ## 1.3.1
 
-_Unreleased_
+_November 25, 2026_
 
 ### Fixes
 

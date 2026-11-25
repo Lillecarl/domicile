@@ -254,21 +254,28 @@ fn a_desk_that_ends_hands_the_session_back_to_another_compositor() {
     // `graphical-session.target`, so the shutdown target would stop niri too.
     // A relative `WAYLAND_DISPLAY` is in `XDG_RUNTIME_DIR`, beside the control
     // socket.
+    // An absolute one can be anywhere.
     let directory = tempfile::tempdir().unwrap();
-    let _serving =
-        std::os::unix::net::UnixListener::bind(directory.path().join("wayland-1")).unwrap();
-    let ours = directory.path().join("domicile-ipc.2.sock");
-    let now = said("wayland-2", &ours);
-    let environment: Vec<&str> = now.iter().map(String::as_str).collect();
-    let (_server, client, heard) = paired_with(&environment);
-    end(&client, &ours, &niri("wayland-1")).unwrap();
-    assert_eq!(
-        *heard.lock().unwrap(),
-        [Heard::UnsetAndSetEnvironment(
-            vec!["DOMICILE_SOCK".into()],
-            niri("wayland-1")
-        )]
-    );
+    let elsewhere = tempfile::tempdir().unwrap();
+    let absolute = elsewhere.path().join("wayland-9");
+    for (display, socket) in [
+        ("wayland-1", directory.path().join("wayland-1")),
+        (absolute.to_str().unwrap(), absolute.clone()),
+    ] {
+        let _serving = std::os::unix::net::UnixListener::bind(socket).unwrap();
+        let ours = directory.path().join("domicile-ipc.2.sock");
+        let now = said("wayland-2", &ours);
+        let environment: Vec<&str> = now.iter().map(String::as_str).collect();
+        let (_server, client, heard) = paired_with(&environment);
+        end(&client, &ours, &niri(display)).unwrap();
+        assert_eq!(
+            *heard.lock().unwrap(),
+            [Heard::UnsetAndSetEnvironment(
+                vec!["DOMICILE_SOCK".into()],
+                niri(display)
+            )]
+        );
+    }
 }
 
 #[test]

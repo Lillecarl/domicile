@@ -92,6 +92,11 @@ export const HostShell = (_root, desktop) => {
     const listed = JSON.parse(host.extensionCommands);
     say(`commands count=${listed.length}`);
     const row = listed.find(({ id }) => id === expected);
+    if (row !== undefined && (control || !started)) {
+      const keys = (name) =>
+        row.commands.find((command) => command.name === name)?.keys;
+      say(`row fill=${keys("fill")} action=${keys("_execute_action")}`);
+    }
     if (started) {
       return;
     } else if (control) {
@@ -107,9 +112,6 @@ export const HostShell = (_root, desktop) => {
         .catch(failed);
     } else if (row !== undefined) {
       started = true;
-      const keys = (name) =>
-        row.commands.find((command) => command.name === name)?.keys;
-      say(`row fill=${keys("fill")} action=${keys("_execute_action")}`);
       when("ready", () => {
         say("ready");
         when("c:", () => {

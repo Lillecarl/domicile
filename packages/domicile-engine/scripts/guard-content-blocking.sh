@@ -20,9 +20,12 @@
 # - the site's /own-ad.js was asked for: standard mode spares a site's own
 # - localhost's /stub.js was never asked for, and the stub ran in its place
 # - the pixel was asked for without utm_source
+# - the site's .ad-banner and the generic .generic-ad are hidden, the story is
+#   not, and the guard-mark scriptlet ran before the page's first script
 #
 # Control (NEGATIVE=1): the config turns the site off. /ad.js, /mine.js and
-# /stub.js must be asked for, and the pixel with its utm_source.
+# /stub.js must be asked for, and the pixel with its utm_source, and nothing
+# is hidden or run.
 set -u
 
 SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
@@ -136,7 +139,8 @@ wait_for_line "$TRIES" "GUARD shell-loaded" "$ENGINE_LOG" || {
 }
 wait_for_line "$TRIES" "GUARD page-loaded" "$ENGINE_LOG" ||
   echo "the test page never finished loading" >&2
-sleep 1
+wait_for_line 40 "GUARD cosmetic" "$ENGINE_LOG" ||
+  echo "the test page never said what it shows" >&2
 
 asked() { # $1 the path and query, $2 the host
   grep -qE "^asked $1 host=$2(:|$)" "$HTTP_LOG" && echo 1 || echo 0
@@ -154,11 +158,16 @@ MINE=$(asked "/mine.js" "127.0.0.1")
 STUB=$(asked "/stub.js" "localhost")
 CLEAN=$(asked "/pixel.gif\\?id=1" "localhost")
 TRACKED=$(asked "/pixel.gif\\?utm_source=guard&id=1" "localhost")
+saw() { grep -qF "$1" "$ENGINE_LOG" && echo 1 || echo 0; }
+HIDDEN=$(saw "GUARD cosmetic banner=none generic=none story=block marked-first=true")
+SHOWN=$(saw "GUARD cosmetic banner=block generic=block story=block marked-first=false")
 
 echo
 echo "sent=$SAW_SENT list=$SAW_LIST resources=$SAW_RESOURCES page=$SAW_PAGE"
 echo "asked for: ok=$OK ad=$AD own-ad=$OWN mine=$MINE stub=$STUB" \
   "clean-pixel=$CLEAN tracked-pixel=$TRACKED; the stub ran=$SAW_STUB_RAN"
+echo "cosmetic: hidden=$HIDDEN shown=$SHOWN"
+grep -F "GUARD cosmetic" "$ENGINE_LOG" || true
 echo "what the site was asked for:"
 cat "$HTTP_LOG"
 echo
@@ -176,9 +185,9 @@ elif [ "$SAW_PAGE" != "1" ] || [ "$OK" != "1" ]; then
 which nothing blocks"
 elif [ "$NEGATIVE" = "1" ]; then
   if [ "$AD" = "1" ] && [ "$MINE" = "1" ] && [ "$STUB" = "1" ] &&
-    [ "$TRACKED" = "1" ]; then
+    [ "$TRACKED" = "1" ] && [ "$SHOWN" = "1" ]; then
     PASSED="the control is sharp: with the site off, every request reached \
-the site as the page made it"
+the site as the page made it, nothing was hidden and no scriptlet ran"
   else
     FAILURE="the site is off, and the engine still blocked or rewrote a \
 request: ModeFor or the loader's mode"
@@ -198,10 +207,16 @@ the resources, or the loader's stub response"
 elif [ "$CLEAN" != "1" ]; then
   FAILURE="the pixel never arrived without utm_source: \$removeparam's \
 internal redirect"
+elif [ "$HIDDEN" != "1" ]; then
+  FAILURE="the page did not hide the site's .ad-banner and the generic \
+.generic-ad with the story shown, or the guard-mark scriptlet did not run \
+before the page's first script: ContentFilterAgent (patch 0283) or \
+domicile_content_filter.cc"
 else
   PASSED="the list blocked another site's script, the user's rule the site's \
 own, standard mode spared the site's own listed script, a \$redirect rule \
-answered with its resource, and \$removeparam dropped utm_source"
+answered with its resource, \$removeparam dropped utm_source, the site's \
+and a generic rule hid their elements, and a scriptlet ran before the page"
 fi
 
 if [ -n "$PASSED" ]; then

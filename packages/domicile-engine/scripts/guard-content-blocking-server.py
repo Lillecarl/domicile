@@ -18,7 +18,11 @@ The page is on 127.0.0.1 and its "ads" on localhost, so they are two sites.
                                             window.stubRan
                    - localhost /pixel.gif?utm_source=guard&id=1
                                             the list removes utm_source
-                   then says `GUARD page-loaded stub=<true|false>`.
+                   then says `GUARD page-loaded stub=<true|false>`, and
+                   `GUARD cosmetic banner= generic= story= marked-first=`:
+                   each element's display (the list hides .ad-banner for
+                   the site and .generic-ad everywhere), and whether the
+                   guard-mark scriptlet ran before the page's first script.
   /list.txt        the list.
   /resources.json  adblock-rust's resources: guard-stub.js.
 
@@ -39,6 +43,9 @@ LIST = """! Title: guard-content-blocking
 /own-ad.js$script
 ||localhost^*/stub.js$script,redirect=guard-stub.js
 ||localhost^$removeparam=utm_source
+127.0.0.1##.ad-banner
+##.generic-ad
+127.0.0.1##+js(guard-mark)
 """
 
 RESOURCES = json.dumps(
@@ -48,7 +55,13 @@ RESOURCES = json.dumps(
             "aliases": [],
             "kind": {"mime": "application/javascript"},
             "content": base64.b64encode(b"window.stubRan = true;").decode(),
-        }
+        },
+        {
+            "name": "guard-mark.js",
+            "aliases": ["guard-mark"],
+            "kind": "template",
+            "content": base64.b64encode(b"window.guardMarked = true;").decode(),
+        },
     ]
 )
 
@@ -68,6 +81,10 @@ PAGE_HTML = """<!doctype html>
 
 TEST_HTML = """<!doctype html>
 <title>a page with ads</title>
+<script>window.markedFirst = window.guardMarked === true;</script>
+<div class="ad-banner">a site's own banner</div>
+<div class="generic-ad">an ad any list hides</div>
+<div class="story">the story</div>
 <script src="http://localhost:{port}/ad.js"></script>
 <script src="http://localhost:{port}/ok.js"></script>
 <script src="/own-ad.js"></script>
@@ -77,6 +94,14 @@ TEST_HTML = """<!doctype html>
 <script>
   addEventListener("load", () => {{
     console.log(`GUARD page-loaded stub=${{window.stubRan === true}}`);
+    // Generic rules answer DOMContentLoaded's question a little later.
+    setTimeout(() => {{
+      const shown = (selector) =>
+        getComputedStyle(document.querySelector(selector)).display;
+      console.log(`GUARD cosmetic banner=${{shown(".ad-banner")}}` +
+        ` generic=${{shown(".generic-ad")}} story=${{shown(".story")}}` +
+        ` marked-first=${{window.markedFirst}}`);
+    }}, 1500);
   }});
 </script>
 """

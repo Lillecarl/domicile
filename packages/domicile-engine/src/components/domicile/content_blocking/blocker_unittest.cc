@@ -5,6 +5,7 @@
 
 #include <string>
 
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -117,6 +118,40 @@ TEST(ContentBlockingBlockerTest, CspDirectivesComeFromBothEngines) {
   EXPECT_EQ(blocker.CspDirectives(document, Mode::kStandard),
             "script-src 'none',img-src 'none'");
   EXPECT_EQ(blocker.CspDirectives(document, Mode::kOff), "");
+}
+
+TEST(ContentBlockingBlockerTest, ASitesCosmeticRulesComeFromBothEngines) {
+  const Blocker blocker =
+      BlockerOf("site.example##.banner\nsite.example#@#.ad-box\n",
+                "site.example##.mine\n");
+  const std::optional<CosmeticRules> rules =
+      blocker.Cosmetic(GURL(kSite), Mode::kStandard);
+  ASSERT_TRUE(rules);
+  EXPECT_EQ(rules->hide_selectors.size(), 2u);
+  EXPECT_THAT(rules->hide_selectors,
+              testing::UnorderedElementsAre(".banner", ".mine"));
+  EXPECT_THAT(rules->exceptions, testing::ElementsAre(".ad-box"));
+  EXPECT_FALSE(rules->generichide);
+  EXPECT_EQ(blocker.Cosmetic(GURL(kSite), Mode::kOff), std::nullopt);
+}
+
+TEST(ContentBlockingBlockerTest, AScriptletRunsTheResourceItNames) {
+  Blocker blocker = BlockerOf("site.example##+js(guard-mark)\n");
+  ASSERT_TRUE(blocker.lists().UseResources(
+      R"([{"name": "guard-mark.js", "aliases": ["guard-mark"],
+           "kind": "template",
+           "content": "d2luZG93Lm1hcmtlZCA9IHRydWU7"}])"));
+  const std::optional<CosmeticRules> rules =
+      blocker.Cosmetic(GURL(kSite), Mode::kStandard);
+  ASSERT_TRUE(rules);
+  EXPECT_THAT(rules->injected_script,
+              testing::HasSubstr("window.marked = true;"));
+}
+
+TEST(ContentBlockingBlockerTest, GenericSelectorsComeFromBothEngines) {
+  const Blocker blocker = BlockerOf("##.ad-box\n", "##.my-box\n");
+  EXPECT_THAT(blocker.GenericSelectors({"ad-box", "my-box", "story"}, {}, {}),
+              testing::UnorderedElementsAre(".ad-box", ".my-box"));
 }
 
 }  // namespace

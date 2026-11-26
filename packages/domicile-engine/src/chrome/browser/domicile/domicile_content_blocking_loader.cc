@@ -62,13 +62,15 @@ bool IsDocument(const network::ResourceRequest& request) {
 
 // The address of the page the request is for, whose site picks the mode.
 GURL PageOf(const Origin& origin, const network::ResourceRequest& request) {
-  if (request.is_outermost_main_frame &&
-      request.destination == RequestDestination::kDocument) {
+  // kDocument is a frame tree's main document: a frame's is kIframe.
+  if (request.destination == RequestDestination::kDocument) {
     return request.url;
   }
+  // The frame tree's own main frame, not the outermost one: a browser
+  // window's page may sit inside the shell's.
   if (content::RenderFrameHost* frame =
           content::RenderFrameHost::FromID(origin.frame)) {
-    return frame->GetOutermostMainFrame()->GetLastCommittedURL();
+    return frame->GetMainFrame()->GetLastCommittedURL();
   }
   return origin.initiator.GetURL();
 }
@@ -217,8 +219,7 @@ class Loader final : public network::mojom::URLLoader,
     // A page itself loads; only what it loads is blocked. A shell draws its
     // own page for a site it blocks outright.
     if (blocker == nullptr || !request.url.SchemeIsHTTPOrHTTPS() ||
-        (request.is_outermost_main_frame &&
-         request.destination == RequestDestination::kDocument)) {
+        request.destination == RequestDestination::kDocument) {
       return {};
     }
     return blocker->Decide(FilterRequest(request), mode_);

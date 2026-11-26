@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import("//build/rust/rust_static_library.gni")
+import("//mojo/public/tools/bindings/mojom.gni")
 
 # The engine's content blocking: Brave's adblock-rust, and what the browser
 # asks of it. See docs/architecture/CONTENT-BLOCKING.md.
@@ -48,6 +49,29 @@ source_set("settings") {
   ]
   public_deps = [ "//base" ]
   deps = [ "//url" ]
+}
+
+mojom("mojom") {
+  sources = [ "content_filter.mojom" ]
+  public_deps = [ "//url/mojom:url_mojom_gurl" ]
+}
+
+# A frame's half of element hiding and scriptlets, which
+# //chrome/renderer gives every frame.
+source_set("renderer") {
+  sources = [
+    "content_filter_agent.cc",
+    "content_filter_agent.h",
+  ]
+  public_deps = [
+    ":mojom",
+    "//content/public/renderer",
+  ]
+  deps = [
+    "//base",
+    "//third_party/blink/public:blink",
+    "//url",
+  ]
 }
 
 source_set("unit_tests") {

@@ -1,0 +1,31 @@
+// Copyright 2026 Connor Prussin
+// SPDX-License-Identifier: MIT
+
+module domicile.mojom;
+
+import "url/mojom/url.mojom";
+
+// What a document hides and runs. See
+// components/domicile/content_blocking/blocker.h's CosmeticRules.
+struct CosmeticRules {
+  array<string> hide_selectors;
+  string injected_script;
+  bool generichide;
+  array<string> exceptions;
+};
+
+// A frame's way to the engine's cosmetic rules, bound per frame. The browser
+// picks the mode from the page the frame is in, so the renderer holds no
+// settings. See "Element hiding and scriptlets" in
+// docs/architecture/CONTENT-BLOCKING.md.
+interface ContentFilter {
+  // The rules for a document at `document`, about to start; null while its
+  // page blocks nothing. Sync, so the scriptlets run before the page's own.
+  [Sync]
+  RulesFor(url.mojom.Url document) => (CosmeticRules? rules);
+
+  // The generic hide selectors the document's `classes` and `ids` call for,
+  // less `exceptions` from RulesFor.
+  GenericSelectors(array<string> classes, array<string> ids,
+                   array<string> exceptions) => (array<string> selectors);
+};

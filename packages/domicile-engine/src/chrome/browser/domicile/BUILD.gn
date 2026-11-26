@@ -42,6 +42,8 @@ source_set("domicile") {
     "domicile_content_blocking.h",
     "domicile_content_blocking_loader.cc",
     "domicile_content_blocking_loader.h",
+    "domicile_content_filter.cc",
+    "domicile_content_filter.h",
     "domicile_command_socket.cc",
     "domicile_command_socket.h",
     "domicile_cursor_display.cc",
@@ -133,7 +135,12 @@ source_set("domicile") {
   ]
 
   # Public so //chrome/browser, which depends only on this target, starts it.
-  public_deps = [ "//components/domicile:rtkit" ]
+  public_deps = [
+    "//components/domicile:rtkit",
+
+    # chrome_browser_interface_binders.cc binds its interface.
+    "//components/domicile/content_blocking:mojom",
+  ]
 
   # The dictionaries domicile_spellcheck.cc's profiles check spelling with.
   data_deps = [ ":domicile_dictionaries" ]

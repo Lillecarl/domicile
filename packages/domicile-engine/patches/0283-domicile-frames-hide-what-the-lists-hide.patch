@@ -1,0 +1,96 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 26 Nov 2026 00:00:00 +0000
+Subject: [PATCH] domicile: frames hide what the lists hide
+
+Every frame gets a domicile::ContentFilterAgent, which runs the config's
+scriptlets at document start, after an Electron app's preload and before
+the page's own scripts, and hides the lists' selectors. Its
+domicile.mojom.ContentFilter is bound for every frame; the browser
+answers from the page the frame is in.
+---
+ chrome/browser/chrome_browser_interface_binders.cc | 8 ++++++++
+ chrome/renderer/BUILD.gn                           | 1 +
+ chrome/renderer/chrome_content_renderer_client.cc  | 7 +++++++
+3 files changed, 16 insertions(+), 0 deletions(-)
+
+diff --git a/chrome/browser/chrome_browser_interface_binders.cc b/chrome/browser/chrome_browser_interface_binders.cc
+index 8c3d30c512..0bd7879002 100644
+--- a/chrome/browser/chrome_browser_interface_binders.cc
++++ b/chrome/browser/chrome_browser_interface_binders.cc
+@@ -8,6 +8,7 @@
+ #include "chrome/browser/domicile/domicile_extension_installer.h"
+ #include "chrome/browser/domicile/domicile_browser_windows.h"
+ #include "chrome/browser/domicile/domicile_cast_sinks.h"
++#include "chrome/browser/domicile/domicile_content_filter.h"
+ #include "chrome/browser/domicile/domicile_downloads.h"
+ #include "chrome/browser/domicile/domicile_extension_tray.h"
+ #include "chrome/browser/domicile/domicile_picture_in_picture.h"
+@@ -69,6 +70,7 @@
+ #include "components/live_caption/pref_names.h"
+ #include "components/no_state_prefetch/browser/no_state_prefetch_contents.h"
+ #include "components/no_state_prefetch/browser/no_state_prefetch_processor_impl.h"
++#include "components/domicile/content_blocking/content_filter.mojom.h"
+ #include "components/optimization_guide/public/mojom/model_broker.mojom.h"
+ #include "components/performance_manager/embedder/binders.h"
+ #include "components/performance_manager/embedder/performance_manager_registry.h"
+@@ -775,6 +777,12 @@ void PopulateChromeFrameBinders(
+         domicile::BindShellFetch(frame, std::move(receiver));
+       }));
+ 
++  // Domicile's engine fork: a frame's element hiding and scriptlets. Any
++  // frame may ask; the browser answers from the page it is in. See
++  // chrome/browser/domicile/domicile_content_filter.h.
++  map->Add<domicile::mojom::ContentFilter>(
++      base::BindRepeating(&domicile::BindContentFilter));
++
+   // Domicile's engine fork: an app module's channel to the compositor, system
+   // calls only. See docs/architecture/APP-MODULES.md.
+   //
+diff --git a/chrome/renderer/BUILD.gn b/chrome/renderer/BUILD.gn
+index 13a30c78ff..c86a2379fb 100644
+--- a/chrome/renderer/BUILD.gn
++++ b/chrome/renderer/BUILD.gn
+@@ -156,6 +156,7 @@ static_library("renderer") {
+     "//components/domicile:common",
+     "//components/domicile:electron_preload",
+     "//components/domicile:electron_schemes",
++    "//components/domicile/content_blocking:renderer",
+     "//components/facilitated_payments/content/renderer",
+     "//components/facilitated_payments/core/features",
+     "//components/feed:feature_list",
+diff --git a/chrome/renderer/chrome_content_renderer_client.cc b/chrome/renderer/chrome_content_renderer_client.cc
+index aa1ff0f041..da375d116a 100644
+--- a/chrome/renderer/chrome_content_renderer_client.cc
++++ b/chrome/renderer/chrome_content_renderer_client.cc
+@@ -6,6 +6,7 @@
+ 
+ #include "components/domicile/common/domicile_scheme.h"
+ #include "components/domicile/common/electron_schemes.h"
++#include "components/domicile/content_blocking/content_filter_agent.h"
+ #include "components/domicile/renderer/electron_preload.h"
+ 
+ #include <functional>
+@@ -708,6 +709,9 @@ void ChromeContentRendererClient::RenderFrameCreated(
+   // browser sends a main frame its preload before each navigation commits.
+   // See components/domicile/renderer/electron_preload.h.
+   domicile::ElectronPreload::Attach(render_frame);
++  // Domicile's engine fork: the config's element hiding and scriptlets. See
++  // components/domicile/content_blocking/content_filter_agent.h.
++  domicile::ContentFilterAgent::Attach(render_frame);
+ 
+   auto content_settings_delegate =
+       std::make_unique<ChromeContentSettingsAgentDelegate>(render_frame);
+@@ -1584,6 +1588,9 @@ void ChromeContentRendererClient::RunScriptsAtDocumentStart(
+   if (!domicile::ElectronPreload::RunAtDocumentStart(render_frame)) {
+     return;
+   }
++  // Domicile's engine fork: the config's scriptlets, before the page's own
++  // scripts and after an Electron app's preload.
++  domicile::ContentFilterAgent::RunAtDocumentStart(render_frame);
+ 
+ #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+   extensions::ExtensionsRendererClient::Get()->RunScriptsAtDocumentStart(
+-- 
+2.47.0
+

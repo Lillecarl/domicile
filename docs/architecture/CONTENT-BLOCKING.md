@@ -119,31 +119,32 @@ waits for no thread hop.
 
 ### Element hiding and scriptlets
 
-A renderer agent applies the cosmetic rules in each http and https frame.
-It follows Brave's `CosmeticFiltersJsRenderFrameObserver`, without Brave's
-content settings plumbing:
+`domicile::ContentFilterAgent`, which every frame gets (patch 0283), applies
+the cosmetic rules in each http and https document. It takes Brave's order
+of work without Brave's content settings plumbing or its JavaScript:
 
-- **The browser decides the frame's mode.** At `ReadyToCommitNavigation` the
-  agent asks `domicile.mojom.ContentFilter.FrameResources(url)`, a sync call.
-  The browser answers from the frame's top-level origin and `sites`, so the
-  renderer needs no settings. The call blocks the renderer until the engine
-  sequence answers; a guard measures that time.
-- **Scriptlets run first.** At `RunScriptsAtDocumentStart` the agent runs the
-  frame's scriptlets in the main world. It appends a `<script>` element from a
-  domicile isolated world and removes it, as Brave does. A page CSP that
-  forbids inline scripts stops them there too.
-- **Specific hiding:** one `insertRule` per selector into a constructed sheet
-  the isolated world adopts. A selector that holds a `{` breaks out of no rule:
-  `insertRule` refuses more than one rule. This replaces adblock-rust's
-  `css-validation` feature and the Servo crates it needs (`cssparser`,
-  `selectors`).
-- **Generic hiding:** Brave's `content_cosmetic.ts` and
-  `procedural_filters.ts` (MPL-2.0, headers kept) run in the isolated world.
-  They watch class and id names and ask `HiddenClassIdSelectors`, and they
-  apply procedural filters (`:has-text`, `:upward` and the rest). The bundle
-  is built with bun and embedded in the engine binary.
-- **Not hidden:** `domicile:` pages, extension pages, and frames of a site in
-  `off` mode.
+- **The browser decides the frame's mode.** When the document is about to
+  run its first script, the agent asks
+  `domicile.mojom.ContentFilter.RulesFor(url)`, a sync call. The browser
+  answers on the UI thread from the page the frame is in, so the renderer
+  holds no settings. The shell's, extensions' and (unless `electron_apps`)
+  Electron apps' frames get no rules.
+- **Scriptlets run first.** The agent runs them with
+  `WebLocalFrame::ExecuteScript`, in the page's main world, after an Electron
+  app's preload and before the page's scripts. Unlike Brave's `<script>`
+  element, a page's CSP does not stop them.
+- **Specific hiding:** a user-origin stylesheet, which no `!important` of the
+  page outranks, with one `selector{display:none!important}` per rule. A
+  selector holding `{`, `}` or `/*` is left out, so a list cannot end the
+  rule and start its own. This replaces adblock-rust's `css-validation`
+  feature and the Servo crates it needs (`cssparser`, `selectors`).
+- **Generic hiding:** at DOMContentLoaded and again at load, the agent reads
+  the document's class and id names in C++ and asks `GenericSelectors`, which
+  `hidden_class_id_selectors` answers from both engines.
+- **Not done yet:** procedural filters (`:has-text()`, `:upward()` and the
+  rest), elements added after load, and Brave's standard-mode unhiding of a
+  site's own content. Brave's `content_cosmetic.ts` and
+  `procedural_filters.ts` (MPL-2.0) do these, and are the next step.
 
 ### The shell
 

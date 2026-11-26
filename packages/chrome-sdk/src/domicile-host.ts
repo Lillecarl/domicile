@@ -505,6 +505,12 @@ export type DomicileBrowserWindow = {
    * Null for none. Who holds it from then on is the desk's seats'.
    */
   readonly agent: string | null;
+  /**
+   * The requests the engine's content blocking blocked for the page since it
+   * loaded, for a shell's badge. 0 while the config blocks nothing. See
+   * docs/architecture/CONTENT-BLOCKING.md.
+   */
+  readonly blockedRequests: number;
 };
 
 /**
@@ -1360,6 +1366,26 @@ export type DomicileHost = {
    * no such key, and for a profile the desk does not have.
    */
   pinBrowserSite(site: string, profile: string): Promise<void>;
+  /**
+   * The mode the engine blocks ads and trackers in on `url`'s site: "off",
+   * "standard" or "aggressive", as the config's `content_blocking` or
+   * setContentBlockingSite gave it; "off" while the config blocks nothing.
+   * See docs/architecture/CONTENT-BLOCKING.md. Throws TypeError for a `url`
+   * that is no address.
+   */
+  contentBlockingFor(url: string): Promise<string>;
+  /**
+   * Blocks on `site` in `mode` ("off", "standard" or "aggressive") from now
+   * on, kept across restarts; an empty `mode` gives it the config's mode
+   * again. `site` is a host or `*.host`, as the config's
+   * `content_blocking.sites` keys are. A page loads in the new mode from its
+   * next navigation, so reload it to apply. Throws TypeError for an empty
+   * site. Rejects with an OperationError saying why for a site the config's
+   * `content_blocking.sites` name, which only the config changes, for one
+   * that is no host, for a mode that is none of the three, and while the
+   * config blocks nothing.
+   */
+  setContentBlockingSite(site: string, mode: string): Promise<void>;
   /**
    * Switches extension `id` on or off in browser profile `profile`, kept
    * across restarts: it runs in that profile's pages, or nowhere in them, and

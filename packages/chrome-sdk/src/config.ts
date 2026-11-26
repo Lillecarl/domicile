@@ -15,6 +15,7 @@ export type Config = {
   $schema?: string | null;
   agents?: AgentsConfig;
   browser?: BrowserConfig;
+  content_blocking?: ContentBlockingConfig | null;
   electron?: ElectronConfig;
   extensions?: ExtensionsConfig;
   files?: FilesConfig;
@@ -69,6 +70,9 @@ export type AgentsConfig = {
   web?: boolean;
 };
 
+/** [`ContentBlockingConfig::mode`]. */
+export type BlockingMode = "standard" | "aggressive";
+
 /**
  * Browser profiles: sets of sign-ins, site data and extensions, and the
  * sites each opens. See `docs/architecture/BROWSER-PROFILES.md`.
@@ -119,6 +123,43 @@ export type ButtonMap = "lrm" | "lmr";
 
 /** How a touchpad's physical button chooses a mouse button. */
 export type ClickMethod = "default" | "clickfinger" | "button_areas";
+
+/**
+ * The engine blocks ads and trackers itself, with Brave's filter engine,
+ * in every browser profile. Leave it out to block nothing. See
+ * `docs/architecture/CONTENT-BLOCKING.md`.
+ */
+export type ContentBlockingConfig = {
+  /**
+   * Also blocks in Electron apps' pages. Off by default: an app can break
+   * in ways no menu fixes.
+   */
+  electron_apps?: boolean;
+  /** Your own rules, in the same syntax. They apply in every mode. */
+  filters?: string[];
+  /**
+   * Filter lists in Adblock Plus and uBlock Origin syntax, each an
+   * `https://` or `http://` address or an absolute path. The engine
+   * fetches an address again when its list expires (`! Expires:`), after
+   * a day if it names no time. The default is EasyList, EasyPrivacy and
+   * uBlock Origin's filters, privacy, unbreak and badware lists.
+   */
+  lists?: string[];
+  /** How much a site's own content is blocked. */
+  mode?: BlockingMode;
+  /**
+   * The scriptlets and stub resources that `##+js()` and `$redirect`
+   * rules name, as adblock-rust's JSON: an address or an absolute path.
+   * The default is Brave's `adblock-resources`.
+   */
+  resources?: string;
+  /**
+   * A mode per site, by host or `*.host` for it and its subdomains. A
+   * site is the address of the page you see, so its frames follow it.
+   * The most specific match wins.
+   */
+  sites?: Record<string, SiteBlocking>;
+};
 
 /** How strongly clients set text and edges apart from their background. */
 export type Contrast = "normal" | "high";
@@ -546,6 +587,9 @@ export type SiteAccess = SiteAccessMode | string[];
 
 /** [`SiteAccess`] other than a list of hosts. */
 export type SiteAccessMode = "on_click" | "all_sites";
+
+/** One site's [`ContentBlockingConfig::sites`] entry. */
+export type SiteBlocking = "off" | "standard" | "aggressive";
 
 /** Spell checking in pages: in browser windows, web apps and Electron apps. */
 export type SpellcheckConfig = {

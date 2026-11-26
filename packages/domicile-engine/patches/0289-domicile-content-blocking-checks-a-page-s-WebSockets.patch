@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 26 Nov 2026 00:00:00 +0000
+Subject: [PATCH] domicile: content blocking checks a page's WebSockets
+
+While the config blocks content, a website's frame's WebSockets are
+intercepted, and domicile::MayOpenWebSocket decides each before it is
+made. One it refuses never connects; the rest go on through webRequest's
+proxy as before.
+---
+chrome/browser/chrome_content_browser_client.cc | 12 ++++++++++++
+1 file changed, 12 insertions(+), 0 deletions(-)
+
+diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
+index dbffa2f7da..02aadbb683 100644
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -7328,6 +7328,11 @@ bool ChromeContentBrowserClient::WillInterceptWebSocket(
+ bool ChromeContentBrowserClient::WillInterceptWebSocket(
+     content::RenderFrameHost* frame,
+     content::BrowserContext* browser_context) {
++  // Domicile's engine fork: the config's content blocking checks a website's
++  // WebSockets in CreateWebSocket.
++  if (frame && domicile::ChecksWebSockets(*frame)) {
++    return true;
++  }
+ #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+   if (!frame) {
+     return false;
+@@ -7370,6 +7375,13 @@ void ChromeContentBrowserClient::CreateWebSocket(
+     mojo::PendingRemote<network::mojom::WebSocketHandshakeClient>
+         handshake_client,
+     content::ContentBrowserClient::WebSocketOptions options) {
++  // Domicile's engine fork: a WebSocket content blocking refuses is never
++  // made, and the page sees it fail. One it lets through goes on through
++  // webRequest's proxy, which passes it straight on with no extension
++  // listening.
++  if (frame && !domicile::MayOpenWebSocket(*frame, url)) {
++    return;
++  }
+ #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+   // TODO(crbug.com/40195467): Request w/o a frame also should be proxied.
+   if (!frame) {
+-- 
+2.47.0
+

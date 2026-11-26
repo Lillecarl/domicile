@@ -21,8 +21,9 @@ LIB="$ROOT/packages/domicile-config/src/lib.rs"
 PROFILE="$ROOT/packages/domicile-config/src/profile.rs"
 POINTERS="$ROOT/packages/domicile-config/src/pointers.rs"
 INPUT_DEVICES="$ROOT/packages/domicile-config/src/input_devices.rs"
+CONTENT_BLOCKING="$ROOT/packages/domicile-config/src/content_blocking.rs"
 
-for f in "$MODULE" "$LIB" "$PROFILE" "$POINTERS" "$INPUT_DEVICES"; do
+for f in "$MODULE" "$LIB" "$PROFILE" "$POINTERS" "$INPUT_DEVICES" "$CONTENT_BLOCKING"; do
   [ -f "$f" ] || { echo "no $f" >&2; exit 1; }
 done
 
@@ -105,6 +106,7 @@ compare "extensions" "$LIB" ExtensionsConfig '^          extensions = [{]$' '   
 compare "idle" "$LIB" IdleConfig '^          idle = [{]$' '            '
 compare "lock" "$LIB" LockConfig '^          lock = [{]$' '            '
 compare "spellcheck" "$LIB" SpellcheckConfig '^          spellcheck = [{]$' '            '
+compare "content_blocking" "$CONTENT_BLOCKING" ContentBlockingConfig '^  contentBlocking = lib[.]types[.]submodule [{]$' '      '
 compare "lockdown" "$LIB" LockdownConfig '^          lockdown = [{]$' '            '
 compare "input.keyboard" "$LIB" KeyboardConfig '^          input[.]keyboard = [{]$' '            '
 compare "input.keyboard.repeat" "$LIB" KeyRepeat '^            repeat = [{]$' '              '

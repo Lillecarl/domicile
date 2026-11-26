@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { FakeDomicileHost } from "../fake-host";
-import { AppReuse } from "./browser";
+import { AppReuse, Blocking } from "./browser";
 import { desktop } from "./desktop";
 
 describe("browser", () => {
@@ -18,6 +18,7 @@ describe("browser", () => {
       {
         agent: undefined,
         appId: "",
+        blockedRequests: 0,
         height: 0,
         id: "1",
         ignoresPointer: false,
@@ -199,6 +200,42 @@ describe("browser", () => {
     fake.dispatch("browsermemoryshort", { data: '["2"]' });
 
     expect(heard).toStrictEqual([["2", "1"]]);
+  });
+
+  it("gives a site's blocking as the engine names it", async () => {
+    const fake = new FakeDomicileHost();
+    fake.block("news.example", "aggressive");
+    const { browser } = desktop(fake.host);
+
+    expect(await browser.blockingFor("https://news.example/")).toBe(
+      Blocking.Aggressive,
+    );
+    expect(await browser.blockingFor("https://other.example/")).toBe(
+      Blocking.Standard,
+    );
+  });
+
+  it("rejects a blocking the engine names that the SDK does not know", async () => {
+    const fake = new FakeDomicileHost();
+    fake.block("news.example", "paranoid");
+    const { browser } = desktop(fake.host);
+
+    await expect(browser.blockingFor("https://news.example/")).rejects.toThrow(
+      "paranoid",
+    );
+  });
+
+  it("sets a site's blocking, and gives it the config's again", async () => {
+    const fake = new FakeDomicileHost();
+    const { browser } = desktop(fake.host);
+
+    await browser.setSiteBlocking("news.example", Blocking.Off);
+    await browser.setSiteBlocking("news.example", undefined);
+
+    expect(fake.calls).toStrictEqual([
+      ["setContentBlockingSite", "news.example", "off"],
+      ["setContentBlockingSite", "news.example", ""],
+    ]);
   });
 
   it("pins a site to a profile and finds the site that routes an address", async () => {

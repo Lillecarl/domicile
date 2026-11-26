@@ -101,6 +101,34 @@ pub struct BrowserProfile {
     pub extensions: Option<Vec<String>>,
 }
 
+/// How much the engine blocks on a site, in [`HostMessage::ContentBlocking`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockingMode {
+    /// Nothing.
+    Off,
+    /// Other sites' ads and trackers, and the site's own `$important` ones.
+    Standard,
+    /// The site's own ads and trackers too.
+    Aggressive,
+}
+
+/// What the engine blocks, in [`HostMessage::ContentBlocking`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContentBlocking {
+    pub enabled: bool,
+    /// Filter lists: addresses or absolute paths.
+    pub lists: Vec<String>,
+    /// adblock-rust's resources: an address or an absolute path.
+    pub resources: String,
+    /// The user's own rules.
+    pub filters: Vec<String>,
+    pub mode: BlockingMode,
+    /// A mode by host or `*.host`.
+    pub sites: BTreeMap<String, BlockingMode>,
+    pub electron_apps: bool,
+}
+
 /// One extension's chrome://extensions settings, in
 /// [`HostMessage::Extensions`]. Each is left as the user set it when absent.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1154,6 +1182,14 @@ pub enum HostMessage {
         /// Profile ids by site: a host, `*.host`, or a host and path.
         sites: BTreeMap<String, String>,
     },
+
+    /// The config's `content_blocking`: the engine's own ad and tracker
+    /// blocking. See `docs/architecture/CONTENT-BLOCKING.md`.
+    ///
+    /// With `enabled` false the engine blocks nothing and drops what it
+    /// fetched. Sent with the handshake and on reloads that change it. Not
+    /// sent by a host without a config, whose browser blocks nothing.
+    ContentBlocking(ContentBlocking),
 
     /// The config's `spellcheck`: whether the browser checks spelling in
     /// pages' text fields, and in which languages. Sent with the handshake and
@@ -3692,6 +3728,7 @@ pub enum Subsystem {
     Clipboard,
     Notifications,
     Electron,
+    ContentBlocking,
     Agents,
     Shell,
     Session,
@@ -3699,7 +3736,7 @@ pub enum Subsystem {
 
 impl Subsystem {
     /// Every subsystem, in the order help lists them.
-    pub const ALL: [Subsystem; 13] = [
+    pub const ALL: [Subsystem; 14] = [
         Subsystem::Input,
         Subsystem::Displays,
         Subsystem::Windows,
@@ -3710,6 +3747,7 @@ impl Subsystem {
         Subsystem::Clipboard,
         Subsystem::Notifications,
         Subsystem::Electron,
+        Subsystem::ContentBlocking,
         Subsystem::Agents,
         Subsystem::Shell,
         Subsystem::Session,
@@ -3728,6 +3766,7 @@ impl Subsystem {
             Subsystem::Clipboard => "clipboard",
             Subsystem::Notifications => "notifications",
             Subsystem::Electron => "electron",
+            Subsystem::ContentBlocking => "content_blocking",
             Subsystem::Agents => "agents",
             Subsystem::Shell => "shell",
             Subsystem::Session => "session",
@@ -3747,6 +3786,7 @@ impl Subsystem {
             Subsystem::Clipboard => "Copy and paste",
             Subsystem::Notifications => "Notifications and the system tray",
             Subsystem::Electron => "Electron apps on the engine",
+            Subsystem::ContentBlocking => "Ad and tracker blocking in the engine",
             Subsystem::Agents => "Agents that use the desktop",
             Subsystem::Shell => "The shell and its connection to the desktop",
             Subsystem::Session => "Starting, stopping and the login session",

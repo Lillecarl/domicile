@@ -10,9 +10,10 @@ use std::thread;
 use domicile_host::ipc::{apply_chrome_message, parse_chrome, to_line};
 use domicile_host::{Appearances, Host};
 use domicile_protocol::{
-    AccessDialog, Appearance, BoundShortcut, BrowserProfile, Capturing, CapturingKind,
-    ChromeMessage, Devices, ExtensionSettings, HostMessage, Notification, Owner, PortalKind,
-    PortalRequest, PortalWallpaper, Theme, TrayItem, Urgency, PROTOCOL_VERSION,
+    AccessDialog, Appearance, BlockingMode, BoundShortcut, BrowserProfile, Capturing,
+    CapturingKind, ChromeMessage, ContentBlocking, Devices, ExtensionSettings, HostMessage,
+    Notification, Owner, PortalKind, PortalRequest, PortalWallpaper, Theme, TrayItem, Urgency,
+    PROTOCOL_VERSION,
 };
 
 /// A window's owner, for tests about anything else.
@@ -399,6 +400,40 @@ fn spell_checking_rides_with_the_handshake_once_configured() {
             enabled: false,
             languages: vec!["de-DE".into()],
         }),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn content_blocking_rides_with_the_handshake_once_configured() {
+    // The browser process decides requests from it, so a reloaded page's new
+    // channel needs it again.
+    let hello = to_line(&ChromeMessage::Hello {
+        protocol_version: PROTOCOL_VERSION,
+        checked: false,
+    });
+    let unset = Session::new().ingest(&hello);
+    assert!(
+        !unset
+            .iter()
+            .any(|message| matches!(message, HostMessage::ContentBlocking(_))),
+        "{unset:?}"
+    );
+
+    let blocking = ContentBlocking {
+        enabled: true,
+        lists: vec!["/etc/domicile/list.txt".into()],
+        resources: String::new(),
+        filters: vec![],
+        mode: BlockingMode::Standard,
+        sites: Default::default(),
+        electron_apps: false,
+    };
+    let mut session = Session::new();
+    session.host_mut().set_content_blocking(blocking.clone());
+    let out = session.ingest(&hello);
+    assert!(
+        out.contains(&HostMessage::ContentBlocking(blocking)),
         "{out:?}"
     );
 }

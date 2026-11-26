@@ -1077,6 +1077,10 @@
                 enable = true;
                 shell = "${desktops.simple}/shell.js";
                 settings = {
+                  content_blocking = {
+                    filters = [ "||ads.example^" ];
+                    sites."bank.example" = "off";
+                  };
                   input.keyboard = {
                     xkb_layout = "us";
                     xkb_variant = "dvp";

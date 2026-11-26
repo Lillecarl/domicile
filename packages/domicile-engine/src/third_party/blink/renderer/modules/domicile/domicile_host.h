@@ -350,6 +350,13 @@ class MODULES_EXPORT DomicileHost final
                                              const String& site,
                                              const String& profile,
                                              ExceptionState&);
+  ScriptPromise<IDLString> contentBlockingFor(ScriptState*,
+                                              const String& url,
+                                              ExceptionState&);
+  ScriptPromise<IDLUndefined> setContentBlockingSite(ScriptState*,
+                                                     const String& site,
+                                                     const String& mode,
+                                                     ExceptionState&);
   ScriptPromise<IDLUndefined> setBrowserProfileExtensionEnabled(
       ScriptState*,
       const String& profile,

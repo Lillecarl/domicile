@@ -1,0 +1,359 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 26 Nov 2026 00:00:00 +0000
+Subject: [PATCH] domicile: the engine vendors Brave's filter engine
+
+adblock 0.13.6 filters requests and pages for the engine's content
+blocking. Its features are full-regex-handling and single-thread, with
+no default features: the embedded domain resolver needs the addr crate,
+and the engine resolves domains from net instead.
+
+It brings twelve crates Chromium lacks, which are new files under
+third_party/rust. Three only build: thiserror-impl, and semver and
+rustc_version for flatbuffers' build script. Here regex ships, since adblock matches with it in the
+browser, and bitflags gains serde for adblock's filter masks. thiserror
+is configured by epoch, since thiserror 1 writes no private.rs.
+---
+ third_party/rust/bitflags/v2/BUILD.gn                | 6 ++++++
+ third_party/rust/chromium_crates_io/Cargo.lock       | 112 +++++++++++++++++++++++++++++++-
+ third_party/rust/chromium_crates_io/Cargo.toml       | 1 +
+ third_party/rust/chromium_crates_io/gnrt_config.toml | 44 +++++++++++++++++++++++++++++++-
+ third_party/rust/regex/v1/BUILD.gn                   | 1 -
+ third_party/rust/regex/v1/README.chromium            | 4 ++--
+6 files changed, 159 insertions(+), 9 deletions(-)
+
+diff --git a/third_party/rust/bitflags/v2/BUILD.gn b/third_party/rust/bitflags/v2/BUILD.gn
+index e4a65c834f..dd0dccd9a3 100644
+--- a/third_party/rust/bitflags/v2/BUILD.gn
++++ b/third_party/rust/bitflags/v2/BUILD.gn
+@@ -74,6 +74,12 @@ cargo_crate("lib") {
+ 
+   allow_unsafe = false
+ 
++  deps = [ "//third_party/rust/serde_core/v1:lib" ]
++  features = [
++    "serde",
++    "serde_core",
++  ]
++
+   #####################################################################
+   # Tweaking which GN `config`s apply to this target.
+ 
+diff --git a/third_party/rust/chromium_crates_io/Cargo.lock b/third_party/rust/chromium_crates_io/Cargo.lock
+index 30dc2a69d9..1ff251705f 100644
+--- a/third_party/rust/chromium_crates_io/Cargo.lock
++++ b/third_party/rust/chromium_crates_io/Cargo.lock
+@@ -3,6 +3,27 @@ version = 4
+ version = 4
+ 
+ [[package]]
++name = "adblock"
++version = "0.13.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++dependencies = [
++ "arrayvec",
++ "base64",
++ "bitflags",
++ "flatbuffers",
++ "idna",
++ "itertools",
++ "memchr",
++ "percent-encoding",
++ "regex",
++ "rustc-hash",
++ "seahash",
++ "serde",
++ "serde_json",
++ "thiserror 1.0.69",
++]
++
++[[package]]
+ name = "addr2line"
+ version = "0.27.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -92,6 +113,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ 
+ [[package]]
++name = "arrayvec"
++version = "0.7.8"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++
++[[package]]
+ name = "autocfg"
+ version = "1.5.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -165,6 +191,9 @@ name = "bitflags"
+ name = "bitflags"
+ version = "2.13.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
++dependencies = [
++ "serde_core",
++]
+ 
+ [[package]]
+ name = "brotli-decompressor"
+@@ -256,6 +285,7 @@ name = "chromium"
+ name = "chromium"
+ version = "0.1.0"
+ dependencies = [
++ "adblock",
+  "antlr4rust",
+  "anyhow",
+  "base64",
+@@ -368,7 +398,7 @@ version = "0.3.0"
+ version = "0.3.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ dependencies = [
+- "thiserror",
++ "thiserror 2.0.21",
+ ]
+ 
+ [[package]]
+@@ -684,6 +714,15 @@ dependencies = [
+ ]
+ 
+ [[package]]
++name = "flatbuffers"
++version = "25.12.19"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++dependencies = [
++ "bitflags",
++ "rustc_version",
++]
++
++[[package]]
+ name = "flate2"
+ version = "1.1.10"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -1233,6 +1272,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ 
+ [[package]]
++name = "idna"
++version = "1.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++dependencies = [
++ "idna_adapter",
++ "smallvec",
++ "utf8_iter",
++]
++
++[[package]]
++name = "idna_adapter"
++version = "1.2.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++dependencies = [
++ "icu_normalizer",
++ "icu_properties",
++]
++
++[[package]]
+ name = "image"
+ version = "0.25.10"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -1311,7 +1369,7 @@ dependencies = [
+  "jxl_transforms",
+  "num-derive",
+  "num-traits",
+- "thiserror",
++ "thiserror 2.0.21",
+ ]
+ 
+ [[package]]
+@@ -1789,6 +1847,11 @@ dependencies = [
+ ]
+ 
+ [[package]]
++name = "percent-encoding"
++version = "2.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++
++[[package]]
+ name = "pin-project-lite"
+ version = "0.2.17"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -1989,6 +2052,19 @@ dependencies = [
+ ]
+ 
+ [[package]]
++name = "rustc-hash"
++version = "2.1.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++
++[[package]]
++name = "rustc_version"
++version = "0.4.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++dependencies = [
++ "semver",
++]
++
++[[package]]
+ name = "rustfft"
+ version = "6.4.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -2030,6 +2106,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ 
+ [[package]]
++name = "seahash"
++version = "4.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++
++[[package]]
++name = "semver"
++version = "1.0.28"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++
++[[package]]
+ name = "serde"
+ version = "1.0.229"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -2179,7 +2265,7 @@ dependencies = [
+  "hashbrown",
+  "read-fonts",
+  "skrifa",
+- "thiserror",
++ "thiserror 2.0.21",
+  "write-fonts",
+ ]
+ 
+@@ -2472,10 +2558,28 @@ dependencies = [
+ 
+ [[package]]
+ name = "thiserror"
++version = "1.0.69"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++dependencies = [
++ "thiserror-impl 1.0.69",
++]
++
++[[package]]
++name = "thiserror"
+ version = "2.0.21"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ dependencies = [
+- "thiserror-impl",
++ "thiserror-impl 2.0.21",
++]
++
++[[package]]
++name = "thiserror-impl"
++version = "1.0.69"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 2.0.119",
+ ]
+ 
+ [[package]]
+diff --git a/third_party/rust/chromium_crates_io/Cargo.toml b/third_party/rust/chromium_crates_io/Cargo.toml
+index d2a0278419..2a2d806103 100644
+--- a/third_party/rust/chromium_crates_io/Cargo.toml
++++ b/third_party/rust/chromium_crates_io/Cargo.toml
+@@ -16,6 +16,7 @@ version = "0.1.0"
+ [workspace]
+ 
+ [dependencies]
++adblock = { version = "=0.13.6", default-features = false, features = ["full-regex-handling", "single-thread"] }
+ antlr4rust = "0.5.2"
+ anyhow = "1.0.98"
+ base64 = "0.23"
+diff --git a/third_party/rust/chromium_crates_io/gnrt_config.toml b/third_party/rust/chromium_crates_io/gnrt_config.toml
+index 327712f7e5..83c6b0d743 100644
+--- a/third_party/rust/chromium_crates_io/gnrt_config.toml
++++ b/third_party/rust/chromium_crates_io/gnrt_config.toml
+@@ -871,7 +871,7 @@ extra_kv = { allow_unsafe = false }
+ extra_kv = { allow_unsafe = false }
+ 
+ [crate.regex]
+-group = 'test'
++# Domicile's engine fork: adblock matches with it in the browser process.
+ allow_first_party_usage = false
+ extra_kv = { allow_unsafe = true }
+ 
+@@ -1065,7 +1065,8 @@ allow_unsafe = false
+ [crate.termcolor.extra_kv]
+ allow_unsafe = false
+ 
+-[crate.thiserror]
++# Domicile's engine fork: by epoch, since thiserror 1 writes no `private.rs`.
++[crate."thiserror@v2"]
+ build_script_outputs = [ "private.rs" ]
+ extra_kv = { allow_unsafe = false }
+ 
+@@ -1270,3 +1271,42 @@ allow_unsafe = true
+ # policy as the encoder rather than the size-oriented platform default.
+ configs_to_remove = ['//build/config/compiler:default_optimization']
+ configs_to_add = ['//build/config/compiler:optimize_speed']
++
++# Domicile's engine fork: Brave's filter engine and the crates it brings.
++# See docs/architecture/CONTENT-BLOCKING.md in domicile.
++[crate.adblock]
++extra_kv = { allow_unsafe = true }
++
++[crate.arrayvec]
++extra_kv = { allow_unsafe = true }
++
++[crate.flatbuffers]
++# The crate publishes no license file.
++license_files = ['../../../flatbuffers/v25/LICENSE']
++extra_kv = { allow_unsafe = true, allow_unstable_features = ["trusted_len"] }
++
++[crate.idna]
++extra_kv = { allow_unsafe = true }
++
++[crate.idna_adapter]
++extra_kv = { allow_unsafe = false }
++
++[crate.percent-encoding]
++extra_kv = { allow_unsafe = true }
++
++[crate.rustc-hash]
++extra_kv = { allow_unsafe = false }
++
++[crate.rustc_version]
++extra_kv = { allow_unsafe = false }
++
++[crate.seahash]
++# The crate publishes no license file.
++license_files = ['../../../seahash/v4/LICENSE']
++extra_kv = { allow_unsafe = true }
++
++[crate.semver]
++extra_kv = { allow_unsafe = true }
++
++[crate."thiserror@v1"]
++extra_kv = { allow_unsafe = false }
+diff --git a/third_party/rust/regex/v1/BUILD.gn b/third_party/rust/regex/v1/BUILD.gn
+index c96c5a5bb7..d05ad7e8a7 100644
+--- a/third_party/rust/regex/v1/BUILD.gn
++++ b/third_party/rust/regex/v1/BUILD.gn
+@@ -71,7 +71,6 @@ cargo_crate("lib") {
+   # //third_party/rust/chromium_crates_io/Cargo.toml to use
+   # it from first-party code.
+   visibility = [ "//third_party/rust/*" ]
+-  testonly = true
+ 
+   #####################################################################
+   # Tweaking which GN `config`s apply to this target.
+diff --git a/third_party/rust/regex/v1/README.chromium b/third_party/rust/regex/v1/README.chromium
+index 063e48a9e7..eeb677b7b9 100644
+--- a/third_party/rust/regex/v1/README.chromium
++++ b/third_party/rust/regex/v1/README.chromium
+@@ -5,8 +5,8 @@ Update Mechanism: Manual (https://crbug.com/449898466)
+ Update Mechanism: Manual (https://crbug.com/449898466)
+ License: Apache-2.0
+ License File: //third_party/rust/chromium_crates_io/vendor/regex-v1/LICENSE-APACHE
+-Shipped: no
+-Security Critical: no
++Shipped: yes
++Security Critical: yes
+ 
+ Description: An implementation of regular expressions for Rust. This implementation uses
+ finite automata and guarantees linear time matching on all inputs.
+-- 
+2.47.0
+

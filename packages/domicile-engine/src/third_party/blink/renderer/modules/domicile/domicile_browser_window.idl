@@ -153,4 +153,9 @@
   // `agent-<session>`, so the shell opens it without taking the user's focus.
   // Null for none. Who holds it from then on is the desk's seats'.
   readonly attribute DOMString? agent;
+
+  // The requests the engine's content blocking blocked for the page since it
+  // loaded, for a shell's badge. 0 while the config blocks nothing. See
+  // docs/architecture/CONTENT-BLOCKING.md.
+  readonly attribute unsigned long blockedRequests;
 };

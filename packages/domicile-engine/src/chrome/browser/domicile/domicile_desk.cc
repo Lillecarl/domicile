@@ -14,6 +14,7 @@
 #include "chrome/browser/domicile/domicile_browser_profiles.h"
 #include "chrome/browser/domicile/domicile_browser_windows.h"
 #include "chrome/browser/domicile/domicile_chrome_dialogs.h"
+#include "chrome/browser/domicile/domicile_content_blocking.h"
 #include "chrome/browser/domicile/domicile_desk_functions.h"
 #include "chrome/browser/domicile/domicile_device_chooser.h"
 #include "chrome/browser/domicile/domicile_devtools.h"
@@ -143,6 +144,14 @@ void StartDesk(Profile* profile) {
     return true;
   }();
   CHECK(installed);
+  // The config's ad and tracker blocking, with the user's site modes in the
+  // first profile's prefs: PostProfileInit starts the initial profile, the
+  // shell's, before any other.
+  static const bool blocking = [profile] {
+    StartContentBlocking(*profile->GetOriginalProfile()->GetPrefs());
+    return true;
+  }();
+  CHECK(blocking);
 
   PrintWithTheSystemDialog(*profile);
   DomicileWindowController::For(profile);

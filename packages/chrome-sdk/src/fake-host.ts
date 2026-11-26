@@ -186,6 +186,7 @@ export class FakeDomicileHost {
   readonly #target = new EventTarget();
   readonly #state: DomicileState = { ...UNDESCRIBED };
   #browsersOpened = 0;
+  readonly #blocking = new Map<string, string>();
 
   constructor() {
     const target = this.#target;
@@ -221,6 +222,13 @@ export class FakeDomicileHost {
           return (url: string) => {
             calls.push([name, url]);
             return Promise.resolve(this.siteFor(url));
+          };
+        } else if (name === "contentBlockingFor") {
+          return (url: string) => {
+            calls.push([name, url]);
+            return Promise.resolve(
+              this.#blocking.get(new URL(url).hostname) ?? "standard",
+            );
           };
         } else if (name === "pinBrowserSite") {
           return (site: string, profile: string) => {
@@ -367,6 +375,7 @@ export class FakeDomicileHost {
         {
           agent,
           appId,
+          blockedRequests: 0,
           height,
           id: this.#browsersOpened.toString(),
           ignoresPointer: false,
@@ -636,6 +645,14 @@ export class FakeDomicileHost {
       }),
     });
     return Promise.resolve();
+  }
+
+  /**
+   * Gives `host` the blocking the engine names `mode`, as `contentBlockingFor`
+   * answers it. A host given none is `"standard"`.
+   */
+  block(host: string, mode: string): void {
+    this.#blocking.set(host, mode);
   }
 
   /**

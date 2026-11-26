@@ -85,6 +85,18 @@ minutes:
 - Its `nix build .#engine-unit-tests` runs the C++ unit tests in that tree.
   `scripts/unit-tests.sh` runs them against any engine build tree too.
 
+## Vendored Rust crates
+
+Content blocking's crates (adblock and what it needs) are not in this
+repository. `crates/CRATES` names each one's version and `.crate` sha256, and
+`.github/scripts/engine-crates.sh` fetches them into
+`third_party/rust/chromium_crates_io/vendor` after `apply.sh`. To move one:
+change its line, its `Cargo.lock` entry in patch 0286, and gnrt's `BUILD.gn`.
+gnrt runs on a copy of `third_party/rust` and `tools/crates` with nixpkgs'
+cargo: Chromium's cargo links Ubuntu's libcurl. Then `gn format` the
+`BUILD.gn` files it writes, and keep `zune_jpeg/v0_5/README.chromium`'s
+hand-written notes.
+
 ## Rolling the pin
 
 - A repin is a pull request. The engine workflows sync the checkout (see

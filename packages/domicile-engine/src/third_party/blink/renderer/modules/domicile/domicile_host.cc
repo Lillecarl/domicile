@@ -2791,6 +2791,50 @@ ScriptPromise<IDLUndefined> DomicileHost::pinBrowserSite(
   return promise;
 }
 
+ScriptPromise<IDLString> DomicileHost::contentBlockingFor(
+    ScriptState* script_state,
+    const String& url,
+    ExceptionState& exception_state) {
+  // Resolved against this document, as browserProfileFor's is.
+  const KURL resolved = window_->CompleteURL(url);
+  if (!resolved.IsValid()) {
+    exception_state.ThrowTypeError("url must be an address");
+    return EmptyPromise();
+  }
+  if (!Ready(exception_state)) {
+    return EmptyPromise();
+  }
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLString>>(
+      script_state, exception_state.GetContext());
+  auto promise = resolver->Promise();
+  windows_->ContentBlockingFor(
+      resolved, BindOnce(
+                    [](ScriptPromiseResolver<IDLString>* resolver,
+                       const String& mode) { resolver->Resolve(mode); },
+                    WrapPersistent(resolver)));
+  return promise;
+}
+
+ScriptPromise<IDLUndefined> DomicileHost::setContentBlockingSite(
+    ScriptState* script_state,
+    const String& site,
+    const String& mode,
+    ExceptionState& exception_state) {
+  if (site.empty()) {
+    exception_state.ThrowTypeError("site must be a site, such as a host");
+    return EmptyPromise();
+  }
+  if (!Ready(exception_state)) {
+    return EmptyPromise();
+  }
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(
+      script_state, exception_state.GetContext());
+  auto promise = resolver->Promise();
+  windows_->SetContentBlockingSite(
+      site, mode, BindOnce(&ExtensionAnswered, WrapPersistent(resolver)));
+  return promise;
+}
+
 ScriptPromise<IDLUndefined> DomicileHost::setBrowserProfileExtensionEnabled(
     ScriptState* script_state,
     const String& profile,
@@ -3281,7 +3325,8 @@ void DomicileHost::ListBrowserWindows() {
         window->wants_fullscreen, window->urgent, window->ignores_pointer,
         window->shape.empty() ? String() : window->shape,
         window->opener.empty() ? String() : window->opener,
-        window->agent.empty() ? String() : String(window->agent)));
+        window->agent.empty() ? String() : String(window->agent),
+        window->blocked_requests));
   }
   browser_windows_ = MakeGarbageCollected<FrozenArray<DomicileBrowserWindow>>(
       std::move(listed));

@@ -29,7 +29,7 @@ const DOMICILE: &str = "*/domicile/*";
 /// The source files each subsystem covers, as `--vmodule` patterns: a module
 /// name, or a path pattern when it holds a slash. Domicile's files outside a
 /// `domicile/` directory, in Chromium's own files, are listed too.
-const FILES: [(Subsystem, &[&str]); 13] = [
+const FILES: [(Subsystem, &[&str]); 14] = [
     (
         Subsystem::Input,
         &[
@@ -121,6 +121,14 @@ const FILES: [(Subsystem, &[&str]); 13] = [
     (Subsystem::Clipboard, &["*clipboard*"]),
     (Subsystem::Notifications, &["*notification*"]),
     (Subsystem::Electron, &["electron_*", "domicile_electron_*"]),
+    (
+        Subsystem::ContentBlocking,
+        &[
+            "*/content_blocking/*",
+            "domicile_content_blocking*",
+            "domicile_content_filter",
+        ],
+    ),
     (
         Subsystem::Agents,
         &["domicile_devtools", "domicile_agent_*"],

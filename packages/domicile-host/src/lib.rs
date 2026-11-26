@@ -10,10 +10,10 @@ use std::collections::HashMap;
 use std::collections::BTreeMap;
 
 use domicile_protocol::{
-    AppFrame, Appearance, BoundShortcut, BrowserProfile, Capturing, ChromeMessage, DesktopStatus,
-    DisplayInfo, ExtensionSettings, HostMessage, ListedDisplay, ListedInput, ListedView,
-    ListedWindow, MonitorInfo, Notification, Owner, PortalRequest, PortalWallpaper, Theme,
-    TrayItem, WindowKind,
+    AppFrame, Appearance, BoundShortcut, BrowserProfile, Capturing, ChromeMessage, ContentBlocking,
+    DesktopStatus, DisplayInfo, ExtensionSettings, HostMessage, ListedDisplay, ListedInput,
+    ListedView, ListedWindow, MonitorInfo, Notification, Owner, PortalRequest, PortalWallpaper,
+    Theme, TrayItem, WindowKind,
 };
 
 pub mod app_names;
@@ -230,6 +230,9 @@ pub struct Host {
     /// The [`HostMessage::Spellcheck`] the config's `spellcheck` makes.
     /// `None` until set; a host without a config sends none.
     spellcheck: Option<HostMessage>,
+    /// The [`HostMessage::ContentBlocking`] the config's `content_blocking`
+    /// makes. `None` until set; a host without a config sends none.
+    content_blocking: Option<ContentBlocking>,
     /// The [`HostMessage::BrowserProfiles`] the config's `browser` makes.
     /// `None` until set; a host without a config sends none.
     browser_profiles: Option<HostMessage>,
@@ -588,6 +591,18 @@ impl Host {
     /// The spell checking message, or `None` if none was set.
     pub fn describe_spellcheck(&self) -> Option<HostMessage> {
         self.spellcheck.clone()
+    }
+
+    /// Replace what the engine blocks, for chromes that connect later.
+    pub fn set_content_blocking(&mut self, blocking: ContentBlocking) {
+        self.content_blocking = Some(blocking);
+    }
+
+    /// The content blocking message, or `None` if none was set.
+    pub fn describe_content_blocking(&self) -> Option<HostMessage> {
+        self.content_blocking
+            .clone()
+            .map(HostMessage::ContentBlocking)
     }
 
     /// Replace the keysym-to-keycode map and the shell's options, for

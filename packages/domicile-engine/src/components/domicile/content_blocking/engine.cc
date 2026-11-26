@@ -5,6 +5,7 @@
 
 #include <utility>
 
+#include "base/check.h"
 #include "base/containers/span_rust.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_view_rust.h"
@@ -16,8 +17,8 @@ namespace {
 
 // adblock-rust keeps one resolver for the process, and refuses a second.
 void EnsureDomainResolver() {
-  [[maybe_unused]] static const bool installed =
-      rust::install_domain_resolver();
+  static const bool installed = rust::install_domain_resolver();
+  CHECK(installed);
 }
 
 ::rust::Str Str(std::string_view text) {
@@ -78,7 +79,7 @@ std::unique_ptr<Engine> Engine::FromLists(
   EnsureDomainResolver();
   ::rust::Box<rust::FilterSet> set = rust::new_filter_set();
   for (const std::string& list : lists) {
-    set->add_list(base::StringViewToRustSlice(list));
+    set->add_list(Str(list));
   }
   return base::WrapUnique(
       new Engine(rust::engine_from_filter_set(std::move(set))));
@@ -151,8 +152,7 @@ std::vector<std::string> Engine::HiddenClassIdSelectors(
 }
 
 std::optional<int> ListExpiresHours(std::string_view list) {
-  const uint32_t hours =
-      rust::list_expires_hours(base::StringViewToRustSlice(list));
+  const uint32_t hours = rust::list_expires_hours(Str(list));
   if (hours == 0) {
     return std::nullopt;
   }

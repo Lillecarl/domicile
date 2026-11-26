@@ -27,6 +27,8 @@ source_set("content_blocking") {
     "domain_resolver.h",
     "engine.cc",
     "engine.h",
+    "lists.cc",
+    "lists.h",
     "request_type.cc",
     "request_type.h",
   ]
@@ -37,7 +39,10 @@ source_set("content_blocking") {
     "//services/network/public/mojom",
     "//url",
   ]
-  deps = [ "//net" ]
+  deps = [
+    "//crypto",
+    "//net",
+  ]
 }
 
 # What the compositor says to block, apart from the engine, so the control
@@ -95,6 +100,7 @@ source_set("unit_tests") {
   sources = [
     "blocker_unittest.cc",
     "engine_unittest.cc",
+    "lists_unittest.cc",
     "request_type_unittest.cc",
     "settings_unittest.cc",
   ]

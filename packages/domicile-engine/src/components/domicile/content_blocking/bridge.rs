@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 //! The engine's way into adblock-rust. Each call takes and returns plain
-//! values, and none throws: a list that is not UTF-8 adds nothing, and
-//! resources that do not parse leave the engine's resources as they were.
+//! values. Lists are `&str`, so the C++ side checks they are UTF-8 where it
+//! reads them.
 
 use std::collections::HashSet;
 
@@ -36,13 +36,13 @@ mod ffi {
         type Engine;
 
         fn new_filter_set() -> Box<FilterSet>;
-        fn add_list(self: &mut FilterSet, text: &[u8]) -> bool;
+        fn add_list(self: &mut FilterSet, text: &str);
 
         fn engine_from_filter_set(set: Box<FilterSet>) -> Box<Engine>;
         fn new_engine() -> Box<Engine>;
 
         fn install_domain_resolver() -> bool;
-        fn list_expires_hours(text: &[u8]) -> u32;
+        fn list_expires_hours(text: &str) -> u32;
 
         fn check(
             self: &Engine,
@@ -96,14 +96,8 @@ fn new_filter_set() -> Box<FilterSet> {
 }
 
 impl FilterSet {
-    fn add_list(&mut self, text: &[u8]) -> bool {
-        match std::str::from_utf8(text) {
-            Ok(text) => {
-                self.0.add_filter_list(text.to_string(), ParseOptions::default());
-                true
-            }
-            Err(_) => false,
-        }
+    fn add_list(&mut self, text: &str) {
+        self.0.add_filter_list(text.to_string(), ParseOptions::default());
     }
 }
 
@@ -132,10 +126,7 @@ fn install_domain_resolver() -> bool {
 }
 
 /// The list's `! Expires:` in hours, or 0 when it names none.
-fn list_expires_hours(text: &[u8]) -> u32 {
-    let Ok(text) = std::str::from_utf8(text) else {
-        return 0;
-    };
+fn list_expires_hours(text: &str) -> u32 {
     match adblock::lists::read_list_metadata(text).expires {
         Some(ExpiresInterval::Hours(hours)) => hours.into(),
         Some(ExpiresInterval::Days(days)) => u32::from(days) * 24,
@@ -155,6 +146,8 @@ fn request(
 }
 
 impl Engine {
+    // The request's parts as `Request::preparsed` takes them, and its two
+    // flags.
     #[allow(clippy::too_many_arguments)]
     fn check(
         &self,
@@ -195,7 +188,6 @@ impl Engine {
             .unwrap_or_default()
     }
 
-    /// Empty when the engine cannot be written.
     fn serialize(&self) -> Vec<u8> {
         self.0.serialize()
     }
@@ -218,7 +210,8 @@ impl Engine {
 
     /// adblock-rust's `UrlSpecificResources` for `url`, as JSON.
     fn cosmetic_resources(&self, url: &str) -> String {
-        serde_json::to_string(&self.0.url_cosmetic_resources(url)).unwrap_or_default()
+        serde_json::to_string(&self.0.url_cosmetic_resources(url))
+            .expect("UrlSpecificResources serializes")
     }
 
     fn hidden_class_id_selectors(
@@ -227,6 +220,8 @@ impl Engine {
         ids: &CxxVector<CxxString>,
         exceptions: &CxxVector<CxxString>,
     ) -> Vec<String> {
+        // A renderer sends these, and a renderer is not trusted: a name that
+        // is not UTF-8 matches no rule.
         let texts = |values: &CxxVector<CxxString>| -> Vec<String> {
             values.iter().filter_map(|value| value.to_str().ok().map(str::to_string)).collect()
         };

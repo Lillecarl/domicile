@@ -9,14 +9,15 @@
 #include <string>
 #include <vector>
 
+#include "base/callback_list.h"
 #include "base/files/file_path.h"
 #include "base/memory/raw_ptr.h"
-#include "base/types/expected.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
-#include "base/callback_list.h"
 #include "base/timer/timer.h"
+#include "base/types/expected.h"
 #include "components/domicile/content_blocking/blocker.h"
+#include "components/domicile/content_blocking/lists.h"
 #include "components/domicile/content_blocking/settings.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
@@ -42,14 +43,9 @@ class SimpleURLLoader;
 
 namespace domicile {
 
-// The engine's own ad and tracker blocking, for every profile. See
+// The engine's own ad and tracker blocking, for every profile, as the
+// compositor's `content_blocking` sets it. See
 // docs/architecture/CONTENT-BLOCKING.md.
-//
-// The compositor's `content_blocking` sets it. Lists given by address are
-// fetched without cookies through the browser's own network context, cached
-// in <user-data-dir>/domicile-content-blocking, and fetched again when they
-// expire. Engines are built on a worker and used on the UI thread, where
-// requests are decided.
 class ContentBlocker {
  public:
   static ContentBlocker& Get();
@@ -66,10 +62,9 @@ class ContentBlocker {
   // The mode `page`'s site has, for the shell: kOff while nothing blocks.
   content_blocking::Mode ModeForShell(const GURL& page) const;
 
-  // Sets `site`'s mode from now on, kept across restarts in the shell
-  // profile; nullopt removes the user's mode for it. Answers why not: for a
-  // site that is no host or `*.host`, one the config's sites name, and while
-  // the config blocks nothing.
+  // Sets `site`'s mode, kept in the shell profile; nullopt removes it. An
+  // error for a site that is no host or `*.host`, one the config's sites
+  // name, and while the config blocks nothing.
   base::expected<void, std::string> SetSite(
       const std::string& site,
       std::optional<content_blocking::Mode> mode);
@@ -78,13 +73,11 @@ class ContentBlocker {
   // blocking is off.
   const content_blocking::Blocker* blocker() const { return blocker_.get(); }
 
-  // Whether the config asks for blocking at all.
   bool Enabled() const { return settings_.enabled; }
 
   // The mode for a page whose top-level document is at `page`.
   content_blocking::Mode ModeFor(const GURL& page) const;
 
-  // Whether Electron apps' pages are filtered too.
   bool FiltersElectronApps() const { return settings_.electron_apps; }
 
  private:
@@ -92,8 +85,7 @@ class ContentBlocker {
   ContentBlocker();
   ~ContentBlocker();
 
-  // One list or the resources: where it comes from, its cached text, and
-  // when it was fetched.
+  // One list or the resources: its text, and when it was fetched.
   struct Source {
     std::string text;
     base::Time fetched;
@@ -107,8 +99,7 @@ class ContentBlocker {
                std::unique_ptr<network::SimpleURLLoader> loader,
                std::optional<std::string> body);
   void BuildWhenRead(uint64_t generation);
-  void Built(uint64_t generation,
-             std::unique_ptr<content_blocking::Blocker> blocker);
+  void Built(uint64_t generation, content_blocking::Built built);
   void ArmRefresh();
   void Refresh();
   // `settings_` with the user's sites, which ModeFor reads.

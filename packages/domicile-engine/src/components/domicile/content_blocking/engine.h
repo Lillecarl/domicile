@@ -66,7 +66,7 @@ struct Verdict {
 // One adblock-rust engine. Not thread-safe: it lives on one sequence.
 class Engine {
  public:
-  // The rules of every list in `lists`. A list that is not UTF-8 adds none.
+  // The rules of every list in `lists`, each UTF-8 (IsListText).
   static std::unique_ptr<Engine> FromLists(
       const std::vector<std::string>& lists);
   // An engine `Serialize` wrote, or null when `data` is not one.
@@ -76,12 +76,12 @@ class Engine {
   Engine& operator=(const Engine&) = delete;
   ~Engine();
 
-  // Empty when the engine cannot be written. Resources are not part of it.
+  // Resources are not part of it.
   std::vector<uint8_t> Serialize() const;
 
   // The scriptlets and stub resources `##+js()` and `$redirect` name, as
-  // adblock-rust's JSON list. False, and the old resources kept, when `json`
-  // is not one.
+  // adblock-rust's JSON list, in UTF-8. False, and the old resources kept,
+  // when `json` is not one.
   bool UseResources(std::string_view json);
 
   // `previously_matched` skips the blocking rules and looks for exceptions
@@ -113,7 +113,7 @@ class Engine {
   ::rust::Box<rust::Engine> engine_;
 };
 
-// A list's `! Expires:` in hours, or nullopt when it names none.
+// A UTF-8 list's `! Expires:` in hours, or nullopt when it names none.
 std::optional<int> ListExpiresHours(std::string_view list);
 
 }  // namespace domicile::content_blocking

@@ -6,13 +6,10 @@
 #include <algorithm>
 #include <utility>
 
-#include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
 #include "base/path_service.h"
-#include "base/strings/string_number_conversions.h"
-#include "base/strings/string_util.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/thread_pool.h"
 #include "chrome/browser/browser_process.h"
@@ -21,11 +18,10 @@
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/domicile/browser/control_channel.h"
-#include "components/domicile/content_blocking/engine.h"
+#include "components/domicile/content_blocking/lists.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "crypto/sha2.h"
 #include "net/base/net_errors.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
@@ -37,117 +33,13 @@ namespace domicile {
 
 namespace {
 
-using content_blocking::Blocker;
-using content_blocking::Engine;
+using content_blocking::IsAddress;
+using content_blocking::Lifetime;
 using content_blocking::Mode;
 using content_blocking::Settings;
 
-// The most a list on disk may hold. A fetched one may hold
-// SimpleURLLoader::kMaxBoundedStringDownloadSize, 5M; EasyList is under 2M.
-constexpr size_t kMostBytes = 32 * 1024 * 1024;
-
-// A list's `! Expires:`, within the hour to 14 days Adblock Plus allows, and
-// a day for a list that names none.
-base::TimeDelta Lifetime(std::string_view text) {
-  const int hours = std::clamp(
-      content_blocking::ListExpiresHours(text).value_or(24), 1, 14 * 24);
-  return base::Hours(hours);
-}
-
-bool IsAddress(std::string_view source) {
-  return base::StartsWith(source, "https://") ||
-         base::StartsWith(source, "http://");
-}
-
-std::string CacheName(std::string_view source) {
-  return base::ToLowerASCII(
-             base::HexEncode(crypto::SHA256HashString(source)).substr(0, 32)) +
-         ".txt";
-}
-
-struct Read {
-  std::string text;
-  base::Time modified;
-};
-
-// The text of each source as it is on disk: a path itself, an address its
-// cached copy. One that cannot be read is left out.
-std::map<std::string, Read> ReadSources(base::FilePath cache,
-                                        std::vector<std::string> sources) {
-  std::map<std::string, Read> read;
-  for (const std::string& source : sources) {
-    const base::FilePath path = IsAddress(source)
-                                    ? cache.AppendASCII(CacheName(source))
-                                    : base::FilePath(source);
-    Read entry;
-    base::File::Info info;
-    if (base::GetFileInfo(path, &info) &&
-        base::ReadFileToStringWithMaxSize(path, &entry.text, kMostBytes)) {
-      entry.modified = info.last_modified;
-      read.emplace(source, std::move(entry));
-    }
-  }
-  return read;
-}
-
-void WriteCached(base::FilePath cache, std::string source, std::string text) {
-  if (!base::CreateDirectory(cache) ||
-      !base::WriteFile(cache.AppendASCII(CacheName(source)), text)) {
-    LOG(WARNING) << "domicile: content blocking could not cache " << source
-                 << " in " << cache;
-  }
-}
-
-// An engine for `lists`, read from `cache` when it holds one built from the
-// same texts, else built and written there. Parsing EasyList and uBlock
-// Origin's lists takes about a second; reading the serialized engine much
-// less. adblock-rust's format changes with its version, and a file it cannot
-// read is built again.
-std::unique_ptr<Engine> Cached(const base::FilePath& cache,
-                               std::string_view name,
-                               const std::vector<std::string>& lists) {
-  std::string key = "adblock 0.13.6\n";
-  for (const std::string& list : lists) {
-    key += crypto::SHA256HashString(list);
-  }
-  key = base::HexEncode(crypto::SHA256HashString(key));
-  const base::FilePath path = cache.AppendASCII(std::string(name) + ".dat");
-  const base::FilePath key_path =
-      cache.AppendASCII(std::string(name) + ".key");
-  std::string stored_key;
-  std::string stored;
-  if (base::ReadFileToString(key_path, &stored_key) && stored_key == key &&
-      base::ReadFileToStringWithMaxSize(path, &stored, 256 * 1024 * 1024)) {
-    if (std::unique_ptr<Engine> engine =
-            Engine::FromSerialized(base::as_byte_span(stored))) {
-      return engine;
-    }
-  }
-  std::unique_ptr<Engine> engine = Engine::FromLists(lists);
-  const std::vector<uint8_t> written = engine->Serialize();
-  if (!written.empty() && base::CreateDirectory(cache) &&
-      base::WriteFile(path, written) && base::WriteFile(key_path, key)) {
-    return engine;
-  }
-  LOG(WARNING) << "domicile: content blocking could not keep its " << name
-               << " engine in " << cache << "; it is built on each start.";
-  return engine;
-}
-
-std::unique_ptr<Blocker> Build(base::FilePath cache,
-                               std::vector<std::string> lists,
-                               std::vector<std::string> filters,
-                               std::string resources) {
-  auto listed = Cached(cache, "lists", lists);
-  auto own = Engine::FromLists({base::JoinString(filters, "\n")});
-  if (!resources.empty() &&
-      !(listed->UseResources(resources) && own->UseResources(resources))) {
-    LOG(WARNING) << "domicile: content blocking's resources are not "
-                    "adblock-rust's resource list; ##+js() and $redirect "
-                    "rules find none.";
-  }
-  return std::make_unique<Blocker>(std::move(listed), std::move(own));
-}
+// The user's site modes, by site, as mode names.
+constexpr char kSitesPref[] = "domicile.content_blocking.sites";
 
 const net::NetworkTrafficAnnotationTag kTrafficAnnotation =
     net::DefineNetworkTrafficAnnotation("domicile_content_blocking", R"(
@@ -176,9 +68,6 @@ ContentBlocker& ContentBlocker::Get() {
 ContentBlocker::ContentBlocker() = default;
 ContentBlocker::~ContentBlocker() = default;
 
-// The user's site modes, by site, as mode names.
-constexpr char kSitesPref[] = "domicile.content_blocking.sites";
-
 Mode ContentBlocker::ModeFor(const GURL& page) const {
   return content_blocking::ModeFor(merged_, page);
 }
@@ -201,6 +90,10 @@ void ContentBlocker::Merge() {
                             : std::nullopt;
       if (mode && content_blocking::IsBlockingSite(site)) {
         sites.emplace(site, *mode);
+      } else {
+        LOG(ERROR) << "domicile: content blocking leaves out the stored mode "
+                   << value << " for " << site
+                   << ": it is no mode for a site such as `github.com`";
       }
     }
   }
@@ -274,22 +167,27 @@ void ContentBlocker::ReadCached(uint64_t generation) {
   }
   base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
-      base::BindOnce(&ReadSources, CacheDirectory(), std::move(names)),
+      base::BindOnce(&content_blocking::ReadFrom, CacheDirectory(),
+                     std::move(names)),
       base::BindOnce(
           [](base::WeakPtr<ContentBlocker> self, uint64_t generation,
-             std::map<std::string, Read> read) {
+             content_blocking::ReadSources read) {
             if (!self || generation != self->generation_) {
               return;
             }
+            for (const std::string& error : read.errors) {
+              LOG(ERROR) << "domicile: content blocking blocks without "
+                         << error;
+            }
             const base::Time now = base::Time::Now();
             for (auto& [name, source] : self->sources_) {
-              auto found = read.find(name);
-              if (found != read.end()) {
+              auto found = read.texts.find(name);
+              if (found != read.texts.end()) {
                 source.text = std::move(found->second.text);
                 source.fetched = found->second.modified;
               }
               const bool stale =
-                  found == read.end() ||
+                  found == read.texts.end() ||
                   source.fetched + Lifetime(source.text) < now;
               if (IsAddress(name) && stale) {
                 self->Fetch(generation, name);
@@ -326,23 +224,35 @@ void ContentBlocker::Fetched(uint64_t generation,
   if (generation != generation_) {
     return;
   }
+  // Only SetSettings changes the sources, and it moves the generation.
   auto entry = sources_.find(source);
-  if (entry == sources_.end()) {
-    return;
-  }
-  if (body) {
+  CHECK(entry != sources_.end());
+  if (body && content_blocking::IsListText(*body)) {
     entry->second.text = *body;
     entry->second.fetched = base::Time::Now();
     base::ThreadPool::PostTask(
         FROM_HERE,
         {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
          base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-        base::BindOnce(&WriteCached, CacheDirectory(), source,
-                       std::move(*body)));
+        base::BindOnce(
+            [](base::FilePath cache, std::string source, std::string text) {
+              if (!content_blocking::KeepFetched(cache, source, text)) {
+                LOG(WARNING) << "domicile: content blocking could not cache "
+                             << source << " in " << cache;
+              }
+            },
+            CacheDirectory(), source, std::move(*body)));
   } else {
     // A cached copy, if any, stays in use, and is fetched again later.
-    LOG(WARNING) << "domicile: content blocking could not fetch " << source
-                 << ": " << net::ErrorToString(loader->NetError());
+    const std::string why = body ? "it is not UTF-8"
+                                 : net::ErrorToString(loader->NetError());
+    if (entry->second.text.empty()) {
+      LOG(ERROR) << "domicile: content blocking blocks without " << source
+                 << ", which it could not fetch: " << why;
+    } else {
+      LOG(WARNING) << "domicile: content blocking keeps its cached copy of "
+                   << source << ", which it could not fetch: " << why;
+    }
   }
   entry->second.read = true;
   BuildWhenRead(generation);
@@ -365,18 +275,35 @@ void ContentBlocker::BuildWhenRead(uint64_t generation) {
       FROM_HERE,
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-      base::BindOnce(&Build, CacheDirectory(), std::move(lists),
-                     settings_.filters, std::move(resources)),
+      base::BindOnce(
+          [](base::FilePath cache, std::vector<std::string> lists,
+             std::vector<std::string> filters, std::string resources) {
+            return content_blocking::BuildBlocker(cache, lists, filters,
+                                                  resources);
+          },
+          CacheDirectory(), std::move(lists), settings_.filters,
+          std::move(resources)),
       base::BindOnce(&ContentBlocker::Built, weak_factory_.GetWeakPtr(),
                      generation));
 }
 
 void ContentBlocker::Built(uint64_t generation,
-                           std::unique_ptr<Blocker> blocker) {
+                           content_blocking::Built built) {
   if (generation != generation_) {
     return;
   }
-  blocker_ = std::move(blocker);
+  if (!built.kept) {
+    LOG(WARNING) << "domicile: content blocking could not keep its lists' "
+                    "engine in "
+                 << CacheDirectory() << "; it is built on each start.";
+  }
+  if (!built.resources_used) {
+    LOG(ERROR) << "domicile: content blocking's resources "
+               << settings_.resources
+               << " are not adblock-rust's resource list; ##+js() and "
+                  "$redirect rules find none.";
+  }
+  blocker_ = std::move(built.blocker);
   VLOG(1) << "domicile: content blocking built from "
           << settings_.lists.size() << " lists";
   ArmRefresh();

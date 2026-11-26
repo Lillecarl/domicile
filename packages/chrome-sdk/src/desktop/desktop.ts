@@ -10,6 +10,8 @@ import type { Capture } from "./capture";
 import { capture } from "./capture";
 import type { Clipboard } from "./clipboard";
 import { clipboard } from "./clipboard";
+import type { ConfigNamespace } from "./config";
+import { config } from "./config";
 import type { Dbus } from "./dbus";
 import { dbus } from "./dbus";
 import type { Displays } from "./displays";
@@ -71,6 +73,8 @@ export type Domicile = {
   readonly browser: Browser;
   readonly capture: Capture;
   readonly clipboard: Clipboard;
+  /** Temporary changes to the desk's config. */
+  readonly config: ConfigNamespace;
   readonly dbus: Dbus;
   readonly displays: Displays;
   readonly downloads: Downloads;
@@ -112,11 +116,13 @@ const built = new WeakMap<DomicileHost, Domicile>();
 const build = (host: DomicileHost): Domicile => {
   const calls = system(host);
   const bus = dbus(calls);
+  const changes = config(host);
   return {
     appearance: appearance(host),
-    browser: browser(host),
+    browser: browser(host, changes),
     capture: capture(calls),
     clipboard: clipboard(host),
+    config: changes,
     dbus: bus,
     displays: displays(host, calls),
     downloads: downloads(host),

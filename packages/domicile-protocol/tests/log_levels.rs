@@ -70,6 +70,7 @@ fn every_subsystem_has_a_name_and_a_description() {
             "clipboard",
             "notifications",
             "electron",
+            "content_blocking",
             "agents",
             "shell",
             "session",

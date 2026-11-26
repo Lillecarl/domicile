@@ -9,7 +9,7 @@ use tracing_subscriber::{reload, EnvFilter, Registry};
 
 /// The modules under `src/` each subsystem covers. Every module is in exactly
 /// one; a test checks this, so a new module has to pick one.
-const MODULES: [(Subsystem, &[&str]); 13] = [
+const MODULES: [(Subsystem, &[&str]); 14] = [
     (
         Subsystem::Input,
         &[
@@ -129,6 +129,8 @@ const MODULES: [(Subsystem, &[&str]); 13] = [
     (Subsystem::Clipboard, &["clipboard", "selections"]),
     (Subsystem::Notifications, &["notifications", "bell", "tray"]),
     (Subsystem::Electron, &["electron_apps"]),
+    // The engine blocks; the compositor only hands it the config.
+    (Subsystem::ContentBlocking, &[]),
     (Subsystem::Agents, &["web_agents"]),
     (
         Subsystem::Shell,

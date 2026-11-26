@@ -126,6 +126,7 @@ last until the desktop restarts.
 | `clipboard` | Copy and paste |
 | `notifications` | Notifications and the system tray |
 | `electron` | Electron apps on the engine |
+| `content_blocking` | Ad and tracker blocking in the engine |
 | `agents` | Agents that use the desktop |
 | `shell` | The shell and its connection to the desktop |
 | `session` | Starting, stopping and the login session |

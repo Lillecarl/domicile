@@ -3727,6 +3727,7 @@ pub enum Subsystem {
     Clipboard,
     Notifications,
     Electron,
+    ContentBlocking,
     Agents,
     Shell,
     Session,
@@ -3734,7 +3735,7 @@ pub enum Subsystem {
 
 impl Subsystem {
     /// Every subsystem, in the order help lists them.
-    pub const ALL: [Subsystem; 13] = [
+    pub const ALL: [Subsystem; 14] = [
         Subsystem::Input,
         Subsystem::Displays,
         Subsystem::Windows,
@@ -3745,6 +3746,7 @@ impl Subsystem {
         Subsystem::Clipboard,
         Subsystem::Notifications,
         Subsystem::Electron,
+        Subsystem::ContentBlocking,
         Subsystem::Agents,
         Subsystem::Shell,
         Subsystem::Session,
@@ -3763,6 +3765,7 @@ impl Subsystem {
             Subsystem::Clipboard => "clipboard",
             Subsystem::Notifications => "notifications",
             Subsystem::Electron => "electron",
+            Subsystem::ContentBlocking => "content_blocking",
             Subsystem::Agents => "agents",
             Subsystem::Shell => "shell",
             Subsystem::Session => "session",
@@ -3782,6 +3785,7 @@ impl Subsystem {
             Subsystem::Clipboard => "Copy and paste",
             Subsystem::Notifications => "Notifications and the system tray",
             Subsystem::Electron => "Electron apps on the engine",
+            Subsystem::ContentBlocking => "Ad and tracker blocking in the engine",
             Subsystem::Agents => "Agents that use the desktop",
             Subsystem::Shell => "The shell and its connection to the desktop",
             Subsystem::Session => "Starting, stopping and the login session",

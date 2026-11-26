@@ -14,6 +14,7 @@
 #include "chrome/browser/domicile/domicile_browser_profiles.h"
 #include "chrome/browser/domicile/domicile_browser_windows.h"
 #include "chrome/browser/domicile/domicile_chrome_dialogs.h"
+#include "chrome/browser/domicile/domicile_content_blocking.h"
 #include "chrome/browser/domicile/domicile_desk_functions.h"
 #include "chrome/browser/domicile/domicile_device_chooser.h"
 #include "chrome/browser/domicile/domicile_devtools.h"
@@ -121,6 +122,8 @@ void StartDesk(Profile* profile) {
     // The config's spell checking, and the context menu's "Add to
     // dictionary".
     StartSpellcheck();
+    // The config's ad and tracker blocking.
+    StartContentBlocking();
     // Agents' own pointers and keyboards in the browser's pages.
     StartAgentInput();
     // Camera and microphone requests, asked through the shell's prompt.

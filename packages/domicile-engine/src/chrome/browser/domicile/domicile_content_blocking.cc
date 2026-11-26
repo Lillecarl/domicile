@@ -1,0 +1,324 @@
+// Copyright 2026 Connor Prussin
+// SPDX-License-Identifier: MIT
+
+#include "chrome/browser/domicile/domicile_content_blocking.h"
+
+#include <algorithm>
+#include <utility>
+
+#include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/logging.h"
+#include "base/no_destructor.h"
+#include "base/path_service.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
+#include "base/task/bind_post_task.h"
+#include "base/task/thread_pool.h"
+#include "chrome/browser/browser_process.h"
+#include "chrome/common/chrome_paths.h"
+#include "components/domicile/browser/control_channel.h"
+#include "components/domicile/content_blocking/engine.h"
+#include "content/public/browser/browser_thread.h"
+#include "crypto/sha2.h"
+#include "net/base/net_errors.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/simple_url_loader.h"
+#include "url/gurl.h"
+
+namespace domicile {
+
+namespace {
+
+using content_blocking::Blocker;
+using content_blocking::Engine;
+using content_blocking::Mode;
+using content_blocking::Settings;
+
+// The most a list on disk may hold. A fetched one may hold
+// SimpleURLLoader::kMaxBoundedStringDownloadSize, 5M; EasyList is under 2M.
+constexpr size_t kMostBytes = 32 * 1024 * 1024;
+
+// A list's `! Expires:`, within the hour to 14 days Adblock Plus allows, and
+// a day for a list that names none.
+base::TimeDelta Lifetime(std::string_view text) {
+  const int hours = std::clamp(
+      content_blocking::ListExpiresHours(text).value_or(24), 1, 14 * 24);
+  return base::Hours(hours);
+}
+
+bool IsAddress(std::string_view source) {
+  return base::StartsWith(source, "https://") ||
+         base::StartsWith(source, "http://");
+}
+
+std::string CacheName(std::string_view source) {
+  return base::ToLowerASCII(
+             base::HexEncode(crypto::SHA256HashString(source)).substr(0, 32)) +
+         ".txt";
+}
+
+struct Read {
+  std::string text;
+  base::Time modified;
+};
+
+// The text of each source as it is on disk: a path itself, an address its
+// cached copy. One that cannot be read is left out.
+std::map<std::string, Read> ReadSources(base::FilePath cache,
+                                        std::vector<std::string> sources) {
+  std::map<std::string, Read> read;
+  for (const std::string& source : sources) {
+    const base::FilePath path = IsAddress(source)
+                                    ? cache.AppendASCII(CacheName(source))
+                                    : base::FilePath(source);
+    Read entry;
+    base::File::Info info;
+    if (base::GetFileInfo(path, &info) &&
+        base::ReadFileToStringWithMaxSize(path, &entry.text, kMostBytes)) {
+      entry.modified = info.last_modified;
+      read.emplace(source, std::move(entry));
+    }
+  }
+  return read;
+}
+
+void WriteCached(base::FilePath cache, std::string source, std::string text) {
+  if (!base::CreateDirectory(cache) ||
+      !base::WriteFile(cache.AppendASCII(CacheName(source)), text)) {
+    LOG(WARNING) << "domicile: content blocking could not cache " << source
+                 << " in " << cache;
+  }
+}
+
+std::unique_ptr<Blocker> Build(std::vector<std::string> lists,
+                               std::vector<std::string> filters,
+                               std::string resources) {
+  auto listed = Engine::FromLists(lists);
+  auto own = Engine::FromLists({base::JoinString(filters, "\n")});
+  if (!resources.empty() &&
+      !(listed->UseResources(resources) && own->UseResources(resources))) {
+    LOG(WARNING) << "domicile: content blocking's resources are not "
+                    "adblock-rust's resource list; ##+js() and $redirect "
+                    "rules find none.";
+  }
+  return std::make_unique<Blocker>(std::move(listed), std::move(own));
+}
+
+const net::NetworkTrafficAnnotationTag kTrafficAnnotation =
+    net::DefineNetworkTrafficAnnotation("domicile_content_blocking", R"(
+      semantics {
+        sender: "Domicile content blocking"
+        description:
+          "Downloads the filter lists and resources the desk's config names "
+          "for blocking ads and trackers."
+        trigger: "The config's content_blocking, and each list's expiry."
+        data: "None; the request carries no cookies."
+        destination: OTHER
+      }
+      policy {
+        cookies_allowed: NO
+        setting: "Leave content_blocking out of the desk's config."
+      })");
+
+}  // namespace
+
+// static
+ContentBlocker& ContentBlocker::Get() {
+  static base::NoDestructor<ContentBlocker> blocker;
+  return *blocker;
+}
+
+ContentBlocker::ContentBlocker() = default;
+ContentBlocker::~ContentBlocker() = default;
+
+Mode ContentBlocker::ModeFor(const GURL& page) const {
+  return content_blocking::ModeFor(settings_, page);
+}
+
+base::FilePath ContentBlocker::CacheDirectory() const {
+  base::FilePath data;
+  base::PathService::Get(chrome::DIR_USER_DATA, &data);
+  return data.AppendASCII("domicile-content-blocking");
+}
+
+void ContentBlocker::SetSettings(const Settings& settings) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  if (settings == settings_) {
+    return;
+  }
+  settings_ = settings;
+  ++generation_;
+  refresh_.Stop();
+  sources_.clear();
+  if (!settings_.enabled) {
+    blocker_.reset();
+    return;
+  }
+  for (const std::string& list : settings_.lists) {
+    sources_.emplace(list, Source());
+  }
+  if (!settings_.resources.empty()) {
+    sources_.emplace(settings_.resources, Source());
+  }
+  ReadCached(generation_);
+}
+
+void ContentBlocker::ReadCached(uint64_t generation) {
+  std::vector<std::string> names;
+  for (const auto& [name, source] : sources_) {
+    names.push_back(name);
+  }
+  base::ThreadPool::PostTaskAndReplyWithResult(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+      base::BindOnce(&ReadSources, CacheDirectory(), std::move(names)),
+      base::BindOnce(
+          [](base::WeakPtr<ContentBlocker> self, uint64_t generation,
+             std::map<std::string, Read> read) {
+            if (!self || generation != self->generation_) {
+              return;
+            }
+            const base::Time now = base::Time::Now();
+            for (auto& [name, source] : self->sources_) {
+              auto found = read.find(name);
+              if (found != read.end()) {
+                source.text = std::move(found->second.text);
+                source.fetched = found->second.modified;
+              }
+              const bool stale =
+                  found == read.end() ||
+                  source.fetched + Lifetime(source.text) < now;
+              if (IsAddress(name) && stale) {
+                self->Fetch(generation, name);
+              } else {
+                source.read = true;
+              }
+            }
+            self->BuildWhenRead(generation);
+          },
+          weak_factory_.GetWeakPtr(), generation));
+}
+
+void ContentBlocker::Fetch(uint64_t generation, const std::string& source) {
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = GURL(source);
+  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
+  auto loader = network::SimpleURLLoader::Create(std::move(request),
+                                                 kTrafficAnnotation);
+  loader->SetRetryOptions(
+      2, network::SimpleURLLoader::RETRY_ON_NETWORK_CHANGE |
+             network::SimpleURLLoader::RETRY_ON_5XX);
+  network::SimpleURLLoader* raw = loader.get();
+  raw->DownloadToString(
+      g_browser_process->shared_url_loader_factory().get(),
+      base::BindOnce(&ContentBlocker::Fetched, weak_factory_.GetWeakPtr(),
+                     generation, source, std::move(loader)),
+      network::SimpleURLLoader::kMaxBoundedStringDownloadSize);
+}
+
+void ContentBlocker::Fetched(uint64_t generation,
+                             std::string source,
+                             std::unique_ptr<network::SimpleURLLoader> loader,
+                             std::optional<std::string> body) {
+  if (generation != generation_) {
+    return;
+  }
+  auto entry = sources_.find(source);
+  if (entry == sources_.end()) {
+    return;
+  }
+  if (body) {
+    entry->second.text = *body;
+    entry->second.fetched = base::Time::Now();
+    base::ThreadPool::PostTask(
+        FROM_HERE,
+        {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+         base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
+        base::BindOnce(&WriteCached, CacheDirectory(), source,
+                       std::move(*body)));
+  } else {
+    // A cached copy, if any, stays in use, and is fetched again later.
+    LOG(WARNING) << "domicile: content blocking could not fetch " << source
+                 << ": " << net::ErrorToString(loader->NetError());
+  }
+  entry->second.read = true;
+  BuildWhenRead(generation);
+}
+
+void ContentBlocker::BuildWhenRead(uint64_t generation) {
+  if (std::ranges::any_of(sources_, [](const auto& entry) {
+        return !entry.second.read;
+      })) {
+    return;
+  }
+  std::vector<std::string> lists;
+  for (const std::string& list : settings_.lists) {
+    lists.push_back(sources_[list].text);
+  }
+  std::string resources = settings_.resources.empty()
+                              ? std::string()
+                              : sources_[settings_.resources].text;
+  base::ThreadPool::PostTaskAndReplyWithResult(
+      FROM_HERE,
+      {base::TaskPriority::USER_VISIBLE,
+       base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
+      base::BindOnce(&Build, std::move(lists), settings_.filters,
+                     std::move(resources)),
+      base::BindOnce(&ContentBlocker::Built, weak_factory_.GetWeakPtr(),
+                     generation));
+}
+
+void ContentBlocker::Built(uint64_t generation,
+                           std::unique_ptr<Blocker> blocker) {
+  if (generation != generation_) {
+    return;
+  }
+  blocker_ = std::move(blocker);
+  VLOG(1) << "domicile: content blocking built from "
+          << settings_.lists.size() << " lists";
+  ArmRefresh();
+}
+
+void ContentBlocker::ArmRefresh() {
+  std::optional<base::Time> next;
+  for (const auto& [name, source] : sources_) {
+    if (IsAddress(name)) {
+      const base::Time due = source.fetched + Lifetime(source.text);
+      next = next ? std::min(*next, due) : due;
+    }
+  }
+  if (next) {
+    refresh_.Start(FROM_HERE,
+                   std::max(*next - base::Time::Now(), base::Minutes(1)),
+                   base::BindOnce(&ContentBlocker::Refresh,
+                                  base::Unretained(this)));
+  }
+}
+
+void ContentBlocker::Refresh() {
+  const base::Time now = base::Time::Now();
+  bool fetching = false;
+  for (auto& [name, source] : sources_) {
+    if (IsAddress(name) && source.fetched + Lifetime(source.text) <= now) {
+      source.read = false;
+      fetching = true;
+      Fetch(generation_, name);
+    }
+  }
+  if (!fetching) {
+    ArmRefresh();
+  }
+}
+
+void StartContentBlocking() {
+  ContentBlocker::Get();
+  SetContentBlockingSink(base::BindPostTask(
+      content::GetUIThreadTaskRunner({}),
+      base::BindRepeating([](const content_blocking::Settings& settings) {
+        ContentBlocker::Get().SetSettings(settings);
+      })));
+}
+
+}  // namespace domicile

@@ -1,0 +1,46 @@
+# Copyright 2026 Connor Prussin
+# SPDX-License-Identifier: MIT
+
+import("//build/rust/rust_static_library.gni")
+
+# The engine's content blocking: Brave's adblock-rust, and what the browser
+# asks of it. See docs/architecture/CONTENT-BLOCKING.md.
+
+rust_static_library("bridge") {
+  crate_root = "bridge.rs"
+  allow_unsafe = true
+  sources = [ crate_root ]
+  cxx_bindings = [ crate_root ]
+  visibility = [ ":*" ]
+  deps = [
+    "//third_party/rust/adblock/v0_13:lib",
+    "//third_party/rust/serde_json/v1:lib",
+  ]
+}
+
+source_set("content_blocking") {
+  sources = [
+    "domain_resolver.cc",
+    "domain_resolver.h",
+    "engine.cc",
+    "engine.h",
+  ]
+  public_deps = [
+    ":bridge",
+    "//base",
+    "//url",
+  ]
+  deps = [ "//net" ]
+}
+
+source_set("unit_tests") {
+  testonly = true
+  sources = [ "engine_unittest.cc" ]
+  deps = [
+    ":content_blocking",
+    "//base",
+    "//testing/gmock",
+    "//testing/gtest",
+    "//url",
+  ]
+}

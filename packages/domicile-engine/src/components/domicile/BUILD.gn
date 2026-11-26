@@ -1781,6 +1781,7 @@ source_set("unit_tests") {
     ":will_navigate",
     "//cc/domicile:display_regions",
     "//cc/domicile:unit_tests",
+    "//components/domicile/content_blocking:unit_tests",
     "//components/domicile/mojom",
     "//components/domicile/engine:broker_socket_unit_tests",
     "//components/domicile/engine:buffer_color_unit_tests",

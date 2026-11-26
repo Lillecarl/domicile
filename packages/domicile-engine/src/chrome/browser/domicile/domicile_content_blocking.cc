@@ -98,10 +98,47 @@ void WriteCached(base::FilePath cache, std::string source, std::string text) {
   }
 }
 
-std::unique_ptr<Blocker> Build(std::vector<std::string> lists,
+// An engine for `lists`, read from `cache` when it holds one built from the
+// same texts, else built and written there. Parsing EasyList and uBlock
+// Origin's lists takes about a second; reading the serialized engine much
+// less. adblock-rust's format changes with its version, and a file it cannot
+// read is built again.
+std::unique_ptr<Engine> Cached(const base::FilePath& cache,
+                               std::string_view name,
+                               const std::vector<std::string>& lists) {
+  std::string key = "adblock 0.13.6\n";
+  for (const std::string& list : lists) {
+    key += crypto::SHA256HashString(list);
+  }
+  key = base::HexEncode(crypto::SHA256HashString(key));
+  const base::FilePath path = cache.AppendASCII(std::string(name) + ".dat");
+  const base::FilePath key_path =
+      cache.AppendASCII(std::string(name) + ".key");
+  std::string stored_key;
+  std::string stored;
+  if (base::ReadFileToString(key_path, &stored_key) && stored_key == key &&
+      base::ReadFileToStringWithMaxSize(path, &stored, 256 * 1024 * 1024)) {
+    if (std::unique_ptr<Engine> engine =
+            Engine::FromSerialized(base::as_byte_span(stored))) {
+      return engine;
+    }
+  }
+  std::unique_ptr<Engine> engine = Engine::FromLists(lists);
+  const std::vector<uint8_t> written = engine->Serialize();
+  if (!written.empty() && base::CreateDirectory(cache) &&
+      base::WriteFile(path, written) && base::WriteFile(key_path, key)) {
+    return engine;
+  }
+  LOG(WARNING) << "domicile: content blocking could not keep its " << name
+               << " engine in " << cache << "; it is built on each start.";
+  return engine;
+}
+
+std::unique_ptr<Blocker> Build(base::FilePath cache,
+                               std::vector<std::string> lists,
                                std::vector<std::string> filters,
                                std::string resources) {
-  auto listed = Engine::FromLists(lists);
+  auto listed = Cached(cache, "lists", lists);
   auto own = Engine::FromLists({base::JoinString(filters, "\n")});
   if (!resources.empty() &&
       !(listed->UseResources(resources) && own->UseResources(resources))) {
@@ -326,10 +363,10 @@ void ContentBlocker::BuildWhenRead(uint64_t generation) {
                               : sources_[settings_.resources].text;
   base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE,
-      {base::TaskPriority::USER_VISIBLE,
+      {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-      base::BindOnce(&Build, std::move(lists), settings_.filters,
-                     std::move(resources)),
+      base::BindOnce(&Build, CacheDirectory(), std::move(lists),
+                     settings_.filters, std::move(resources)),
       base::BindOnce(&ContentBlocker::Built, weak_factory_.GetWeakPtr(),
                      generation));
 }

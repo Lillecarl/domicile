@@ -20,7 +20,14 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/system/data_pipe.h"
+#include "content/public/browser/storage_partition.h"
+#include "net/base/address_list.h"
 #include "net/base/data_url.h"
+#include "net/base/host_port_pair.h"
+#include "net/base/network_anonymization_key.h"
+#include "net/base/proxy_server.h"
+#include "net/dns/public/dns_query_type.h"
+#include "net/proxy_resolution/proxy_info.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
@@ -29,8 +36,13 @@
 #include "services/network/public/cpp/parsed_headers.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/self_deleting_url_loader_factory.h"
+#include "services/network/public/cpp/simple_host_resolver.h"
 #include "services/network/public/cpp/url_loader_completion_status.h"
 #include "services/network/public/cpp/url_loader_factory_builder.h"
+#include "services/network/public/mojom/early_hints.mojom.h"
+#include "services/network/public/mojom/host_resolver.mojom.h"
+#include "services/network/public/mojom/network_context.mojom.h"
+#include "services/network/public/mojom/proxy_lookup_client.mojom.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
@@ -90,9 +102,11 @@ content_blocking::Request FilterRequest(
 
 // One request, from the page's loader to the network's.
 class Loader final : public network::mojom::URLLoader,
-                     public network::mojom::URLLoaderClient {
+                     public network::mojom::URLLoaderClient,
+                     public network::mojom::ProxyLookupClient {
  public:
   Loader(Mode mode,
+         content::GlobalRenderFrameHostId frame,
          mojo::PendingRemote<network::mojom::URLLoaderFactory> network,
          int32_t request_id,
          uint32_t options,
@@ -101,6 +115,7 @@ class Loader final : public network::mojom::URLLoader,
          mojo::PendingRemote<network::mojom::URLLoaderClient> client,
          const net::MutableNetworkTrafficAnnotationTag& traffic_annotation)
       : mode_(mode),
+        frame_(frame),
         network_(std::move(network)),
         request_id_(request_id),
         options_(options),
@@ -124,8 +139,35 @@ class Loader final : public network::mojom::URLLoader,
       case Decision::Kind::kRewrite:
         return RedirectTo(decision.url);
       case Decision::Kind::kAllow:
-        return StartOnTheNetwork();
+        return Uncloak();
     }
+  }
+
+  // network::mojom::ProxyLookupClient:
+  void OnProxyLookupComplete(
+      int32_t net_error,
+      const std::optional<net::ProxyInfo>& proxy_info) override {
+    proxy_lookup_.reset();
+    // Through a proxy, the name this host resolves to here is not the one
+    // the request reaches, and a lookup would tell the DNS server what the
+    // proxy is meant to hide. Brave skips these too.
+    if (net_error != net::OK || !proxy_info || !proxy_info->is_direct()) {
+      return StartOnTheNetwork();
+    }
+    content::RenderFrameHost* frame = content::RenderFrameHost::FromID(frame_);
+    if (frame == nullptr) {
+      return StartOnTheNetwork();
+    }
+    resolver_ = network::SimpleHostResolver::Create(
+        frame->GetStoragePartition()->GetNetworkContext());
+    auto parameters = network::mojom::ResolveHostParameters::New();
+    parameters->include_canonical_name = true;
+    parameters->dns_query_type = net::DnsQueryType::A;
+    resolver_->ResolveHost(network::mojom::HostResolverHost::NewHostPortPair(
+                               net::HostPortPair::FromURL(request_.url)),
+                           anonymization_key_, std::move(parameters),
+                           base::BindOnce(&Loader::Resolved,
+                                          base::Unretained(this)));
   }
 
   // network::mojom::URLLoader:
@@ -225,6 +267,52 @@ class Loader final : public network::mojom::URLLoader,
     return blocker->Decide(FilterRequest(request), mode_);
   }
 
+  // CNAME uncloaking: a request nothing blocked is checked again under the
+  // canonical name its host resolves to, as Brave checks it, which finds a
+  // tracker a site serves from its own subdomain. Only another site's
+  // requests, or any in aggressive mode, and only those that go straight to
+  // the host.
+  void Uncloak() {
+    content::RenderFrameHost* frame = content::RenderFrameHost::FromID(frame_);
+    const bool other_site =
+        !request_.request_initiator ||
+        content_blocking::IsThirdParty(request_.url,
+                                       request_.request_initiator->GetURL());
+    if (frame == nullptr || IsDocument(request_) ||
+        !request_.url.SchemeIsHTTPOrHTTPS() || request_.url.HostIsIPAddress() ||
+        (mode_ != Mode::kAggressive && !other_site)) {
+      return StartOnTheNetwork();
+    }
+    anonymization_key_ =
+        frame->GetIsolationInfoForSubresources().network_anonymization_key();
+    frame->GetStoragePartition()->GetNetworkContext()->LookUpProxyForURL(
+        request_.url, anonymization_key_,
+        proxy_lookup_.BindNewPipeAndPassRemote());
+    proxy_lookup_.set_disconnect_handler(
+        base::BindOnce(&Loader::StartOnTheNetwork, base::Unretained(this)));
+  }
+
+  void Resolved(int result,
+                const net::ResolveErrorInfo&,
+                const net::AddressList& addresses,
+                const net::HostResolverEndpointResults&) {
+    resolver_.reset();
+    const std::vector<std::string>& aliases = addresses.dns_aliases();
+    if (result == net::OK && !aliases.empty() &&
+        aliases.front() != request_.url.host()) {
+      GURL::Replacements host;
+      host.SetHostStr(aliases.front());
+      network::ResourceRequest cloaked = request_;
+      cloaked.url = request_.url.ReplaceComponents(host);
+      const Decision decision = Decide(cloaked);
+      if (decision.kind == Decision::Kind::kBlock ||
+          decision.kind == Decision::Kind::kRedirect) {
+        return Fail(net::ERR_BLOCKED_BY_CLIENT);
+      }
+    }
+    StartOnTheNetwork();
+  }
+
   void StartOnTheNetwork() {
     network_->CreateLoaderAndStart(
         network_loader_.BindNewPipeAndPassReceiver(), request_id_, options_,
@@ -302,6 +390,12 @@ class Loader final : public network::mojom::URLLoader,
   void Done() { delete this; }
 
   const Mode mode_;
+  // The frame whose request this is; null for a worker's, which is not
+  // uncloaked.
+  const content::GlobalRenderFrameHostId frame_;
+  net::NetworkAnonymizationKey anonymization_key_;
+  mojo::Receiver<network::mojom::ProxyLookupClient> proxy_lookup_{this};
+  std::unique_ptr<network::SimpleHostResolver> resolver_;
   mojo::Remote<network::mojom::URLLoaderFactory> network_;
   const int32_t request_id_;
   const uint32_t options_;
@@ -351,7 +445,8 @@ class Factory final : public network::SelfDeletingURLLoaderFactory {
     }
     mojo::PendingRemote<network::mojom::URLLoaderFactory> network;
     network_->Clone(network.InitWithNewPipeAndPassReceiver());
-    (new Loader(mode, std::move(network), request_id, options, request,
+    (new Loader(mode, origin_.frame, std::move(network), request_id, options,
+                request,
                 std::move(loader), std::move(client), traffic_annotation))
         ->Start();
   }

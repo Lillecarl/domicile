@@ -109,10 +109,14 @@ waits for no thread hop.
 - **`$csp`:** the directives join the `Content-Security-Policy` header of a
   document's response.
 - **CNAME uncloaking:** a request nothing blocked is checked again under its
-  canonical name. The name comes from `NetworkContext::ResolveHost` with
-  `include_canonical_name`, in the request's profile and with its
-  `NetworkAnonymizationKey`. It is skipped when a proxy is set, as Brave skips
-  it.
+  host's canonical name, which finds a tracker a site serves from its own
+  subdomain. The name comes from `NetworkContext::ResolveHost` with
+  `include_canonical_name`, in the frame's profile and with its
+  `NetworkAnonymizationKey`, so the real request then hits the DNS cache. It
+  runs for another site's requests, or for any in aggressive mode, as Brave's
+  does. It is skipped when `LookUpProxyForURL` says the request goes through
+  a proxy, so PAC scripts and system proxies count, and for a worker's
+  requests. No guard covers it: it needs a DNS server that answers a CNAME.
 - **Not checked:** the shell and other `domicile:` pages, extensions'
   requests, non-HTTP schemes, top-level navigations, a site in `off` mode, and
   Electron apps unless `electron_apps`.

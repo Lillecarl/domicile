@@ -22,6 +22,12 @@ Each agent gets its own pointer, keyboard and clipboard, in native and browser w
 
 [Agents](AGENTS.md) · [Writing a shell](WRITING-A-SHELL.md#agents-beside-the-user) · [Agent seats](architecture/AGENT-SEATS.md)
 
+### The engine blocks ads and trackers
+
+With a `content_blocking` section in the config, the engine blocks ads and trackers itself, with Brave's filter engine: EasyList, EasyPrivacy and uBlock Origin's lists by default, with scriptlets, element hiding and a mode per site. Your shell shows and sets a site's mode with `browser.blockingFor` and `browser.setSiteBlocking`, and badges a window with its `blockedRequests`.
+
+[Ads and trackers](SHELL-CONFIG.md#ads-and-trackers) · [Browser windows](SHELL-BROWSER-WINDOWS.md#ads-and-trackers) · [Design](architecture/CONTENT-BLOCKING.md)
+
 ### Also new
 
 - Shader effects can draw through a mesh, sample images, take per-element arrays and draw past the element's bounds. A closed window's last frame stays while its `<app>` does, and windows say where they came from with `launchedFrom` and `opener`. [Shader effects](SHELL-SHADER-EFFECTS.md)

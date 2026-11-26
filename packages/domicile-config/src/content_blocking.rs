@@ -172,6 +172,16 @@ mod tests {
     }
 
     #[test]
+    fn relative_resources_are_refused() {
+        let error = Config::parse(r#"{ "content_blocking": { "resources": "resources.json" } }"#)
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("content_blocking.resources"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn a_site_with_a_path_is_refused() {
         let error =
             Config::parse(r#"{ "content_blocking": { "sites": { "github.com/acme": "off" } } }"#)

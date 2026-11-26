@@ -60,11 +60,6 @@ pub fn hand_over_the_extensions(host: &mut Host, extensions: &ExtensionsConfig) 
 /// later. No section is a message with `enabled` false, so a reload that drops
 /// it stops the blocking.
 pub fn hand_over_the_content_blocking(host: &mut Host, config: Option<&ContentBlockingConfig>) {
-    let on_the_wire = |mode: SiteBlocking| match mode {
-        SiteBlocking::Off => domicile_protocol::BlockingMode::Off,
-        SiteBlocking::Standard => domicile_protocol::BlockingMode::Standard,
-        SiteBlocking::Aggressive => domicile_protocol::BlockingMode::Aggressive,
-    };
     let fallback = ContentBlockingConfig::default();
     let blocking = config.unwrap_or(&fallback);
     host.set_content_blocking(ContentBlocking {
@@ -72,17 +67,29 @@ pub fn hand_over_the_content_blocking(host: &mut Host, config: Option<&ContentBl
         lists: blocking.lists.clone(),
         resources: blocking.resources.clone(),
         filters: blocking.filters.clone(),
-        mode: match blocking.mode {
-            BlockingMode::Standard => domicile_protocol::BlockingMode::Standard,
-            BlockingMode::Aggressive => domicile_protocol::BlockingMode::Aggressive,
-        },
+        mode: blocking_mode_on_the_wire(blocking.mode),
         sites: blocking
             .sites
             .iter()
-            .map(|(site, mode)| (site.clone(), on_the_wire(*mode)))
+            .map(|(site, mode)| (site.clone(), site_blocking_on_the_wire(*mode)))
             .collect(),
         electron_apps: blocking.electron_apps,
     });
+}
+
+fn blocking_mode_on_the_wire(mode: BlockingMode) -> domicile_protocol::BlockingMode {
+    match mode {
+        BlockingMode::Standard => domicile_protocol::BlockingMode::Standard,
+        BlockingMode::Aggressive => domicile_protocol::BlockingMode::Aggressive,
+    }
+}
+
+fn site_blocking_on_the_wire(mode: SiteBlocking) -> domicile_protocol::BlockingMode {
+    match mode {
+        SiteBlocking::Off => domicile_protocol::BlockingMode::Off,
+        SiteBlocking::Standard => domicile_protocol::BlockingMode::Standard,
+        SiteBlocking::Aggressive => domicile_protocol::BlockingMode::Aggressive,
+    }
 }
 
 /// Give the host the config's `browser`, for chromes that connect later.
@@ -509,10 +516,67 @@ impl DomicileCompositor {
 
 #[cfg(test)]
 mod tests {
-    use domicile_config::{SiteAccess, SiteAccessMode};
-    use domicile_protocol::{ExtensionSettings, HostMessage};
+    use domicile_config::{
+        BlockingMode, ContentBlockingConfig, SiteAccess, SiteAccessMode, SiteBlocking,
+    };
+    use domicile_protocol::{ContentBlocking, ExtensionSettings, HostMessage};
 
-    use super::hand_over_the_extensions;
+    use super::{hand_over_the_content_blocking, hand_over_the_extensions};
+
+    #[test]
+    fn the_configs_content_blocking_goes_to_the_host() {
+        let mut host = domicile_host::Host::new();
+        hand_over_the_content_blocking(
+            &mut host,
+            Some(&ContentBlockingConfig {
+                lists: vec!["/etc/domicile/list.txt".into()],
+                resources: "/etc/domicile/resources.json".into(),
+                filters: vec!["||ads.example^".into()],
+                mode: BlockingMode::Aggressive,
+                sites: [
+                    ("bank.example".to_string(), SiteBlocking::Off),
+                    ("*.news.example".to_string(), SiteBlocking::Standard),
+                ]
+                .into(),
+                electron_apps: true,
+            }),
+        );
+        assert_eq!(
+            host.describe_content_blocking(),
+            Some(HostMessage::ContentBlocking(ContentBlocking {
+                enabled: true,
+                lists: vec!["/etc/domicile/list.txt".into()],
+                resources: "/etc/domicile/resources.json".into(),
+                filters: vec!["||ads.example^".into()],
+                mode: domicile_protocol::BlockingMode::Aggressive,
+                sites: [
+                    (
+                        "bank.example".to_string(),
+                        domicile_protocol::BlockingMode::Off
+                    ),
+                    (
+                        "*.news.example".to_string(),
+                        domicile_protocol::BlockingMode::Standard,
+                    ),
+                ]
+                .into(),
+                electron_apps: true,
+            }))
+        );
+    }
+
+    #[test]
+    fn no_content_blocking_section_turns_the_blocking_off() {
+        let mut host = domicile_host::Host::new();
+        hand_over_the_content_blocking(&mut host, None);
+        assert!(matches!(
+            host.describe_content_blocking(),
+            Some(HostMessage::ContentBlocking(ContentBlocking {
+                enabled: false,
+                ..
+            }))
+        ));
+    }
 
     const DARK_READER: &str = "eimadpbcbfnmbkopoojfekhnkhdbieeh";
     const TAMPERMONKEY: &str = "dhdgffkkebhmkfjojejmpbldmpobfkfo";

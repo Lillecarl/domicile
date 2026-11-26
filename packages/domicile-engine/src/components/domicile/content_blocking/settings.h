@@ -42,6 +42,22 @@ struct Settings {
   friend bool operator==(const Settings&, const Settings&) = default;
 };
 
+// The mode `name` names ("off", "standard", "aggressive"), or nullopt.
+std::optional<Mode> ModeNamed(std::string_view name);
+
+// The name of `mode`, as ModeNamed reads it.
+std::string_view ModeName(Mode mode);
+
+// Whether `site` can be a key of `Settings::sites`: a lowercase host, `*.`
+// and a host, or a dotted IPv4 address, as the config's
+// `content_blocking.sites` keys are. No path.
+bool IsBlockingSite(std::string_view site);
+
+// `config` with the user's own `sites` below its own: a site the config
+// names keeps the config's mode.
+Settings WithUserSites(Settings config,
+                       const std::map<std::string, Mode>& sites);
+
 // A `content_blocking` message's settings, or nullopt when a field is missing
 // or of the wrong kind.
 std::optional<Settings> SettingsFromMessage(const base::DictValue& message);

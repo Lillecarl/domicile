@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { FakeDomicileHost } from "../fake-host";
-import { AppReuse } from "./browser";
+import { AppReuse, Blocking } from "./browser";
 import { desktop } from "./desktop";
 
 describe("browser", () => {
@@ -17,6 +17,7 @@ describe("browser", () => {
     expect(desktop(fake.host).browser.windows).toStrictEqual([
       {
         appId: "",
+        blockedRequests: 0,
         height: 0,
         id: "1",
         ignoresPointer: false,
@@ -166,6 +167,19 @@ describe("browser", () => {
     expect(browser.profiles).toStrictEqual([work]);
     expect(changes).toBe(1);
     stop();
+  });
+
+  it("sets a site's blocking, and gives it the config's again", async () => {
+    const fake = new FakeDomicileHost();
+    const { browser } = desktop(fake.host);
+
+    await browser.setSiteBlocking("news.example", Blocking.Off);
+    await browser.setSiteBlocking("news.example", undefined);
+
+    expect(fake.calls).toStrictEqual([
+      ["setContentBlockingSite", "news.example", "off"],
+      ["setContentBlockingSite", "news.example", ""],
+    ]);
   });
 
   it("pins a site to a profile and finds the site that routes an address", async () => {

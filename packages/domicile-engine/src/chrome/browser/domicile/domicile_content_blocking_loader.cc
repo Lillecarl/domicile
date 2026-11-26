@@ -330,6 +330,7 @@ class Loader final : public network::mojom::URLLoader,
     if (!net::DataURL::Parse(data_url, &mime_type, &charset, &data)) {
       return Fail(net::ERR_BLOCKED_BY_CLIENT);
     }
+    Counted();
     mojo::ScopedDataPipeProducerHandle producer;
     mojo::ScopedDataPipeConsumerHandle consumer;
     if (mojo::CreateDataPipe(std::max<size_t>(data.size(), 1), producer,
@@ -383,8 +384,19 @@ class Loader final : public network::mojom::URLLoader,
   }
 
   void Fail(int error) {
+    if (error == net::ERR_BLOCKED_BY_CLIENT) {
+      Counted();
+    }
     client_->OnComplete(network::URLLoaderCompletionStatus(error));
     Done();
+  }
+
+  // One more blocked for the shell's count; a worker's are not counted.
+  void Counted() {
+    if (content::RenderFrameHost* frame =
+            content::RenderFrameHost::FromID(frame_)) {
+      BlockedRequests::Count(*frame);
+    }
   }
 
   void Done() { delete this; }

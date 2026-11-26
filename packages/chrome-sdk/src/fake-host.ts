@@ -349,6 +349,7 @@ export class FakeDomicileHost {
         ...(this.#state.browserWindows ?? []),
         {
           appId,
+          blockedRequests: 0,
           height,
           id: this.#browsersOpened.toString(),
           ignoresPointer: false,

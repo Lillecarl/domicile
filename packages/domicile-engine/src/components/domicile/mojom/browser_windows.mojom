@@ -150,6 +150,9 @@ struct BrowserWindow {
   // `target="_blank"`; empty for none, as for a window the shell opened or
   // one a plain `<webview>`'s page opened.
   string opener;
+  // The requests the engine's content blocking blocked for the page since it
+  // loaded. See docs/architecture/CONTENT-BLOCKING.md.
+  uint32 blocked_requests;
 };
 
 // What OpenApp does when an app window with its `app_id` is already open.
@@ -260,6 +263,18 @@ interface BrowserWindows {
   // that is no key of the config's `browser.sites`, one the config's sites
   // name, and a profile the desk does not have.
   PinSite(string site, string profile) => (string error);
+
+  // The mode the engine blocks ads and trackers in on `url`'s site: "off",
+  // "standard" or "aggressive"; "off" while the config blocks nothing. See
+  // docs/architecture/CONTENT-BLOCKING.md.
+  ContentBlockingFor(url.mojom.Url url) => (string mode);
+
+  // Blocks on `site` in `mode` from now on, kept across restarts; an empty
+  // mode gives it the config's again. Pages load in it from their next
+  // navigation. Answers with why not, or an empty string: for a site that is
+  // no host or `*.host`, one the config's `content_blocking.sites` name, a
+  // mode that is none of the three, and while the config blocks nothing.
+  SetContentBlockingSite(string site, string mode) => (string error);
 
   // Switches extension `id` on or off in browser profile `profile`, kept
   // across restarts; the profiles are sent again with the change. Answers

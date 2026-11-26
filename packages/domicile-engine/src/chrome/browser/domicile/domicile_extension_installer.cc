@@ -24,6 +24,7 @@
 #include "base/task/thread_pool.h"
 #include "base/values.h"
 #include "chrome/browser/domicile/domicile_browser_profiles.h"
+#include "chrome/browser/domicile/domicile_content_blocking.h"
 #include "chrome/browser/domicile/domicile_extension_settings.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
@@ -436,6 +437,7 @@ void RegisterExtensionInstallerPrefs(PrefRegistrySimple* registry) {
   registry->RegisterListPref(kAddedPref);
   RegisterExtensionSettingsPrefs(registry);
   RegisterBrowserProfilesPrefs(registry);
+  RegisterContentBlockingPrefs(registry);
 }
 
 void InstallExtensionsInto(base::WeakPtr<Profile> profile,

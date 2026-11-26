@@ -34,7 +34,8 @@ DomicileBrowserWindow::DomicileBrowserWindow(
     bool urgent,
     bool ignores_pointer,
     const String& shape,
-    const String& opener)
+    const String& opener,
+    uint32_t blocked_requests)
     : id_(id),
       url_(url),
       title_(title),
@@ -63,7 +64,8 @@ DomicileBrowserWindow::DomicileBrowserWindow(
       urgent_(urgent),
       ignores_pointer_(ignores_pointer),
       shape_(shape),
-      opener_(opener) {}
+      opener_(opener),
+      blocked_requests_(blocked_requests) {}
 
 DomicileBrowserWindow::~DomicileBrowserWindow() = default;
 

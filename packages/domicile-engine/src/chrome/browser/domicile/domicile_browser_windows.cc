@@ -39,6 +39,7 @@
 #include "base/time/time.h"
 #include "base/types/expected.h"
 #include "chrome/browser/domicile/domicile_browser_profiles.h"
+#include "chrome/browser/domicile/domicile_content_blocking.h"
 #include "chrome/browser/domicile/domicile_electron_page.h"
 #include "chrome/browser/domicile/domicile_electron_page_events.h"
 #include "chrome/browser/domicile/domicile_tab_helpers.h"
@@ -1059,7 +1060,10 @@ class DeskWindows final : public base::SupportsUserData::Data,
           base::RepeatingClosure changed)
         : WebContentsObserver(&contents),
           id_(std::move(id)),
-          changed_(std::move(changed)) {}
+          changed_(std::move(changed)) {
+      BlockedRequests::CreateForWebContents(&contents);
+      blocked_ = BlockedRequests::FromWebContents(&contents)->Watch(changed_);
+    }
 
     void DOMContentLoaded(content::RenderFrameHost* frame) override {
       if (frame->IsInPrimaryMainFrame()) {
@@ -1082,6 +1086,7 @@ class DeskWindows final : public base::SupportsUserData::Data,
    private:
     const std::string id_;
     base::RepeatingClosure changed_;
+    base::CallbackListSubscription blocked_;
   };
 
   // A message box a window asks, and where its answer goes.
@@ -1206,7 +1211,7 @@ class DeskWindows final : public base::SupportsUserData::Data,
                                       : std::string(),
         window.wanted_state.maximized, window.wanted_state.minimized,
         window.wanted_state.fullscreen, window.urgent, window.ignores_pointer,
-        window.shape, window.opener);
+        window.shape, window.opener, BlockedRequests::Of(contents));
   }
 
   // Makes a window and gives it its first page with `load`. Returns it, or
@@ -1718,6 +1723,30 @@ class BrowserWindowsService final
             site, profile);
     std::move(callback).Run(pinned.has_value() ? std::string()
                                                : pinned.error());
+  }
+
+  void ContentBlockingFor(const GURL& url,
+                          ContentBlockingForCallback callback) override {
+    std::move(callback).Run(std::string(content_blocking::ModeName(
+        ContentBlocker::Get().ModeForShell(url))));
+  }
+
+  void SetContentBlockingSite(const std::string& site,
+                              const std::string& mode,
+                              SetContentBlockingSiteCallback callback) override {
+    std::optional<content_blocking::Mode> named;
+    if (!mode.empty()) {
+      named = content_blocking::ModeNamed(mode);
+      if (!named) {
+        std::move(callback).Run(mode +
+                                " is not a mode: \"off\", \"standard\" or "
+                                "\"aggressive\"");
+        return;
+      }
+    }
+    const base::expected<void, std::string> set =
+        ContentBlocker::Get().SetSite(site, named);
+    std::move(callback).Run(set.has_value() ? std::string() : set.error());
   }
 
   void SetExtensionEnabled(const std::string& profile,

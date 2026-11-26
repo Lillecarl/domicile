@@ -167,12 +167,16 @@ settings plumbing:
 
 ### The shell
 
-- **`contentBlocking.site(url)`** gives a page's mode and whether the config
-  locks it. **`contentBlocking.setSite(host, mode)`** sets it, kept in the
-  shell profile's prefs below `sites`, as pinned sites are.
-- **`window.blocked`** counts the requests the engine blocked for a browser
-  window's current page, for a shell's badge. A shell that shows nothing loses
-  nothing.
+- **`browser.blockingFor(url)`** gives a page's mode.
+  **`browser.setSiteBlocking(site, blocking)`** sets it, kept in the shell
+  profile's prefs (`domicile.content_blocking.sites`) below the config's
+  `sites`, as pinned sites are kept below `browser.sites`. A site the config
+  names is refused.
+- **`blockedRequests`** on each browser window counts the requests the
+  engine blocked for its current page, stub answers included, for a shell's
+  badge. It starts again at each page the tab commits, and the window list
+  is sent again at most every quarter second while it moves. A worker's
+  requests are not counted.
 
 ### Building
 

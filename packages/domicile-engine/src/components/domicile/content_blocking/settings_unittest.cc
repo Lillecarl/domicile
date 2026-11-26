@@ -77,5 +77,31 @@ TEST(ContentBlockingSettingsTest, NothingIsBlockedUntilEnabled) {
   EXPECT_EQ(ModeFor(settings, GURL("https://unlisted.org/")), Mode::kOff);
 }
 
+TEST(ContentBlockingSettingsTest, ASiteIsAHostOrAnAddress) {
+  EXPECT_TRUE(IsBlockingSite("news.example"));
+  EXPECT_TRUE(IsBlockingSite("*.news.example"));
+  EXPECT_TRUE(IsBlockingSite("127.0.0.1"));
+  EXPECT_FALSE(IsBlockingSite("*.127.0.0.1"));
+  EXPECT_FALSE(IsBlockingSite("News.example"));
+  EXPECT_FALSE(IsBlockingSite("news.example/path"));
+  EXPECT_FALSE(IsBlockingSite("news..example"));
+  EXPECT_FALSE(IsBlockingSite(""));
+}
+
+TEST(ContentBlockingSettingsTest, TheConfigsSitesWinOverTheUsers) {
+  const Settings settings = WithUserSites(
+      *SettingsFromMessage(Message(kMessage)),
+      {{"bank.example", Mode::kStandard}, {"blog.org", Mode::kOff}});
+  EXPECT_EQ(ModeFor(settings, GURL("https://bank.example/")), Mode::kOff);
+  EXPECT_EQ(ModeFor(settings, GURL("https://blog.org/")), Mode::kOff);
+}
+
+TEST(ContentBlockingSettingsTest, ModesHaveNames) {
+  for (Mode mode : {Mode::kOff, Mode::kStandard, Mode::kAggressive}) {
+    EXPECT_EQ(ModeNamed(ModeName(mode)), mode);
+  }
+  EXPECT_EQ(ModeNamed("maximum"), std::nullopt);
+}
+
 }  // namespace
 }  // namespace domicile::content_blocking

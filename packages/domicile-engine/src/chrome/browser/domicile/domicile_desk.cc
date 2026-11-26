@@ -122,8 +122,6 @@ void StartDesk(Profile* profile) {
     // The config's spell checking, and the context menu's "Add to
     // dictionary".
     StartSpellcheck();
-    // The config's ad and tracker blocking.
-    StartContentBlocking();
     // Agents' own pointers and keyboards in the browser's pages.
     StartAgentInput();
     // Camera and microphone requests, asked through the shell's prompt.
@@ -143,6 +141,14 @@ void StartDesk(Profile* profile) {
     return true;
   }();
   CHECK(installed);
+  // The config's ad and tracker blocking, with the user's site modes in the
+  // first profile's prefs: PostProfileInit starts the initial profile, the
+  // shell's, before any other.
+  static const bool blocking = [profile] {
+    StartContentBlocking(*profile->GetOriginalProfile()->GetPrefs());
+    return true;
+  }();
+  CHECK(blocking);
 
   PrintWithTheSystemDialog(*profile);
   DomicileWindowController::For(profile);

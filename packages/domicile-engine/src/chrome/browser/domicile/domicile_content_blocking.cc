@@ -17,9 +17,14 @@
 #include "base/task/thread_pool.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/chrome_paths.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/domicile/browser/control_channel.h"
 #include "components/domicile/content_blocking/engine.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/web_contents.h"
 #include "crypto/sha2.h"
 #include "net/base/net_errors.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
@@ -134,8 +139,66 @@ ContentBlocker& ContentBlocker::Get() {
 ContentBlocker::ContentBlocker() = default;
 ContentBlocker::~ContentBlocker() = default;
 
+// The user's site modes, by site, as mode names.
+constexpr char kSitesPref[] = "domicile.content_blocking.sites";
+
 Mode ContentBlocker::ModeFor(const GURL& page) const {
-  return content_blocking::ModeFor(settings_, page);
+  return content_blocking::ModeFor(merged_, page);
+}
+
+Mode ContentBlocker::ModeForShell(const GURL& page) const {
+  return blocker_ ? ModeFor(page) : Mode::kOff;
+}
+
+void ContentBlocker::UsePrefs(PrefService& prefs) {
+  prefs_ = &prefs;
+  Merge();
+}
+
+void ContentBlocker::Merge() {
+  std::map<std::string, Mode> sites;
+  if (prefs_) {
+    for (const auto [site, value] : prefs_->GetDict(kSitesPref)) {
+      std::optional<Mode> mode =
+          value.is_string() ? content_blocking::ModeNamed(value.GetString())
+                            : std::nullopt;
+      if (mode && content_blocking::IsBlockingSite(site)) {
+        sites.emplace(site, *mode);
+      }
+    }
+  }
+  merged_ = content_blocking::WithUserSites(settings_, sites);
+}
+
+base::expected<void, std::string> ContentBlocker::SetSite(
+    const std::string& site,
+    std::optional<Mode> mode) {
+  if (!settings_.enabled) {
+    return base::unexpected(
+        "the desk's config blocks nothing, so no site has a mode to set");
+  }
+  if (!content_blocking::IsBlockingSite(site)) {
+    return base::unexpected(site +
+                            " is not a site such as `github.com` or "
+                            "`*.github.com`");
+  }
+  if (settings_.sites.contains(site)) {
+    return base::unexpected(site +
+                            " has its mode from the config's "
+                            "content_blocking.sites, which only the config "
+                            "changes");
+  }
+  if (prefs_ == nullptr) {
+    return base::unexpected("the shell's profile has not loaded");
+  }
+  ScopedDictPrefUpdate sites(prefs_, kSitesPref);
+  if (mode) {
+    sites->Set(site, content_blocking::ModeName(*mode));
+  } else {
+    sites->Remove(site);
+  }
+  Merge();
+  return base::ok();
 }
 
 base::FilePath ContentBlocker::CacheDirectory() const {
@@ -150,6 +213,7 @@ void ContentBlocker::SetSettings(const Settings& settings) {
     return;
   }
   settings_ = settings;
+  Merge();
   ++generation_;
   refresh_.Stop();
   sources_.clear();
@@ -312,8 +376,60 @@ void ContentBlocker::Refresh() {
   }
 }
 
-void StartContentBlocking() {
-  ContentBlocker::Get();
+BlockedRequests::BlockedRequests(content::WebContents* contents)
+    : content::WebContentsUserData<BlockedRequests>(*contents),
+      content::WebContentsObserver(contents) {}
+
+BlockedRequests::~BlockedRequests() = default;
+
+// static
+void BlockedRequests::Count(content::RenderFrameHost& frame) {
+  content::WebContents* contents =
+      content::WebContents::FromRenderFrameHost(&frame);
+  if (contents == nullptr) {
+    return;
+  }
+  BlockedRequests* blocked = GetOrCreateForWebContents(contents);
+  ++blocked->count_;
+  blocked->Moved();
+}
+
+// static
+uint32_t BlockedRequests::Of(content::WebContents& contents) {
+  BlockedRequests* blocked = FromWebContents(&contents);
+  return blocked ? blocked->count_ : 0;
+}
+
+base::CallbackListSubscription BlockedRequests::Watch(
+    base::RepeatingClosure changed) {
+  return changed_.Add(std::move(changed));
+}
+
+void BlockedRequests::PrimaryPageChanged(content::Page&) {
+  if (count_ != 0) {
+    count_ = 0;
+    Moved();
+  }
+}
+
+void BlockedRequests::Moved() {
+  // A page loses dozens of requests at once; the shell hears the total.
+  if (!settle_.IsRunning()) {
+    settle_.Start(FROM_HERE, base::Milliseconds(250),
+                  base::BindOnce(
+                      [](BlockedRequests* self) { self->changed_.Notify(); },
+                      base::Unretained(this)));
+  }
+}
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(BlockedRequests);
+
+void RegisterContentBlockingPrefs(PrefRegistrySimple* registry) {
+  registry->RegisterDictionaryPref(kSitesPref);
+}
+
+void StartContentBlocking(PrefService& shell) {
+  ContentBlocker::Get().UsePrefs(shell);
   SetContentBlockingSink(base::BindPostTask(
       content::GetUIThreadTaskRunner({}),
       base::BindRepeating([](const content_blocking::Settings& settings) {

@@ -729,6 +729,31 @@ TEST_F(ControlChannelTest, SpellCheckingReachesTheBrowser) {
   SetSpellcheckSink(SpellcheckSink());
 }
 
+// What to block is this process's too. One with an unknown mode is dropped.
+TEST_F(ControlChannelTest, ContentBlockingReachesTheBrowser) {
+  base::test::TestFuture<content_blocking::Settings> heard;
+  SetContentBlockingSink(
+      heard.GetRepeatingCallback<const content_blocking::Settings&>());
+
+  Say("{\"type\":\"content_blocking\",\"enabled\":true,\"lists\":[],"
+      "\"resources\":\"\",\"filters\":[],\"mode\":\"maximum\","
+      "\"sites\":{},\"electron_apps\":false}\n"
+      "{\"type\":\"content_blocking\",\"enabled\":true,"
+      "\"lists\":[\"/etc/list.txt\"],\"resources\":\"/etc/r.json\","
+      "\"filters\":[],\"mode\":\"aggressive\","
+      "\"sites\":{\"bank.example\":\"off\"},\"electron_apps\":true}\n");
+
+  EXPECT_EQ(heard.Take(),
+            (content_blocking::Settings{
+                .enabled = true,
+                .lists = {"/etc/list.txt"},
+                .resources = "/etc/r.json",
+                .mode = content_blocking::Mode::kAggressive,
+                .sites = {{"bank.example", content_blocking::Mode::kOff}},
+                .electron_apps = true}));
+  SetContentBlockingSink(ContentBlockingSink());
+}
+
 // The desk's browser profiles are this process's too, and reach it with the
 // page whose channel heard them. Ones that name a profile they do not list are
 // dropped.

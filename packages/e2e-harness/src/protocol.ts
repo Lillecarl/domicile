@@ -517,6 +517,21 @@ const spellcheckSchema = z.looseObject({
   type: z.literal("spellcheck"),
 });
 
+// The engine's own ad and tracker blocking: the config's `content_blocking`.
+// Sent with the handshake and on config reload. The browser process reads it;
+// see `docs/architecture/CONTENT-BLOCKING.md`.
+const blockingModeSchema = z.enum(["off", "standard", "aggressive"]);
+const contentBlockingSchema = z.looseObject({
+  electron_apps: z.boolean(),
+  enabled: z.boolean(),
+  filters: z.array(z.string()),
+  lists: z.array(z.string()),
+  mode: blockingModeSchema,
+  resources: z.string(),
+  sites: z.record(z.string(), blockingModeSchema),
+  type: z.literal("content_blocking"),
+});
+
 // Whether the desk's input method composes for the browser's focused field.
 // While it does, the browser sends it each key (`key_for_input_method`). The
 // browser process reads these three; see `docs/architecture/TEXT-INPUT.md`.
@@ -1088,6 +1103,7 @@ export const hostMessageSchema = z.discriminatedUnion("type", [
   extensionsSchema,
   forceDarkSchema,
   spellcheckSchema,
+  contentBlockingSchema,
   inputMethodSchema,
   compositionSchema,
   keyPassedSchema,

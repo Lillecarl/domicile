@@ -27,6 +27,7 @@
 #include "components/domicile/browser/line_framer.h"
 #include "components/domicile/browser/shortcut_registry.h"
 #include "components/domicile/browser/spellcheck_settings.h"
+#include "components/domicile/content_blocking/settings.h"
 #include "components/domicile/browser/system_call.h"
 #include "components/domicile/mojom/control_channel.mojom.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -117,6 +118,14 @@ void SetBrowserProfilesSink(BrowserProfilesSink sink);
 using SpellcheckSink =
     base::RepeatingCallback<void(const SpellcheckSettings&)>;
 void SetSpellcheckSink(SpellcheckSink sink);
+
+// How the desk's content blocking reaches the browser's blocker.
+// Process-wide as SpellcheckSink: //chrome sets it once with
+// SetContentBlockingSink, before any channel. See
+// docs/architecture/CONTENT-BLOCKING.md.
+using ContentBlockingSink =
+    base::RepeatingCallback<void(const content_blocking::Settings&)>;
+void SetContentBlockingSink(ContentBlockingSink sink);
 
 // How an agent seat's input for the browser's pages (`agent_input`) reaches
 // //chrome, which finds the page and hands it the event. `tell` sends a

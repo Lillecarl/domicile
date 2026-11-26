@@ -23,6 +23,7 @@
 //! | `theme.cursor_hide_after_ms`, `cursor_hide_when_typing` | sent to every chrome's browser, which hides the pointer (`Host::set_appearance`) |
 //! | `theme.force_dark` | sent to every chrome, whose browser draws those sites dark from their next load (`Host::set_force_dark`) |
 //! | `spellcheck.*` | sent to every chrome, whose browser checks spelling in those languages (`Host::set_spellcheck`) |
+//! | `content_blocking` | sent to every chrome, whose browser fetches the lists and blocks from then on (`hand_over_the_content_blocking`) |
 //! | `files.omit` | sent to the index, which rewalks the home (`omit_from_the_index`) |
 //! | `electron.apps` | the entries that run them on the engine written again (`write_the_electron_entries`) |
 //! | `extensions.*` | sent to every chrome, whose browser installs them (`hand_over_the_extensions`) |
@@ -107,6 +108,8 @@ pub struct Restatement {
     pub pointers: bool,
     /// Whether to reapply touchpad and mouse settings.
     pub input_devices: bool,
+    /// Whether to tell every chrome again what the engine blocks.
+    pub content_blocking: bool,
 }
 
 impl Restatement {
@@ -134,6 +137,7 @@ impl Restatement {
             force_dark: (was.theme.force_dark != now.theme.force_dark)
                 .then(|| now.theme.force_dark.clone()),
             spellcheck: (was.spellcheck != now.spellcheck).then(|| now.spellcheck.clone()),
+            content_blocking: was.content_blocking != now.content_blocking,
             omit: (was.files.omit != now.files.omit).then(|| now.files.omit.clone()),
             electron_apps: (was.electron != now.electron).then(|| now.electron.apps.clone()),
             extensions: (was.extensions != now.extensions).then(|| now.extensions.clone()),
@@ -325,6 +329,16 @@ mod tests {
                 languages: vec!["de-DE".into()],
             })
         );
+        assert_eq!(Restatement::between(&now, &now), Restatement::default());
+    }
+
+    #[test]
+    fn content_blocking_that_moved_is_restated() {
+        let was = parsed("{}");
+        let now = parsed(r#"{ "content_blocking": {} }"#);
+
+        assert!(Restatement::between(&was, &now).content_blocking);
+        assert!(Restatement::between(&now, &was).content_blocking);
         assert_eq!(Restatement::between(&now, &now), Restatement::default());
     }
 

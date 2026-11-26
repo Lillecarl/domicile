@@ -59,9 +59,9 @@ an 836-line cxx bridge and a few hooks.
   generically, but lets a site's own first-party content through unless a rule
   is `$important`. `aggressive` blocks first-party matches too. Brave's modes,
   with the same names.
-- **`sites`:** a mode per site (`off`, `standard`, `aggressive`), keyed like
-  `browser.sites`. A site is the top-level page's host, so an iframe follows
-  the page it is in.
+- **`sites`:** a mode per site (`off`, `standard`, `aggressive`), by host or
+  `*.host`. A site is the top-level page's host, so an iframe follows the page
+  it is in. The most specific entry wins.
 - **`electron_apps`:** filters Electron apps' pages too. Off by default,
   because apps break in ways a user cannot fix from a menu.
 

@@ -33,11 +33,26 @@ source_set("content_blocking") {
   deps = [ "//net" ]
 }
 
+# What the compositor says to block, apart from the engine, so the control
+# channel reads it without linking Rust.
+source_set("settings") {
+  sources = [
+    "settings.cc",
+    "settings.h",
+  ]
+  public_deps = [ "//base" ]
+  deps = [ "//url" ]
+}
+
 source_set("unit_tests") {
   testonly = true
-  sources = [ "engine_unittest.cc" ]
+  sources = [
+    "engine_unittest.cc",
+    "settings_unittest.cc",
+  ]
   deps = [
     ":content_blocking",
+    ":settings",
     "//base",
     "//testing/gmock",
     "//testing/gtest",

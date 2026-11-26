@@ -1579,6 +1579,7 @@ source_set("control_channel") {
     ":system_call",
     ":theme",
     "//base",
+    "//components/domicile/content_blocking:settings",
     "//components/domicile/mojom",
     "//mojo/public/cpp/bindings",
     "//net",

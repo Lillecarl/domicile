@@ -71,7 +71,13 @@ constexpr char kHideScript[] = R"((() => {
           CC.firstRunQueue.add(selector);
         }
         next++;
-      } catch (e) {}
+      } catch (e) {
+        // Lists hold selectors Blink does not parse; such a rule hides
+        // nothing.
+        if (!(e instanceof DOMException && e.name === 'SyntaxError')) {
+          throw e;
+        }
+      }
     }
   }
   if (!document.adoptedStyleSheets.includes(CC.cosmeticStyleSheet)) {

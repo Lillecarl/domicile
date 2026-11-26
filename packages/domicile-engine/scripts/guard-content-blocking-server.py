@@ -54,6 +54,7 @@ LIST = """! Title: guard-content-blocking
 ##.generic-own
 127.0.0.1##+js(guard-mark)
 ||localhost^*/ws-ad$websocket
+||127.0.0.1^$csp=frame-src 'none'
 """
 
 RESOURCES = json.dumps(
@@ -97,6 +98,7 @@ TEST_HTML = """<!doctype html>
 <section><div class="generic-ad"><img src="http://localhost:{port}/banner.gif"></div></section>
 <section><div class="generic-own"><img src="/own.gif"></div></section>
 <section><div class="story">the story</div></section>
+<iframe src="http://localhost:{port}/frame.html"></iframe>
 <script src="http://localhost:{port}/ad.js"></script>
 <script src="http://localhost:{port}/ok.js"></script>
 <script src="/own-ad.js"></script>
@@ -160,6 +162,8 @@ class Handler(BaseHTTPRequestHandler):
             self.answer(LIST, "text/plain")
         elif path == "/resources.json":
             self.answer(RESOURCES, "application/json")
+        elif path == "/frame.html":
+            self.answer("<!doctype html><title>a frame</title>", "text/html")
         elif path in ("/pixel.gif", "/banner.gif", "/own.gif"):
             self.answer(PIXEL, "image/gif")
         elif path.endswith(".js"):

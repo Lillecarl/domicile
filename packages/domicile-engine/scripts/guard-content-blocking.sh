@@ -21,10 +21,15 @@
 # - localhost's /stub.js was never asked for, and the stub ran in its place
 # - the pixel was asked for without utm_source
 # - the WebSocket to localhost's /ws-ad was never opened
+# - localhost's /frame.html was never asked for: the list's $csp gave the
+#   site's page frame-src 'none'
 # - the site's .ad-banner and the generic .generic-ad are hidden; the generic
 #   .generic-own, which holds only the site's own image, is shown again
 #   (standard mode); the story is shown; and the guard-mark scriptlet ran
 #   before the page's first script
+#
+# Aggressive (AGGRESSIVE=1): the config sets the site to aggressive, so its
+# own /own-ad.js is never asked for and .generic-own stays hidden.
 #
 # Control (NEGATIVE=1): the config turns the site off. /ad.js, /mine.js,
 # /stub.js and the WebSocket must be asked for, and the pixel with its
@@ -48,6 +53,7 @@ if [ -z "$CHROMIUM" ]; then
 fi
 
 NEGATIVE="${NEGATIVE:-0}"
+AGGRESSIVE="${AGGRESSIVE:-0}"
 OUT="${OUT:-out/Domicile}"
 BROKER="${BROKER:-/tmp/domicile-content-blocking-broker}"
 CONTROL="${CONTROL:-/tmp/domicile-content-blocking-control}"
@@ -56,6 +62,7 @@ FOR_SECONDS="${FOR_SECONDS:-90}"
 
 WHICH=""
 [ "$NEGATIVE" = "1" ] && WHICH="-negative"
+[ "$AGGRESSIVE" = "1" ] && WHICH="-aggressive"
 ENGINE_LOG="${ENGINE_LOG:-/tmp/domicile-content-blocking$WHICH-engine.log}"
 HTTP_LOG="${HTTP_LOG:-/tmp/domicile-content-blocking$WHICH-http.log}"
 SOCKET_LOG="${SOCKET_LOG:-/tmp/domicile-content-blocking$WHICH-socket.log}"
@@ -107,6 +114,7 @@ SITE="http://127.0.0.1:$PORT"
 # 2. The compositor, with the desk's content_blocking.
 SITES='{}'
 [ "$NEGATIVE" = "1" ] && SITES='{"127.0.0.1": "off"}'
+[ "$AGGRESSIVE" = "1" ] && SITES='{"127.0.0.1": "aggressive"}'
 BLOCKING="{\"enabled\": true, \"lists\": [\"$SITE/list.txt\"],
   \"resources\": \"$SITE/resources.json\", \"filters\": [\"/mine.js\$script\"],
   \"mode\": \"standard\", \"sites\": $SITES, \"electron_apps\": false}"
@@ -162,14 +170,17 @@ STUB=$(asked "/stub.js" "localhost")
 CLEAN=$(asked "/pixel.gif\\?id=1" "localhost")
 TRACKED=$(asked "/pixel.gif\\?utm_source=guard&id=1" "localhost")
 SOCKET=$(asked "/ws-ad" "localhost")
+FRAME=$(asked "/frame.html" "localhost")
 saw() { grep -qF "$1" "$ENGINE_LOG" && echo 1 || echo 0; }
-HIDDEN=$(saw "GUARD cosmetic banner=none generic=none own=block story=block marked-first=true")
+OWN_SHOWN=block
+[ "$AGGRESSIVE" = "1" ] && OWN_SHOWN=none
+HIDDEN=$(saw "GUARD cosmetic banner=none generic=none own=$OWN_SHOWN story=block marked-first=true")
 SHOWN=$(saw "GUARD cosmetic banner=block generic=block own=block story=block marked-first=false")
 
 echo
 echo "sent=$SAW_SENT list=$SAW_LIST resources=$SAW_RESOURCES page=$SAW_PAGE"
 echo "asked for: ok=$OK ad=$AD own-ad=$OWN mine=$MINE stub=$STUB" \
-  "clean-pixel=$CLEAN tracked-pixel=$TRACKED socket=$SOCKET;" \
+  "clean-pixel=$CLEAN tracked-pixel=$TRACKED socket=$SOCKET frame=$FRAME;" \
   "the stub ran=$SAW_STUB_RAN"
 echo "cosmetic: hidden=$HIDDEN shown=$SHOWN"
 grep -F "GUARD cosmetic" "$ENGINE_LOG" || true
@@ -190,7 +201,8 @@ elif [ "$SAW_PAGE" != "1" ] || [ "$OK" != "1" ]; then
 which nothing blocks"
 elif [ "$NEGATIVE" = "1" ]; then
   if [ "$AD" = "1" ] && [ "$MINE" = "1" ] && [ "$STUB" = "1" ] &&
-    [ "$TRACKED" = "1" ] && [ "$SHOWN" = "1" ] && [ "$SOCKET" = "1" ]; then
+    [ "$TRACKED" = "1" ] && [ "$SHOWN" = "1" ] && [ "$SOCKET" = "1" ] &&
+    [ "$FRAME" = "1" ]; then
     PASSED="the control is sharp: with the site off, every request reached \
 the site as the page made it, nothing was hidden and no scriptlet ran"
   else
@@ -203,9 +215,12 @@ the loader proxy (patch 0282) never asked, or the Blocker let it through"
 elif [ "$MINE" = "1" ]; then
   FAILURE="the site's own /mine.js, which the user's rule blocks, reached the \
 server: the filters engine"
-elif [ "$OWN" != "1" ]; then
+elif [ "$AGGRESSIVE" != "1" ] && [ "$OWN" != "1" ]; then
   FAILURE="the site's own /own-ad.js never reached the server, though \
 standard mode lets a site's own listed content through"
+elif [ "$AGGRESSIVE" = "1" ] && [ "$OWN" = "1" ]; then
+  FAILURE="the site's own /own-ad.js reached the server, though aggressive \
+mode blocks a site's own listed content: ModeFor's sites or the Blocker"
 elif [ "$STUB" = "1" ] || [ "$SAW_STUB_RAN" != "1" ]; then
   FAILURE="/stub.js was not answered with its resource: the redirect rule, \
 the resources, or the loader's stub response"
@@ -215,16 +230,23 @@ internal redirect"
 elif [ "$SOCKET" = "1" ]; then
   FAILURE="the WebSocket to localhost's /ws-ad, which the list blocks, \
 reached the site: patch 0284's WillInterceptWebSocket or MayOpenWebSocket"
+elif [ "$FRAME" = "1" ]; then
+  FAILURE="localhost's /frame.html was asked for, though the list's \$csp \
+gave the page frame-src 'none': the loader's Content-Security-Policy header"
 elif [ "$HIDDEN" != "1" ]; then
   FAILURE="the page did not hide the site's .ad-banner and the generic \
 .generic-ad, show .generic-own and the story, or run the guard-mark \
 scriptlet before its first script: ContentFilterAgent (patch 0283), \
 content_filter_bundle.js or domicile_content_filter.cc"
 else
+  OWN_SAID="standard mode spared the site's own listed script and showed its \
+own generic element again"
+  [ "$AGGRESSIVE" = "1" ] && OWN_SAID="aggressive mode blocked the site's own \
+listed script and kept its own generic element hidden"
   PASSED="the list blocked another site's script, the user's rule the site's \
-own, standard mode spared the site's own listed script, a \$redirect rule \
-answered with its resource, \$removeparam dropped utm_source, the site's \
-and a generic rule hid their elements, and a scriptlet ran before the page"
+own, $OWN_SAID, a \$redirect rule answered with its resource, \$removeparam \
+dropped utm_source, \$csp kept out a frame, the site's and a generic rule hid \
+their elements, and a scriptlet ran before the page"
 fi
 
 if [ -n "$PASSED" ]; then

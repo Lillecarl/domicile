@@ -21,7 +21,7 @@ Lite, Ghostery) cannot do some things:
 
 Brave filters in the browser, below the extension APIs, and has none of these
 limits. Its engine is MPL-2.0 and built to embed: brave-core reaches it through
-an 836-line cxx bridge and a few hooks.
+a cxx bridge.
 
 ## Design
 
@@ -45,7 +45,7 @@ an 836-line cxx bridge and a few hooks.
 }
 ```
 
-- **No `content_blocking`:** the engine blocks nothing, as today.
+- **No `content_blocking`:** the engine blocks nothing.
 - **`lists`:** filter lists in Adblock Plus and uBlock Origin syntax, by URL or
   absolute path. Unset: EasyList, EasyPrivacy, and uBlock Origin's filters,
   privacy, unbreak and badware lists. `[]`: only `filters`.
@@ -68,8 +68,7 @@ an 836-line cxx bridge and a few hooks.
 ### Engine
 
 - **One `domicile::ContentBlocker`** in the browser process, for every
-  profile. The engines live on one sequenced task runner (`MayBlock`,
-  `USER_BLOCKING`, `SKIP_ON_SHUTDOWN`), as Brave's do.
+  profile. Its engines are built on a worker and asked on the UI thread.
 - **Two engines:** one for `lists`, one for `filters`. Standard mode drops the
   first one's first-party matches and keeps the second's, as Brave's
   `AdBlockEngineWrapper` does.
@@ -78,7 +77,8 @@ an 836-line cxx bridge and a few hooks.
   `! Expires:` (`read_list_metadata`) and fetches again after it, between one
   hour and 14 days, by default after one day. It fetches through the system
   network context, so no profile's cookies go with it. A path is read again
-  when the config changes.
+  when the config changes. A list that cannot be read or is not UTF-8 is left
+  out, and an error names it (`components/domicile/content_blocking/lists`).
 - **Startup reads a serialized engine.** After each build the engine writes
   `serialize()` beside the lists. The next start `deserialize()`s it while the
   lists are unchanged, and builds from the cached texts otherwise.
@@ -149,18 +149,18 @@ settings plumbing:
   app's preload and before the page's scripts. Unlike Brave's `<script>`
   element, a page's CSP does not stop them.
 - **Brave's `content_cosmetic.ts` and `procedural_filters.ts`** (MPL-2.0,
-  unchanged, in `components/domicile/content_blocking/resources`) run in the
+  unchanged, at a brave-core revision `resources/bundle.sh` pins) run in the
   agent's isolated world, `ISOLATED_WORLD_ID_DOMICILE_CONTENT_FILTER`. They
   watch the document's class and id names as it changes and ask for generic
   rules, apply procedural filters (`:has-text()`, `:upward()` and the rest)
   and actions (`:style()`, `:remove()`), and in standard mode show a
   selector's elements again when they hold the site's own content. The
-  engine's build has no bun, so `bundle.sh` writes
-  `content_filter_bundle.js`, which is checked in and compiled into the
-  renderer as a string.
+  engine's build has no bun, so `bundle.sh` fetches them, checks their
+  sha256 and writes `content_filter_bundle.js`, which is checked in and
+  compiled into the renderer as a string.
 - **`cf_worker`** is the agent's: `hiddenClassIdSelectors` (answered by
   `GenericSelectors` over mojo), `isFirstPartyUrl` and `injectStylesheet`, as
-  Brave names them. The element picker's functions are left out.
+  Brave names them.
 - **Hiding:** the user's selectors, and all of them in aggressive mode, go
   into a user-origin stylesheet, which no `!important` of the page outranks.
   A selector holding `{`, `}` or `/*` is left out of it, so a list cannot end
@@ -184,23 +184,24 @@ settings plumbing:
 
 ### Building
 
-- **adblock 0.13.6 is vendored into `third_party/rust/chromium_crates_io`**,
-  Chromium's own way. Its features are `full-regex-handling` and
-  `single-thread`, with no default features.
+- **adblock 0.13.6 goes into `third_party/rust/chromium_crates_io`**,
+  Chromium's own way, but fetched, not checked in. Its features are
+  `full-regex-handling` and `single-thread`, with no default features.
 - **It adds 12 crates Chromium 160 lacks:** adblock, arrayvec 0.7,
   flatbuffers 25, idna 1, idna_adapter 1, percent-encoding 2, rustc-hash 2,
   seahash 4 and thiserror 1, plus thiserror-impl 1, semver 1 and rustc_version
   0.4, which only build. Patch 0281 changes `Cargo.toml`, `Cargo.lock` and
-  `gnrt_config.toml`. The vendored sources and gnrt's `BUILD.gn` files are new
-  files in `src/`, so they never conflict on a rebase.
+  `gnrt_config.toml`, and gnrt's `BUILD.gn` files are new files in `src/`.
+- **The crates' sources are fetched:** `crates/CRATES` names each crate's
+  version and the sha256 of its `.crate`, and
+  `.github/scripts/engine-crates.sh`, after `apply.sh`, unpacks them into
+  `vendor/` as `cargo vendor` would. Their directories go in
+  `.git/info/exclude`, as Node's does, and the series stamp counts
+  `crates/`.
 - **Two Chromium crates change:** `regex` ships (Chromium keeps it for tests),
   and `bitflags` gains its `serde` feature.
 - **flatbuffers and seahash publish no license file.** Their `LICENSE` sits
   beside their `BUILD.gn`, as Brave keeps it.
-- **Regenerating:** gnrt runs on a copy of `third_party/rust` and
-  `tools/crates`, with nixpkgs' cargo, since Chromium's links Ubuntu's
-  libcurl. `gn format` then formats its `BUILD.gn` files, and
-  `zune_jpeg/v0_5/README.chromium` keeps its hand-written notes.
 - **The bridge is first-party Rust:** a `rust_static_library` with
   `cxx_bindings` in `components/domicile/content_blocking`, depending on
   `//third_party/rust/adblock/v0_13:lib`. It follows Brave's `lib.rs`, and drops
@@ -209,46 +210,84 @@ settings plumbing:
 ### Extensions next to it
 
 An extension keeps working. Its rules and the engine's both apply, and the
-first one to block wins. With Ghostery, turn off its ad and tracker blocking
-and keep Never-Consent: `blockAds` and `blockTrackers` off, `blockAnnoyances`
-on.
+first one to block wins.
 
 ## Testing
 
 - **Unit tests** (`domicile_unittests`) build an engine from inline rules.
   They check the request type mapping, first and third party in each mode,
   `$important`, `sites` over `mode`, `filters` in standard mode,
-  `$removeparam`'s methods and types, stub responses, and list expiry.
+  `$removeparam`'s methods and types, stub responses, list expiry, and the
+  list cache: what it reads, what it refuses, and when it keeps an engine.
 - **`guard-content-blocking.sh`** serves a page, a list and resources from a
   local server. The page loads another site's listed script, its own listed
   script, a script the user's rule blocks, a `$redirect` script, a tracked
   pixel, a WebSocket and a frame its `$csp` forbids; it holds elements a
   site rule and generic rules hide, and a scriptlet marks it before its first
-  script. `AGGRESSIVE=1` sets the site to aggressive, and its own script and
-  element go too. The control, `NEGATIVE=1`, sets the site to `off`, and every
-  request must arrive as the page made it, with nothing hidden or run.
+  script. The guard's shell checks `contentBlockingFor`,
+  `setContentBlockingSite` and `blockedRequests`. `AGGRESSIVE=1`
+  (`run-checks.sh guard-content-blocking-aggressive`) sets the site to
+  aggressive, and its own script and element go too. The control,
+  `NEGATIVE=1`, sets the site to `off`, and every request must arrive as the
+  page made it, with nothing hidden or run.
 - **Online checks** in a headless engine with the default lists, against the
   same engine with blocking off. adblock-tester.com scores 90 of 100 in
   standard mode, 96 in aggressive mode, and 58 off. Its three misses in
   standard mode are banner images the site serves itself, which standard
   mode lets through as Brave does. On speedtest.net, 50 requests from 18
   hosts become 35 from 10: nine hosts go (Amazon's ad system, Google
-  Analytics, ID5, Lotame and others) and Blockthrough's ad block detector
-  comes. The page's text is the same.
+  Analytics, ID5, Lotame and others), and one host is added: Blockthrough's
+  ad block detector. The page's text is the same.
+- **A headless desk** (`OZONE=headless domicile`) with a shell that drives
+  the SDK: adblock-tester.com scores 90 in standard mode and 100 set
+  `aggressive` with `setSiteBlocking`; a site set `off`, in the config or
+  from the shell, blocks nothing and loads all its ad hosts; modes outlive a
+  restart.
 
-  Two traps a test page can fall into:
-  - adblock-rust, like uBlock Origin, applies a `$removeparam` with no type
-    to documents, frames and fetches only, not to an image.
-  - Brave's first-party test (`isSubTreeFirstParty` in `content_cosmetic.ts`)
-    walks an element's next siblings too. An ad next to an element with a
-    first-party image is shown again in standard mode.
+## Key decisions
 
-## Not in this design
+- **In the engine over an MV3 extension**, because `declarativeNetRequest`
+  cannot express `redirect-rule`, `strict1p`/`strict3p` or CNAME uncloaking,
+  and Electron apps have no extensions.
+- **adblock-rust over writing a matcher**, because it is Brave's production
+  engine, embeds through cxx, and reads EasyList and uBlock Origin's syntax.
+- **Resources downloaded over shipped**, because the scriptlets are GPL and
+  the engine is MIT.
+- **A loader proxy over the network service's own hooks**, because the
+  decision needs the frame's page and mode, which only the browser process
+  has.
+- **A sync `RulesFor` at the first script over rules pushed to the
+  renderer**, because scriptlets must run before the page's own scripts, and
+  the renderer then holds no settings.
+- **A user-origin stylesheet over a page sheet** for what always hides,
+  because no `!important` of the page outranks it.
+- **Crates fetched by sha256 over checked in**, because their 53,000 lines
+  are other people's code that nobody here reviews; only gnrt's `BUILD.gn`
+  files and the manifest are this repository's.
+- **Lists checked as UTF-8 where they are read over in the bridge**, because
+  the bridge then takes `&str` and has no failure to report.
 
-- Blocking top-level navigations. Brave shows an interstitial page; a shell
-  would draw its own.
-- Brave's element picker.
-- A worker's WebSockets: Chrome proxies only a frame's
-  (`CreateWebSocket` has no frame for a worker's).
-- Fingerprinting reduction. Another design, tested against online
-  fingerprinting checks.
+## Plan
+
+- [x] engine: fetch adblock-rust's crates, the cxx bridge, the lists and their
+      cache
+- [x] engine: requests, `$redirect`, `$removeparam`, `$csp`, CNAME
+      uncloaking, WebSockets
+- [x] engine: element hiding, procedural filters and scriptlets
+- [x] shell: `blockingFor`, `setSiteBlocking`, `blockedRequests`
+- [x] config: the schema, the SDK's types, the home-manager module
+- [ ] guard: CNAME uncloaking, with a DNS server that answers a CNAME
+- [ ] engine: a worker's WebSockets (`CreateWebSocket` has no frame for them)
+- [ ] engine and shell: block a top-level navigation, with a page the shell
+      draws
+- [ ] Electron apps' pages with `electron_apps`, checked on a desk
+
+## Open questions
+
+- **The shell API's shape.** `blockingFor` and `setSiteBlocking` on
+  `browser`, and `blockedRequests` on each window. Recommend: keep it; it
+  mirrors `profileFor` and `pin`.
+- **`regex` in the shipped engine.** Chromium keeps the crate for tests;
+  adblock-rust needs it for regex filters. Recommend: ship it, as Brave does.
+- **Fingerprinting reduction.** Recommend: its own design, tested against
+  online fingerprinting checks.

@@ -44,6 +44,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
+# `$image` on the `$removeparam` rule: adblock-rust, as uBlock Origin, applies
+# one with no type to documents, frames and fetches only.
 LIST = """! Title: guard-content-blocking
 /ad.js$script,third-party
 /own-ad.js$script

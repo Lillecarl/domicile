@@ -569,8 +569,8 @@ The engine blocks ads and trackers in every browser profile, with Brave's
 filter engine. Leave `content_blocking` out to block nothing.
 
 - `lists`: filter lists in Adblock Plus and uBlock Origin syntax, by `https://`
-  address or absolute path. Default: EasyList, EasyPrivacy, and uBlock
-  Origin's filters, privacy, unbreak and badware lists. The engine fetches an
+  or `http://` address or absolute path. Default: EasyList, EasyPrivacy, and
+  uBlock Origin's filters, privacy, unbreak and badware lists. The engine fetches an
   address again when the list expires, after a day if it names no time.
 - `resources`: the scriptlets and stubs that `##+js()` and `$redirect` rules
   use. Default: Brave's `adblock-resources`.
@@ -582,7 +582,9 @@ filter engine. Leave `content_blocking` out to block nothing.
   and its subdomains. A frame follows the page you see.
 - `electron_apps`: also blocks in Electron apps. Default `false`.
 
-An extension such as uBlock Origin Lite still works beside it. See
+An extension such as uBlock Origin Lite still works beside it, and the first
+to block wins. To keep Ghostery for its consent banners alone, turn off its
+`blockAds` and `blockTrackers` and keep `blockAnnoyances`. See
 [CONTENT-BLOCKING.md](architecture/CONTENT-BLOCKING.md).
 
 

@@ -61,7 +61,7 @@ let
       fhs = pkgs.buildFHSEnv {
         name = "domicile-engine-env";
         targetPkgs = p: with p; [
-          alsa-lib at-spi2-atk bash cairo ccache coreutils cups curl dbus diffutils
+          alsa-lib at-spi2-atk bash cairo ccache coreutils cups curl dbus diffutils gnutar
           expat file findutils gawk git glib gnugrep gnused gperf gzip libdrm libgbm
           libx11 libxcb libxcomposite libxdamage libxext libxfixes libxkbcommon
           libxrandr libxtst mesa nspr nss pango patch perl pkg-config procps python3
@@ -74,6 +74,7 @@ let
         fileset = pkgs.lib.fileset.unions [
           ../.github/scripts
           ../packages/domicile-engine/CHROMIUM_PIN
+          ../packages/domicile-engine/crates
           ../packages/domicile-engine/node
           ../packages/domicile-engine/patches
           ../packages/domicile-engine/scripts/apply.sh

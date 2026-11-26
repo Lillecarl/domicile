@@ -470,7 +470,46 @@ class Factory final : public network::SelfDeletingURLLoaderFactory {
   const Origin origin_;
 };
 
+// The mode `frame`'s requests are checked in: its page's, for a website's
+// frame, unless it is an Electron app's and the config spares those.
+Mode ModeOf(content::RenderFrameHost& frame) {
+  const ContentBlocker& blocker = ContentBlocker::Get();
+  const GURL page = frame.GetMainFrame()->GetLastCommittedURL();
+  content::WebContents* contents =
+      content::WebContents::FromRenderFrameHost(&frame);
+  const bool electron = contents != nullptr &&
+                        static_cast<bool>(ElectronPage::SessionOf(*contents));
+  if (!page.SchemeIsHTTPOrHTTPS() ||
+      (electron && !blocker.FiltersElectronApps())) {
+    return Mode::kOff;
+  }
+  return blocker.ModeFor(page);
+}
+
 }  // namespace
+
+bool ChecksWebSockets(content::RenderFrameHost& frame) {
+  return ContentBlocker::Get().Enabled() && ModeOf(frame) != Mode::kOff;
+}
+
+bool MayOpenWebSocket(content::RenderFrameHost& frame, const GURL& url) {
+  const content_blocking::Blocker* blocker = ContentBlocker::Get().blocker();
+  const Mode mode = ModeOf(frame);
+  if (blocker == nullptr || mode == Mode::kOff) {
+    return true;
+  }
+  const Decision decision = blocker->Decide(
+      {.url = url,
+       .source = frame.GetLastCommittedOrigin().GetURL(),
+       .type = content_blocking::RequestType::kWebSocket},
+      mode);
+  if (decision.kind == Decision::Kind::kBlock ||
+      decision.kind == Decision::Kind::kRedirect) {
+    BlockedRequests::Count(frame);
+    return false;
+  }
+  return true;
+}
 
 void ProxyContentBlocking(content::RenderFrameHost* frame,
                           const url::Origin& initiator,

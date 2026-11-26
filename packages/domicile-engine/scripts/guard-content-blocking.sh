@@ -20,14 +20,15 @@
 # - the site's /own-ad.js was asked for: standard mode spares a site's own
 # - localhost's /stub.js was never asked for, and the stub ran in its place
 # - the pixel was asked for without utm_source
+# - the WebSocket to localhost's /ws-ad was never opened
 # - the site's .ad-banner and the generic .generic-ad are hidden; the generic
 #   .generic-own, which holds only the site's own image, is shown again
 #   (standard mode); the story is shown; and the guard-mark scriptlet ran
 #   before the page's first script
 #
-# Control (NEGATIVE=1): the config turns the site off. /ad.js, /mine.js and
-# /stub.js must be asked for, and the pixel with its utm_source, and nothing
-# is hidden or run.
+# Control (NEGATIVE=1): the config turns the site off. /ad.js, /mine.js,
+# /stub.js and the WebSocket must be asked for, and the pixel with its
+# utm_source, and nothing is hidden or run.
 set -u
 
 SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
@@ -160,6 +161,7 @@ MINE=$(asked "/mine.js" "127.0.0.1")
 STUB=$(asked "/stub.js" "localhost")
 CLEAN=$(asked "/pixel.gif\\?id=1" "localhost")
 TRACKED=$(asked "/pixel.gif\\?utm_source=guard&id=1" "localhost")
+SOCKET=$(asked "/ws-ad" "localhost")
 saw() { grep -qF "$1" "$ENGINE_LOG" && echo 1 || echo 0; }
 HIDDEN=$(saw "GUARD cosmetic banner=none generic=none own=block story=block marked-first=true")
 SHOWN=$(saw "GUARD cosmetic banner=block generic=block own=block story=block marked-first=false")
@@ -167,7 +169,8 @@ SHOWN=$(saw "GUARD cosmetic banner=block generic=block own=block story=block mar
 echo
 echo "sent=$SAW_SENT list=$SAW_LIST resources=$SAW_RESOURCES page=$SAW_PAGE"
 echo "asked for: ok=$OK ad=$AD own-ad=$OWN mine=$MINE stub=$STUB" \
-  "clean-pixel=$CLEAN tracked-pixel=$TRACKED; the stub ran=$SAW_STUB_RAN"
+  "clean-pixel=$CLEAN tracked-pixel=$TRACKED socket=$SOCKET;" \
+  "the stub ran=$SAW_STUB_RAN"
 echo "cosmetic: hidden=$HIDDEN shown=$SHOWN"
 grep -F "GUARD cosmetic" "$ENGINE_LOG" || true
 echo "what the site was asked for:"
@@ -187,7 +190,7 @@ elif [ "$SAW_PAGE" != "1" ] || [ "$OK" != "1" ]; then
 which nothing blocks"
 elif [ "$NEGATIVE" = "1" ]; then
   if [ "$AD" = "1" ] && [ "$MINE" = "1" ] && [ "$STUB" = "1" ] &&
-    [ "$TRACKED" = "1" ] && [ "$SHOWN" = "1" ]; then
+    [ "$TRACKED" = "1" ] && [ "$SHOWN" = "1" ] && [ "$SOCKET" = "1" ]; then
     PASSED="the control is sharp: with the site off, every request reached \
 the site as the page made it, nothing was hidden and no scriptlet ran"
   else
@@ -209,6 +212,9 @@ the resources, or the loader's stub response"
 elif [ "$CLEAN" != "1" ]; then
   FAILURE="the pixel never arrived without utm_source: \$removeparam's \
 internal redirect"
+elif [ "$SOCKET" = "1" ]; then
+  FAILURE="the WebSocket to localhost's /ws-ad, which the list blocks, \
+reached the site: patch 0284's WillInterceptWebSocket or MayOpenWebSocket"
 elif [ "$HIDDEN" != "1" ]; then
   FAILURE="the page did not hide the site's .ad-banner and the generic \
 .generic-ad, show .generic-own and the story, or run the guard-mark \

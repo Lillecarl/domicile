@@ -117,6 +117,10 @@ waits for no thread hop.
   does. It is skipped when `LookUpProxyForURL` says the request goes through
   a proxy, so PAC scripts and system proxies count, and for a worker's
   requests. No guard covers it: it needs a DNS server that answers a CNAME.
+- **WebSockets** (patch 0284): while blocking is on, `WillInterceptWebSocket`
+  intercepts a website's frame's WebSockets, and `CreateWebSocket` asks the
+  engine with type `websocket` before it makes one. One it refuses is never
+  made; the rest go on through webRequest's proxy, as without blocking.
 - **Not checked:** the shell and other `domicile:` pages, extensions'
   requests, non-HTTP schemes, top-level navigations, a site in `off` mode, and
   Electron apps unless `electron_apps`.
@@ -239,21 +243,12 @@ on.
     walks an element's next siblings too. An ad next to an element with a
     first-party image is shown again in standard mode.
 
-## Order of work
-
-1. Vendor the crates, and build the bridge with a unit test.
-2. The `ContentBlocker` service: config, lists, cache, serialized engines.
-3. Network blocking, stubs and `removeparam`, and the guard's network half.
-4. Element hiding and scriptlets, and the guard's cosmetic half.
-5. `$csp` and CNAME uncloaking.
-6. The shell API and the blocked count.
-
 ## Not in this design
 
-- WebSockets. Brave proxies them through a content patch
-  (`CreateWebSocketWithFrameId`). They are left open until a list needs them.
 - Blocking top-level navigations. Brave shows an interstitial page; a shell
   would draw its own.
 - Brave's element picker.
+- A worker's WebSockets: Chrome proxies only a frame's
+  (`CreateWebSocket` has no frame for a worker's).
 - Fingerprinting reduction. Another design, tested against online
   fingerprinting checks.

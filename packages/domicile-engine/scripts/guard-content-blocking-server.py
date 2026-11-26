@@ -18,6 +18,9 @@ The page is on 127.0.0.1 and its "ads" on localhost, so they are two sites.
                                             window.stubRan
                    - localhost /pixel.gif?utm_source=guard&id=1
                                             the list removes utm_source
+                   - a WebSocket to localhost /ws-ad
+                                            the list blocks it ($websocket);
+                                            one that is made is a GET here
                    then says `GUARD page-loaded stub=<true|false>`, and
                    `GUARD cosmetic banner= generic= own= story=
                    marked-first=`: each element's display, and whether the
@@ -45,11 +48,12 @@ LIST = """! Title: guard-content-blocking
 /ad.js$script,third-party
 /own-ad.js$script
 ||localhost^*/stub.js$script,redirect=guard-stub.js
-||localhost^$removeparam=utm_source
+||localhost^$image,removeparam=utm_source
 127.0.0.1##.ad-banner
 ##.generic-ad
 ##.generic-own
 127.0.0.1##+js(guard-mark)
+||localhost^*/ws-ad$websocket
 """
 
 RESOURCES = json.dumps(
@@ -99,6 +103,7 @@ TEST_HTML = """<!doctype html>
 <script src="/mine.js"></script>
 <script src="http://localhost:{port}/stub.js"></script>
 <img src="http://localhost:{port}/pixel.gif?utm_source=guard&id=1">
+<script>new WebSocket("ws://localhost:{port}/ws-ad");</script>
 <script>
   addEventListener("load", () => {{
     console.log(`GUARD page-loaded stub=${{window.stubRan === true}}`);

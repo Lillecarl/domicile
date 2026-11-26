@@ -16,6 +16,8 @@ namespace url {
 class Origin;
 }
 
+class GURL;
+
 namespace domicile {
 
 // Puts ContentBlocker between `frame`'s loads and the network: a request
@@ -27,6 +29,15 @@ namespace domicile {
 void ProxyContentBlocking(content::RenderFrameHost* frame,
                           const url::Origin& initiator,
                           network::URLLoaderFactoryBuilder& builder);
+
+// Whether content blocking checks `frame`'s WebSockets: while the config
+// blocks, for a website's frame, which WillInterceptWebSocket then
+// intercepts.
+bool ChecksWebSockets(content::RenderFrameHost& frame);
+
+// Whether `frame` may open a WebSocket to `url`: false for one the engine
+// blocks, which is counted.
+bool MayOpenWebSocket(content::RenderFrameHost& frame, const GURL& url);
 
 }  // namespace domicile
 

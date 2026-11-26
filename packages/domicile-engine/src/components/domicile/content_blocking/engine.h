@@ -39,8 +39,8 @@ std::string_view RequestTypeName(RequestType type);
 
 struct Request {
   GURL url;
-  // The page the request is for: its top-level document. First and third
-  // party, `$domain` and `$csp` are measured from it.
+  // The document that made the request: its initiator. First and third
+  // party and `$domain` are measured from it, as Brave measures them.
   GURL source;
   RequestType type = RequestType::kOther;
   std::string method = "GET";

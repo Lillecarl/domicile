@@ -20,6 +20,8 @@ rust_static_library("bridge") {
 
 source_set("content_blocking") {
   sources = [
+    "blocker.cc",
+    "blocker.h",
     "domain_resolver.cc",
     "domain_resolver.h",
     "engine.cc",
@@ -27,6 +29,7 @@ source_set("content_blocking") {
   ]
   public_deps = [
     ":bridge",
+    ":settings",
     "//base",
     "//url",
   ]
@@ -47,6 +50,7 @@ source_set("settings") {
 source_set("unit_tests") {
   testonly = true
   sources = [
+    "blocker_unittest.cc",
     "engine_unittest.cc",
     "settings_unittest.cc",
   ]

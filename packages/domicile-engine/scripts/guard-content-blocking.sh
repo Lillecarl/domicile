@@ -152,6 +152,9 @@ wait_for_line "$TRIES" "GUARD page-loaded" "$ENGINE_LOG" ||
   echo "the test page never finished loading" >&2
 wait_for_line 60 "GUARD cosmetic" "$ENGINE_LOG" ||
   echo "the test page never said what it shows" >&2
+# The control blocks nothing, so its shell never counts a request to report on.
+[ "$NEGATIVE" = "1" ] || wait_for_line 60 "GUARD shell " "$ENGINE_LOG" ||
+  echo "the shell never said what its blocking calls answer" >&2
 
 asked() { # $1 the path and query, $2 the host
   grep -qE "^asked $1 host=$2(:|$)" "$HTTP_LOG" && echo 1 || echo 0
@@ -175,6 +178,9 @@ saw() { grep -qF "$1" "$ENGINE_LOG" && echo 1 || echo 0; }
 OWN_SHOWN=block
 [ "$AGGRESSIVE" = "1" ] && OWN_SHOWN=none
 HIDDEN=$(saw "GUARD cosmetic banner=none generic=none own=$OWN_SHOWN story=block marked-first=true")
+MODE=standard
+[ "$AGGRESSIVE" = "1" ] && MODE=aggressive
+SHELL_ASKED=$(saw "GUARD shell counted=true mode=$MODE set=aggressive unset=standard refused=OperationError")
 SHOWN=$(saw "GUARD cosmetic banner=block generic=block own=block story=block marked-first=false")
 
 echo
@@ -182,8 +188,8 @@ echo "sent=$SAW_SENT list=$SAW_LIST resources=$SAW_RESOURCES page=$SAW_PAGE"
 echo "asked for: ok=$OK ad=$AD own-ad=$OWN mine=$MINE stub=$STUB" \
   "clean-pixel=$CLEAN tracked-pixel=$TRACKED socket=$SOCKET frame=$FRAME;" \
   "the stub ran=$SAW_STUB_RAN"
-echo "cosmetic: hidden=$HIDDEN shown=$SHOWN"
-grep -F "GUARD cosmetic" "$ENGINE_LOG" || true
+echo "cosmetic: hidden=$HIDDEN shown=$SHOWN; the shell's calls=$SHELL_ASKED"
+grep -F -e "GUARD cosmetic" -e "GUARD shell " "$ENGINE_LOG" || true
 echo "what the site was asked for:"
 cat "$HTTP_LOG"
 echo
@@ -238,6 +244,10 @@ elif [ "$HIDDEN" != "1" ]; then
 .generic-ad, show .generic-own and the story, or run the guard-mark \
 scriptlet before its first script: ContentFilterAgent (patch 0283), \
 content_filter_bundle.js or domicile_content_filter.cc"
+elif [ "$SHELL_ASKED" != "1" ]; then
+  FAILURE="the shell's blocking calls did not answer as the config says: \
+blockedRequests, contentBlockingFor or setContentBlockingSite \
+(domicile_host.cc, domicile_browser_windows.cc, ContentBlocker::SetSite)"
 else
   OWN_SAID="standard mode spared the site's own listed script and showed its \
 own generic element again"
@@ -246,7 +256,8 @@ listed script and kept its own generic element hidden"
   PASSED="the list blocked another site's script, the user's rule the site's \
 own, $OWN_SAID, a \$redirect rule answered with its resource, \$removeparam \
 dropped utm_source, \$csp kept out a frame, the site's and a generic rule hid \
-their elements, and a scriptlet ran before the page"
+their elements, a scriptlet ran before the page, and the shell's calls \
+answered as the config says"
 fi
 
 if [ -n "$PASSED" ]; then

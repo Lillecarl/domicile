@@ -109,6 +109,7 @@ TOGETHER=(
   guard-webview-print
   guard-webview-context-menu
   guard-webview-spellcheck
+  guard-content-blocking
   guard-webview-upload
   guard-webview-download
   guard-webview-save-picker

@@ -218,8 +218,8 @@ view.reload(); // the window's <webview>
   `content_blocking.sites` names keeps the config's mode, and the call
   rejects. A page loads in the new mode from its next navigation.
 - **`blockedRequests`** on each window counts the requests the engine
-  blocked for its page since it loaded. The list changes at most every
-  quarter second while a page loses requests.
+  blocked for its page since it loaded. While the count changes, the window
+  list is sent again at most every quarter second.
 
 See [CONTENT-BLOCKING.md](architecture/CONTENT-BLOCKING.md).
 

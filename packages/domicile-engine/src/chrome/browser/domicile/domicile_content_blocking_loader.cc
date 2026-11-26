@@ -258,8 +258,8 @@ class Loader final : public network::mojom::URLLoader,
 
   Decision Decide(const network::ResourceRequest& request) const {
     const content_blocking::Blocker* blocker = ContentBlocker::Get().blocker();
-    // A page itself loads; only what it loads is blocked. A shell draws its
-    // own page for a site it blocks outright.
+    // A top-level navigation is not checked, only what a page loads: a
+    // blocked page would need one the shell draws.
     if (blocker == nullptr || !request.url.SchemeIsHTTPOrHTTPS() ||
         request.destination == RequestDestination::kDocument) {
       return {};

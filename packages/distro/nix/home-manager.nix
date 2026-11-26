@@ -381,6 +381,58 @@
     if lib.length found == 1
     then lib.head found
     else throw "programs.domicile.configDirectory: ${toString directory} must hold one of domicile.{ts,tsx,js,mjs}, and holds ${toString (lib.length found)}";
+
+  # `null` options are dropped, so domicile's defaults apply: one place holds
+  # the default lists.
+  contentBlocking = lib.types.submodule {
+    options = {
+      lists = lib.mkOption {
+        description = ''
+          Filter lists in Adblock Plus and uBlock Origin syntax, each an
+          `https://` or `http://` address or an absolute path. `null` is
+          EasyList, EasyPrivacy and uBlock Origin's filters, privacy, unbreak
+          and badware lists.
+        '';
+        type = lib.types.nullOr (lib.types.listOf lib.types.str);
+        default = null;
+      };
+      resources = lib.mkOption {
+        description = ''
+          The scriptlets and stubs `##+js()` and `$redirect` rules use, as
+          adblock-rust's JSON: an address or an absolute path. `null` is
+          Brave's `adblock-resources`.
+        '';
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+      };
+      filters = lib.mkOption {
+        description = "Your own rules, in the same syntax. They apply in every mode.";
+        type = lib.types.nullOr (lib.types.listOf lib.types.str);
+        default = null;
+        example = ["||ads.example.com^" "example.com##.banner"];
+      };
+      mode = lib.mkOption {
+        description = ''
+          `standard` blocks other sites' ads and trackers, and a site's own
+          only for an `$important` rule; `aggressive` blocks a site's own too.
+          `null` is `standard`.
+        '';
+        type = lib.types.nullOr (lib.types.enum ["standard" "aggressive"]);
+        default = null;
+      };
+      sites = lib.mkOption {
+        description = "A mode per site, by host or `*.host`.";
+        type = lib.types.nullOr (lib.types.attrsOf (lib.types.enum ["off" "standard" "aggressive"]));
+        default = null;
+        example = {"bank.example" = "off";};
+      };
+      electron_apps = lib.mkOption {
+        description = "Also blocks in Electron apps' pages. `null` is no.";
+        type = lib.types.nullOr lib.types.bool;
+        default = null;
+      };
+    };
+  };
 in {
   imports = [
     (lib.mkRemovedOptionModule ["programs" "domicile" "defaultBrowser"] ''
@@ -774,6 +826,18 @@ in {
             type = lib.types.listOf lib.types.str;
             default = [];
             example = ["mail.google.com"];
+          };
+
+          content_blocking = lib.mkOption {
+            description = ''
+              The engine's own ad and tracker blocking, with Brave's filter
+              engine, in every browser profile. `null` blocks nothing; `{}`
+              blocks with the default lists. See
+              docs/architecture/CONTENT-BLOCKING.md.
+            '';
+            type = lib.types.nullOr contentBlocking;
+            default = null;
+            example = {sites."bank.example" = "off";};
           };
 
           spellcheck = {

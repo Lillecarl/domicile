@@ -55,14 +55,16 @@ fi
 NEGATIVE="${NEGATIVE:-0}"
 AGGRESSIVE="${AGGRESSIVE:-0}"
 OUT="${OUT:-out/Domicile}"
-BROKER="${BROKER:-/tmp/domicile-content-blocking-broker}"
-CONTROL="${CONTROL:-/tmp/domicile-content-blocking-control}"
-PROFILE="${PROFILE:-/tmp/domicile-content-blocking-profile}"
 FOR_SECONDS="${FOR_SECONDS:-90}"
 
+# run-checks.sh runs the aggressive guard beside this one, so each keeps its
+# own broker, socket, profile and logs.
 WHICH=""
 [ "$NEGATIVE" = "1" ] && WHICH="-negative"
 [ "$AGGRESSIVE" = "1" ] && WHICH="-aggressive"
+BROKER="${BROKER:-/tmp/domicile-content-blocking$WHICH-broker}"
+CONTROL="${CONTROL:-/tmp/domicile-content-blocking$WHICH-control}"
+PROFILE="${PROFILE:-/tmp/domicile-content-blocking$WHICH-profile}"
 ENGINE_LOG="${ENGINE_LOG:-/tmp/domicile-content-blocking$WHICH-engine.log}"
 HTTP_LOG="${HTTP_LOG:-/tmp/domicile-content-blocking$WHICH-http.log}"
 SOCKET_LOG="${SOCKET_LOG:-/tmp/domicile-content-blocking$WHICH-socket.log}"

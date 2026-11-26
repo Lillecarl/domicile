@@ -110,6 +110,7 @@ TOGETHER=(
   guard-webview-context-menu
   guard-webview-spellcheck
   guard-content-blocking
+  guard-content-blocking-aggressive
   guard-webview-upload
   guard-webview-download
   guard-webview-save-picker
@@ -275,6 +276,9 @@ one() { # name, args...
       SOFTWARE=1 HEADLESS=1 engine_guard_and_control guard-client-window.sh ;;
     guard-shell-manganese)
       engine_guard_and_control_under_wayland guard-shell.sh manganese ;;
+    # Its control is guard-content-blocking's: a site set off.
+    guard-content-blocking-aggressive)
+      AGGRESSIVE=1 engine_guard guard-content-blocking.sh ;;
     *)
       if listed "$name" "${ONCE[@]}" && listed "$name" "${UNDER_WAYLAND[@]}"; then
         engine_guard_under_wayland "$name.sh"

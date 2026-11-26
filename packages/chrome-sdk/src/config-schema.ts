@@ -23,6 +23,12 @@ export const agentsConfigSchema = z.strictObject({
   web: z.boolean().prefault(false),
 });
 
+/** [`ContentBlockingConfig::mode`]. */
+export const blockingModeSchema = z.union([
+  z.literal("standard"),
+  z.literal("aggressive"),
+]);
+
 /** One browser profile. See [`BrowserConfig::profiles`]. */
 export const browserProfileSchema = z.strictObject({
   color: accentColorSchema,
@@ -68,6 +74,40 @@ export const clickMethodSchema = z.enum([
   "clickfinger",
   "button_areas",
 ]);
+
+/** One site's [`ContentBlockingConfig::sites`] entry. */
+export const siteBlockingSchema = z.union([
+  z.literal("off"),
+  z.literal("standard"),
+  z.literal("aggressive"),
+]);
+
+/**
+ * The engine blocks ads and trackers itself, with Brave's filter engine,
+ * in every browser profile. Leave it out to block nothing. See
+ * `docs/architecture/CONTENT-BLOCKING.md`.
+ */
+export const contentBlockingConfigSchema = z.strictObject({
+  electron_apps: z.boolean().prefault(false),
+  filters: z.array(z.string()).prefault([]),
+  lists: z
+    .array(z.string())
+    .prefault([
+      "https://easylist.to/easylist/easylist.txt",
+      "https://easylist.to/easylist/easyprivacy.txt",
+      "https://ublockorigin.github.io/uAssets/filters/filters.txt",
+      "https://ublockorigin.github.io/uAssets/filters/privacy.txt",
+      "https://ublockorigin.github.io/uAssets/filters/unbreak.txt",
+      "https://ublockorigin.github.io/uAssets/filters/badware.txt",
+    ]),
+  mode: blockingModeSchema.prefault("standard"),
+  resources: z
+    .string()
+    .prefault(
+      "https://raw.githubusercontent.com/brave/adblock-resources/master/dist/resources.json",
+    ),
+  sites: z.record(z.string(), siteBlockingSchema).prefault({}),
+});
 
 /** How strongly clients set text and edges apart from their background. */
 export const contrastSchema = z.enum(["normal", "high"]);
@@ -538,6 +578,9 @@ export const configSchema = z.strictObject({
     },
     sites: {},
   }),
+  content_blocking: contentBlockingConfigSchema
+    .nullish()
+    .transform((value) => value ?? undefined),
   electron: electronConfigSchema.prefault({ apps: [] }),
   extensions: extensionsConfigSchema.prefault({
     settings: {},

@@ -169,6 +169,29 @@ describe("browser", () => {
     stop();
   });
 
+  it("gives a site's blocking as the engine names it", async () => {
+    const fake = new FakeDomicileHost();
+    fake.block("news.example", "aggressive");
+    const { browser } = desktop(fake.host);
+
+    expect(await browser.blockingFor("https://news.example/")).toBe(
+      Blocking.Aggressive,
+    );
+    expect(await browser.blockingFor("https://other.example/")).toBe(
+      Blocking.Standard,
+    );
+  });
+
+  it("rejects a blocking the engine names that the SDK does not know", async () => {
+    const fake = new FakeDomicileHost();
+    fake.block("news.example", "paranoid");
+    const { browser } = desktop(fake.host);
+
+    await expect(browser.blockingFor("https://news.example/")).rejects.toThrow(
+      "paranoid",
+    );
+  });
+
   it("sets a site's blocking, and gives it the config's again", async () => {
     const fake = new FakeDomicileHost();
     const { browser } = desktop(fake.host);

@@ -154,9 +154,8 @@ export type Browser = {
   /**
    * How much the engine blocks on `url`'s site, as the config's
    * `content_blocking` or {@link Browser.setSiteBlocking} has it;
-   * {@link Blocking.Off} while the config blocks nothing. Each window's
-   * `blockedRequests` counts what its page lost. Rejects with a TypeError
-   * for an invalid `url`.
+   * {@link Blocking.Off} while the config blocks nothing. Rejects with a
+   * TypeError for an invalid `url`.
    */
   blockingFor: (url: string) => Promise<Blocking>;
   /**
@@ -371,15 +370,17 @@ export const browser = (host: BrowserHost): Browser => {
   };
 };
 
-/** The engine's name for a site's blocking; an unknown one blocks nothing. */
+/** The engine's name for a site's blocking. */
 const blockingNamed = (name: string): Blocking => {
   switch (name) {
+    case Blocking.Off:
+      return Blocking.Off;
     case Blocking.Standard:
       return Blocking.Standard;
     case Blocking.Aggressive:
       return Blocking.Aggressive;
     default:
-      return Blocking.Off;
+      throw new Error(`the engine names an unknown blocking: ${name}`);
   }
 };
 

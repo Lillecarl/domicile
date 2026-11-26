@@ -127,11 +127,11 @@ TEST(ContentBlockingBlockerTest, ASitesCosmeticRulesComeFromBothEngines) {
   const std::optional<CosmeticRules> rules =
       blocker.Cosmetic(GURL(kSite), Mode::kStandard);
   ASSERT_TRUE(rules);
-  EXPECT_EQ(rules->hide_selectors.size(), 2u);
-  EXPECT_THAT(rules->hide_selectors,
-              testing::UnorderedElementsAre(".banner", ".mine"));
+  EXPECT_THAT(rules->hide_selectors, testing::ElementsAre(".banner"));
+  EXPECT_THAT(rules->force_hide_selectors, testing::ElementsAre(".mine"));
   EXPECT_THAT(rules->exceptions, testing::ElementsAre(".ad-box"));
   EXPECT_FALSE(rules->generichide);
+  EXPECT_FALSE(rules->hide_first_party);
   EXPECT_EQ(blocker.Cosmetic(GURL(kSite), Mode::kOff), std::nullopt);
 }
 
@@ -150,8 +150,29 @@ TEST(ContentBlockingBlockerTest, AScriptletRunsTheResourceItNames) {
 
 TEST(ContentBlockingBlockerTest, GenericSelectorsComeFromBothEngines) {
   const Blocker blocker = BlockerOf("##.ad-box\n", "##.my-box\n");
-  EXPECT_THAT(blocker.GenericSelectors({"ad-box", "my-box", "story"}, {}, {}),
-              testing::UnorderedElementsAre(".ad-box", ".my-box"));
+  EXPECT_EQ(blocker.GenericSelectors({"ad-box", "my-box", "story"}, {}, {}),
+            (GenericHide{.hide_selectors = {".ad-box"},
+                         .force_hide_selectors = {".my-box"}}));
+}
+
+TEST(ContentBlockingBlockerTest, StandardModeKeepsOnlyPlainSelectorFilters) {
+  const Blocker blocker = BlockerOf(
+      "site.example##.box:has(.ad)\n"
+      "site.example##.promo:has-text(Sponsored)\n"
+      "site.example##.sticky:style(position: static !important)\n");
+  const std::optional<CosmeticRules> standard =
+      blocker.Cosmetic(GURL(kSite), Mode::kStandard);
+  const std::optional<CosmeticRules> aggressive =
+      blocker.Cosmetic(GURL(kSite), Mode::kAggressive);
+  ASSERT_TRUE(standard && aggressive);
+  EXPECT_TRUE(aggressive->hide_first_party);
+  EXPECT_LT(standard->hide_selectors.size() +
+                standard->procedural_actions.size(),
+            aggressive->hide_selectors.size() +
+                aggressive->procedural_actions.size());
+  EXPECT_EQ(standard->procedural_actions.size(), 1u);
+  EXPECT_THAT(standard->procedural_actions.front(),
+              testing::HasSubstr("position: static"));
 }
 
 }  // namespace

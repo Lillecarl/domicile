@@ -9,9 +9,18 @@ import "url/mojom/url.mojom";
 // components/domicile/content_blocking/blocker.h's CosmeticRules.
 struct CosmeticRules {
   array<string> hide_selectors;
+  array<string> force_hide_selectors;
+  array<string> procedural_actions;
   string injected_script;
   bool generichide;
   array<string> exceptions;
+  bool hide_first_party;
+};
+
+// See components/domicile/content_blocking/blocker.h's GenericHide.
+struct GenericHide {
+  array<string> hide_selectors;
+  array<string> force_hide_selectors;
 };
 
 // A frame's way to the engine's cosmetic rules, bound per frame. The browser
@@ -27,5 +36,5 @@ interface ContentFilter {
   // The generic hide selectors the document's `classes` and `ids` call for,
   // less `exceptions` from RulesFor.
   GenericSelectors(array<string> classes, array<string> ids,
-                   array<string> exceptions) => (array<string> selectors);
+                   array<string> exceptions) => (GenericHide selectors);
 };

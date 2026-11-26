@@ -37,8 +37,11 @@ class ContentFilterHost final : public mojom::ContentFilter {
       return;
     }
     std::move(callback).Run(mojom::CosmeticRules::New(
-        std::move(rules->hide_selectors), std::move(rules->injected_script),
-        rules->generichide, std::move(rules->exceptions)));
+        std::move(rules->hide_selectors),
+        std::move(rules->force_hide_selectors),
+        std::move(rules->procedural_actions),
+        std::move(rules->injected_script), rules->generichide,
+        std::move(rules->exceptions), rules->hide_first_party));
   }
 
   void GenericSelectors(const std::vector<std::string>& classes,
@@ -46,9 +49,15 @@ class ContentFilterHost final : public mojom::ContentFilter {
                         const std::vector<std::string>& exceptions,
                         GenericSelectorsCallback callback) override {
     const content_blocking::Blocker* blocker = ContentBlocker::Get().blocker();
+    if (blocker == nullptr) {
+      std::move(callback).Run(mojom::GenericHide::New());
+      return;
+    }
+    content_blocking::GenericHide hide =
+        blocker->GenericSelectors(classes, ids, exceptions);
     std::move(callback).Run(
-        blocker ? blocker->GenericSelectors(classes, ids, exceptions)
-                : std::vector<std::string>());
+        mojom::GenericHide::New(std::move(hide.hide_selectors),
+                                std::move(hide.force_hide_selectors)));
   }
 
  private:

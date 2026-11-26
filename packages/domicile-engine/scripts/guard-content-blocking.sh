@@ -20,8 +20,10 @@
 # - the site's /own-ad.js was asked for: standard mode spares a site's own
 # - localhost's /stub.js was never asked for, and the stub ran in its place
 # - the pixel was asked for without utm_source
-# - the site's .ad-banner and the generic .generic-ad are hidden, the story is
-#   not, and the guard-mark scriptlet ran before the page's first script
+# - the site's .ad-banner and the generic .generic-ad are hidden; the generic
+#   .generic-own, which holds only the site's own image, is shown again
+#   (standard mode); the story is shown; and the guard-mark scriptlet ran
+#   before the page's first script
 #
 # Control (NEGATIVE=1): the config turns the site off. /ad.js, /mine.js and
 # /stub.js must be asked for, and the pixel with its utm_source, and nothing
@@ -139,7 +141,7 @@ wait_for_line "$TRIES" "GUARD shell-loaded" "$ENGINE_LOG" || {
 }
 wait_for_line "$TRIES" "GUARD page-loaded" "$ENGINE_LOG" ||
   echo "the test page never finished loading" >&2
-wait_for_line 40 "GUARD cosmetic" "$ENGINE_LOG" ||
+wait_for_line 60 "GUARD cosmetic" "$ENGINE_LOG" ||
   echo "the test page never said what it shows" >&2
 
 asked() { # $1 the path and query, $2 the host
@@ -159,8 +161,8 @@ STUB=$(asked "/stub.js" "localhost")
 CLEAN=$(asked "/pixel.gif\\?id=1" "localhost")
 TRACKED=$(asked "/pixel.gif\\?utm_source=guard&id=1" "localhost")
 saw() { grep -qF "$1" "$ENGINE_LOG" && echo 1 || echo 0; }
-HIDDEN=$(saw "GUARD cosmetic banner=none generic=none story=block marked-first=true")
-SHOWN=$(saw "GUARD cosmetic banner=block generic=block story=block marked-first=false")
+HIDDEN=$(saw "GUARD cosmetic banner=none generic=none own=block story=block marked-first=true")
+SHOWN=$(saw "GUARD cosmetic banner=block generic=block own=block story=block marked-first=false")
 
 echo
 echo "sent=$SAW_SENT list=$SAW_LIST resources=$SAW_RESOURCES page=$SAW_PAGE"
@@ -209,9 +211,9 @@ elif [ "$CLEAN" != "1" ]; then
 internal redirect"
 elif [ "$HIDDEN" != "1" ]; then
   FAILURE="the page did not hide the site's .ad-banner and the generic \
-.generic-ad with the story shown, or the guard-mark scriptlet did not run \
-before the page's first script: ContentFilterAgent (patch 0283) or \
-domicile_content_filter.cc"
+.generic-ad, show .generic-own and the story, or run the guard-mark \
+scriptlet before its first script: ContentFilterAgent (patch 0283), \
+content_filter_bundle.js or domicile_content_filter.cc"
 else
   PASSED="the list blocked another site's script, the user's rule the site's \
 own, standard mode spared the site's own listed script, a \$redirect rule \

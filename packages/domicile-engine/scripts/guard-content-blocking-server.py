@@ -19,10 +19,13 @@ The page is on 127.0.0.1 and its "ads" on localhost, so they are two sites.
                    - localhost /pixel.gif?utm_source=guard&id=1
                                             the list removes utm_source
                    then says `GUARD page-loaded stub=<true|false>`, and
-                   `GUARD cosmetic banner= generic= story= marked-first=`:
-                   each element's display (the list hides .ad-banner for
-                   the site and .generic-ad everywhere), and whether the
+                   `GUARD cosmetic banner= generic= own= story=
+                   marked-first=`: each element's display, and whether the
                    guard-mark scriptlet ran before the page's first script.
+                   The list hides .ad-banner for the site, and .generic-ad
+                   and .generic-own everywhere. The first two hold another
+                   site's image, like an ad; .generic-own holds the site's
+                   own, so standard mode shows it again.
   /list.txt        the list.
   /resources.json  adblock-rust's resources: guard-stub.js.
 
@@ -45,6 +48,7 @@ LIST = """! Title: guard-content-blocking
 ||localhost^$removeparam=utm_source
 127.0.0.1##.ad-banner
 ##.generic-ad
+##.generic-own
 127.0.0.1##+js(guard-mark)
 """
 
@@ -82,9 +86,13 @@ PAGE_HTML = """<!doctype html>
 TEST_HTML = """<!doctype html>
 <title>a page with ads</title>
 <script>window.markedFirst = window.guardMarked === true;</script>
-<div class="ad-banner">a site's own banner</div>
-<div class="generic-ad">an ad any list hides</div>
-<div class="story">the story</div>
+<!-- One section each: Brave's first-party test walks an element's next
+     siblings too, so .generic-own's image would make the ads beside it the
+     site's own. -->
+<section><div class="ad-banner"><img src="http://localhost:{port}/banner.gif"></div></section>
+<section><div class="generic-ad"><img src="http://localhost:{port}/banner.gif"></div></section>
+<section><div class="generic-own"><img src="/own.gif"></div></section>
+<section><div class="story">the story</div></section>
 <script src="http://localhost:{port}/ad.js"></script>
 <script src="http://localhost:{port}/ok.js"></script>
 <script src="/own-ad.js"></script>
@@ -94,14 +102,15 @@ TEST_HTML = """<!doctype html>
 <script>
   addEventListener("load", () => {{
     console.log(`GUARD page-loaded stub=${{window.stubRan === true}}`);
-    // Generic rules answer DOMContentLoaded's question a little later.
+    // Generic rules come once the page is idle, and standard mode shows a
+    // site's own content again after that.
     setTimeout(() => {{
       const shown = (selector) =>
         getComputedStyle(document.querySelector(selector)).display;
       console.log(`GUARD cosmetic banner=${{shown(".ad-banner")}}` +
-        ` generic=${{shown(".generic-ad")}} story=${{shown(".story")}}` +
-        ` marked-first=${{window.markedFirst}}`);
-    }}, 1500);
+        ` generic=${{shown(".generic-ad")}} own=${{shown(".generic-own")}}` +
+        ` story=${{shown(".story")}} marked-first=${{window.markedFirst}}`);
+    }}, 5000);
   }});
 </script>
 """
@@ -146,7 +155,7 @@ class Handler(BaseHTTPRequestHandler):
             self.answer(LIST, "text/plain")
         elif path == "/resources.json":
             self.answer(RESOURCES, "application/json")
-        elif path == "/pixel.gif":
+        elif path in ("/pixel.gif", "/banner.gif", "/own.gif"):
             self.answer(PIXEL, "image/gif")
         elif path.endswith(".js"):
             self.answer("console.log('GUARD ran %s');" % path,

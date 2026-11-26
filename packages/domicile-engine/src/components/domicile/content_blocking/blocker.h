@@ -31,18 +31,37 @@ struct Decision {
   friend bool operator==(const Decision&, const Decision&) = default;
 };
 
-// What a document hides and runs: both engines' rules for its site.
+// What a document hides and runs: both engines' rules for its site, as
+// Brave's AdBlockEngineWrapper::UrlCosmeticResources gives them.
 struct CosmeticRules {
-  // Selectors to hide, specific to the site.
+  // The lists' selectors for the site. In standard mode the page may show
+  // one again over the site's own content.
   std::vector<std::string> hide_selectors;
+  // The user's own selectors, always hidden.
+  std::vector<std::string> force_hide_selectors;
+  // adblock-rust's procedural and action filters, each as JSON. Standard
+  // mode keeps only the lists' plain-selector ones.
+  std::vector<std::string> procedural_actions;
   // The scriptlets `##+js()` asks for, joined, to run before the page's own.
   std::string injected_script;
   // Whether generic hiding (`##.class` with no site) is off for the site.
   bool generichide = false;
   // Selectors the site excepts from generic hiding, for GenericSelectors.
   std::vector<std::string> exceptions;
+  // Aggressive mode: the site's own content is hidden too.
+  bool hide_first_party = false;
 
   friend bool operator==(const CosmeticRules&, const CosmeticRules&) = default;
+};
+
+// The generic selectors a document's classes and ids call for.
+struct GenericHide {
+  // The lists', which standard mode may show again.
+  std::vector<std::string> hide_selectors;
+  // The user's own.
+  std::vector<std::string> force_hide_selectors;
+
+  friend bool operator==(const GenericHide&, const GenericHide&) = default;
 };
 
 // The two engines the browser asks, as Brave's AdBlockEngineWrapper keeps
@@ -69,7 +88,7 @@ class Blocker {
 
   // The generic hide selectors that `classes` and `ids` call for, less
   // `exceptions`, from both engines.
-  std::vector<std::string> GenericSelectors(
+  GenericHide GenericSelectors(
       const std::vector<std::string>& classes,
       const std::vector<std::string>& ids,
       const std::vector<std::string>& exceptions) const;

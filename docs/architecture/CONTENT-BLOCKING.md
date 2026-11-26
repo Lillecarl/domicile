@@ -124,8 +124,9 @@ waits for no thread hop.
 ### Element hiding and scriptlets
 
 `domicile::ContentFilterAgent`, which every frame gets (patch 0283), applies
-the cosmetic rules in each http and https document. It takes Brave's order
-of work without Brave's content settings plumbing or its JavaScript:
+the cosmetic rules in each http and https document, in the order Brave's
+`CosmeticFiltersJSHandler::ApplyRules` applies them, without Brave's content
+settings plumbing:
 
 - **The browser decides the frame's mode.** When the document is about to
   run its first script, the agent asks
@@ -133,22 +134,36 @@ of work without Brave's content settings plumbing or its JavaScript:
   answers on the UI thread from the page the frame is in, so the renderer
   holds no settings. The shell's, extensions' and (unless `electron_apps`)
   Electron apps' frames get no rules.
+- **The rules come as Brave splits them:** the lists' selectors, the user's
+  (always hidden), procedural and action filters, scriptlets, exceptions,
+  `generichide`, and whether the site's own content is hidden too
+  (aggressive). Standard mode drops the lists' `:has()` selectors and their
+  procedural filters but keeps their one-selector action filters, as Brave's
+  `AdBlockEngineWrapper` does.
 - **Scriptlets run first.** The agent runs them with
   `WebLocalFrame::ExecuteScript`, in the page's main world, after an Electron
   app's preload and before the page's scripts. Unlike Brave's `<script>`
   element, a page's CSP does not stop them.
-- **Specific hiding:** a user-origin stylesheet, which no `!important` of the
-  page outranks, with one `selector{display:none!important}` per rule. A
-  selector holding `{`, `}` or `/*` is left out, so a list cannot end the
-  rule and start its own. This replaces adblock-rust's `css-validation`
-  feature and the Servo crates it needs (`cssparser`, `selectors`).
-- **Generic hiding:** at DOMContentLoaded and again at load, the agent reads
-  the document's class and id names in C++ and asks `GenericSelectors`, which
-  `hidden_class_id_selectors` answers from both engines.
-- **Not done yet:** procedural filters (`:has-text()`, `:upward()` and the
-  rest), elements added after load, and Brave's standard-mode unhiding of a
-  site's own content. Brave's `content_cosmetic.ts` and
-  `procedural_filters.ts` (MPL-2.0) do these, and are the next step.
+- **Brave's `content_cosmetic.ts` and `procedural_filters.ts`** (MPL-2.0,
+  unchanged, in `components/domicile/content_blocking/resources`) run in the
+  agent's isolated world, `ISOLATED_WORLD_ID_DOMICILE_CONTENT_FILTER`. They
+  watch the document's class and id names as it changes and ask for generic
+  rules, apply procedural filters (`:has-text()`, `:upward()` and the rest)
+  and actions (`:style()`, `:remove()`), and in standard mode show a
+  selector's elements again when they hold the site's own content. The
+  engine's build has no bun, so `bundle.sh` writes
+  `content_filter_bundle.js`, which is checked in and compiled into the
+  renderer as a string.
+- **`cf_worker`** is the agent's: `hiddenClassIdSelectors` (answered by
+  `GenericSelectors` over mojo), `isFirstPartyUrl` and `injectStylesheet`, as
+  Brave names them. The element picker's functions are left out.
+- **Hiding:** the user's selectors, and all of them in aggressive mode, go
+  into a user-origin stylesheet, which no `!important` of the page outranks.
+  A selector holding `{`, `}` or `/*` is left out of it, so a list cannot end
+  the rule and start its own; this replaces adblock-rust's `css-validation`
+  and the Servo crates it needs. The lists' selectors in standard mode go
+  into the adopted sheet content_cosmetic.ts may take a selector back from,
+  whose `insertRule` refuses a second rule by itself.
 
 ### The shell
 

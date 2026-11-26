@@ -20,33 +20,50 @@ bool MayRewrite(std::string_view method) {
          base::EqualsCaseInsensitiveASCII(method, "OPTIONS");
 }
 
-// Adds an engine's `UrlSpecificResources` JSON to `rules`.
-void AddResources(std::string_view json, CosmeticRules& rules) {
-  std::optional<base::Value> parsed =
-      base::JSONReader::Read(json, base::JSON_PARSE_RFC);
-  if (!parsed || !parsed->is_dict()) {
-    return;
-  }
-  const base::DictValue& resources = parsed->GetDict();
-  auto strings = [&](std::string_view key, std::vector<std::string>& into) {
-    if (const base::ListValue* list = resources.FindList(key)) {
-      for (const base::Value& value : *list) {
-        if (value.is_string()) {
-          into.push_back(value.GetString());
-        }
+// adblock-rust's `UrlSpecificResources` JSON, or an empty dict.
+base::DictValue Resources(std::string_view json) {
+  std::optional<base::DictValue> parsed =
+      base::JSONReader::ReadDict(json, base::JSON_PARSE_RFC);
+  return parsed ? std::move(*parsed) : base::DictValue();
+}
+
+std::vector<std::string> Strings(const base::DictValue& resources,
+                                 std::string_view key) {
+  std::vector<std::string> strings;
+  if (const base::ListValue* list = resources.FindList(key)) {
+    for (const base::Value& value : *list) {
+      if (value.is_string()) {
+        strings.push_back(value.GetString());
       }
     }
-  };
-  strings("hide_selectors", rules.hide_selectors);
-  strings("exceptions", rules.exceptions);
-  if (const std::string* script = resources.FindString("injected_script");
-      script && !script->empty()) {
-    if (!rules.injected_script.empty()) {
-      rules.injected_script += "\n";
-    }
-    rules.injected_script += *script;
   }
-  rules.generichide |= resources.FindBool("generichide").value_or(false);
+  return strings;
+}
+
+// Whether a procedural or action filter is a single CSS selector, which
+// standard mode keeps (Brave's StripProceduralFilters).
+bool IsPlainSelectorFilter(std::string_view json) {
+  std::optional<base::DictValue> filter =
+      base::JSONReader::ReadDict(json, base::JSON_PARSE_RFC);
+  const base::ListValue* selector = filter ? filter->FindList("selector")
+                                           : nullptr;
+  if (selector == nullptr || selector->size() != 1 ||
+      !selector->front().is_dict()) {
+    return false;
+  }
+  const std::string* type = selector->front().GetDict().FindString("type");
+  return type != nullptr && *type == "css-selector";
+}
+
+void AddScript(const base::DictValue& resources, std::string& into) {
+  const std::string* script = resources.FindString("injected_script");
+  if (script == nullptr || script->empty()) {
+    return;
+  }
+  if (!into.empty()) {
+    into += "\n";
+  }
+  into += *script;
 }
 
 }  // namespace
@@ -107,23 +124,46 @@ std::optional<CosmeticRules> Blocker::Cosmetic(const GURL& document,
   if (mode == Mode::kOff) {
     return std::nullopt;
   }
-  CosmeticRules rules;
-  AddResources(lists_->CosmeticResources(document), rules);
-  AddResources(filters_->CosmeticResources(document), rules);
+  const bool aggressive = mode == Mode::kAggressive;
+  const base::DictValue listed = Resources(lists_->CosmeticResources(document));
+  const base::DictValue own = Resources(filters_->CosmeticResources(document));
+  CosmeticRules rules{.hide_first_party = aggressive};
+  for (std::string& selector : Strings(listed, "hide_selectors")) {
+    // Brave keeps the lists' `:has()` out of standard mode.
+    if (aggressive || selector.find(":has(") == std::string::npos) {
+      rules.hide_selectors.push_back(std::move(selector));
+    }
+  }
+  rules.force_hide_selectors = Strings(own, "hide_selectors");
+  for (std::string& filter : Strings(listed, "procedural_actions")) {
+    if (aggressive || IsPlainSelectorFilter(filter)) {
+      rules.procedural_actions.push_back(std::move(filter));
+    }
+  }
+  for (std::string& filter : Strings(own, "procedural_actions")) {
+    rules.procedural_actions.push_back(std::move(filter));
+  }
+  AddScript(listed, rules.injected_script);
+  AddScript(own, rules.injected_script);
+  rules.generichide = listed.FindBool("generichide").value_or(false) ||
+                      own.FindBool("generichide").value_or(false);
+  rules.exceptions = Strings(listed, "exceptions");
+  for (std::string& exception : Strings(own, "exceptions")) {
+    rules.exceptions.push_back(std::move(exception));
+  }
   return rules;
 }
 
-std::vector<std::string> Blocker::GenericSelectors(
+GenericHide Blocker::GenericSelectors(
     const std::vector<std::string>& classes,
     const std::vector<std::string>& ids,
     const std::vector<std::string>& exceptions) const {
-  std::vector<std::string> selectors =
-      lists_->HiddenClassIdSelectors(classes, ids, exceptions);
-  std::vector<std::string> own =
-      filters_->HiddenClassIdSelectors(classes, ids, exceptions);
-  selectors.insert(selectors.end(), std::make_move_iterator(own.begin()),
-                   std::make_move_iterator(own.end()));
-  return selectors;
+  return {
+      .hide_selectors =
+          lists_->HiddenClassIdSelectors(classes, ids, exceptions),
+      .force_hide_selectors =
+          filters_->HiddenClassIdSelectors(classes, ids, exceptions),
+  };
 }
 
 std::string Blocker::CspDirectives(const Request& request, Mode mode) const {

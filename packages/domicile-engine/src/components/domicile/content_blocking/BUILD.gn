@@ -56,6 +56,18 @@ mojom("mojom") {
   public_deps = [ "//url/mojom:url_mojom_gurl" ]
 }
 
+# Brave's content_cosmetic.ts, bundled by resources/bundle.sh, as a string.
+action("bundle") {
+  script = "resources/embed_script.py"
+  inputs = [ "resources/content_filter_bundle.js" ]
+  outputs = [ "$target_gen_dir/content_filter_bundle.h" ]
+  args = [
+    rebase_path(inputs[0], root_build_dir),
+    rebase_path(outputs[0], root_build_dir),
+    "kContentFilterBundle",
+  ]
+}
+
 # A frame's half of element hiding and scriptlets, which
 # //chrome/renderer gives every frame.
 source_set("renderer") {
@@ -68,9 +80,13 @@ source_set("renderer") {
     "//content/public/renderer",
   ]
   deps = [
+    ":bundle",
     "//base",
+    "//gin",
+    "//net",
     "//third_party/blink/public:blink",
     "//url",
+    "//v8",
   ]
 }
 

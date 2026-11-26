@@ -45,6 +45,9 @@ class ContentBlocker {
   // blocking is off.
   const content_blocking::Blocker* blocker() const { return blocker_.get(); }
 
+  // Whether the config asks for blocking at all.
+  bool Enabled() const { return settings_.enabled; }
+
   // The mode for a page whose top-level document is at `page`.
   content_blocking::Mode ModeFor(const GURL& page) const;
 

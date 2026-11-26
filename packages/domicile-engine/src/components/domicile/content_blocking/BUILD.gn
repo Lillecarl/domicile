@@ -26,11 +26,14 @@ source_set("content_blocking") {
     "domain_resolver.h",
     "engine.cc",
     "engine.h",
+    "request_type.cc",
+    "request_type.h",
   ]
   public_deps = [
     ":bridge",
     ":settings",
     "//base",
+    "//services/network/public/mojom",
     "//url",
   ]
   deps = [ "//net" ]
@@ -52,6 +55,7 @@ source_set("unit_tests") {
   sources = [
     "blocker_unittest.cc",
     "engine_unittest.cc",
+    "request_type_unittest.cc",
     "settings_unittest.cc",
   ]
   deps = [

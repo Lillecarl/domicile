@@ -40,6 +40,8 @@ source_set("domicile") {
     "domicile_chrome_dialogs.h",
     "domicile_content_blocking.cc",
     "domicile_content_blocking.h",
+    "domicile_content_blocking_loader.cc",
+    "domicile_content_blocking_loader.h",
     "domicile_command_socket.cc",
     "domicile_command_socket.h",
     "domicile_cursor_display.cc",

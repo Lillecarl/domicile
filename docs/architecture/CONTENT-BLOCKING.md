@@ -78,7 +78,7 @@ an 836-line cxx bridge and a few hooks.
   `! Expires:` (`read_list_metadata`) and fetches again after it, between one
   hour and 14 days, by default after one day. It fetches through the system
   network context, so no profile's cookies go with it. A path is read again
-  when its modification time changes.
+  when the config changes.
 - **Startup reads a serialized engine.** After each build the engine writes
   `serialize()` beside the lists. The next start `deserialize()`s it while the
   lists are unchanged, and builds from the cached texts otherwise.
@@ -88,14 +88,19 @@ an 836-line cxx bridge and a few hooks.
 
 ### Network requests
 
-`domicile::ProxyContentBlocking` joins `WillCreateURLLoaderFactory`, after
-`ProxyElectronNetworkLoads`, so an Electron app's `protocol.handle` still
-answers first. Its loader asks the engine before the request starts and on
-every redirect:
+`domicile::ProxyContentBlocking` joins `WillCreateURLLoaderFactory` (patch
+0282), after `ProxyElectronNetworkLoads`, so an Electron app's
+`protocol.handle` still answers first. Its loader asks the engine before the
+request starts and on every redirect the server sends. Engines are built on
+a worker and asked on the UI thread, where the loaders run, so a request
+waits for no thread hop.
 
-- **Inputs:** the URL, the top-level page's origin, the request's type
-  (Brave's mapping from `network::mojom::RequestDestination`), and whether it
-  is third-party (`SameDomainOrHost` with private registries).
+- **Inputs:** the URL, the request's initiator, the request's type (from
+  `network::mojom::RequestDestination`), and whether it is third-party to the
+  initiator (`SameDomainOrHost` with private registries), as Brave measures
+  it. The mode comes from the top-level page's host.
+- **Factories made while blocking is off** load straight from the network.
+  A config that turns blocking on reaches the pages that load after it.
 - **Block:** `ERR_BLOCKED_BY_CLIENT`.
 - **`$redirect`:** a stub response from the resource's `data:` URL, as
   Brave's `MakeStubResponse` makes it.

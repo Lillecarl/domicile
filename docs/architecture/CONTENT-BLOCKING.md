@@ -154,11 +154,20 @@ content settings plumbing:
 - **adblock 0.13.6 is vendored into `third_party/rust/chromium_crates_io`**,
   Chromium's own way. Its features are `full-regex-handling` and
   `single-thread`, with no default features.
-- **It adds 9 crates Chromium 160 lacks:** adblock, arrayvec 0.7,
-  flatbuffers 25, idna 1, idna_adapter, percent-encoding 2, rustc-hash 2,
-  seahash 4 and thiserror 1. `Cargo.toml`, `Cargo.lock` and `gnrt_config.toml`
-  change in a patch. The vendored sources and gnrt's `BUILD.gn` files are new
+- **It adds 12 crates Chromium 160 lacks:** adblock, arrayvec 0.7,
+  flatbuffers 25, idna 1, idna_adapter 1, percent-encoding 2, rustc-hash 2,
+  seahash 4 and thiserror 1, plus thiserror-impl 1, semver 1 and rustc_version
+  0.4, which only build. Patch 0281 changes `Cargo.toml`, `Cargo.lock` and
+  `gnrt_config.toml`. The vendored sources and gnrt's `BUILD.gn` files are new
   files in `src/`, so they never conflict on a rebase.
+- **Two Chromium crates change:** `regex` ships (Chromium keeps it for tests),
+  and `bitflags` gains its `serde` feature.
+- **flatbuffers and seahash publish no license file.** Their `LICENSE` sits
+  beside their `BUILD.gn`, as Brave keeps it.
+- **Regenerating:** gnrt runs on a copy of `third_party/rust` and
+  `tools/crates`, with nixpkgs' cargo, since Chromium's links Ubuntu's
+  libcurl. `gn format` then formats its `BUILD.gn` files, and
+  `zune_jpeg/v0_5/README.chromium` keeps its hand-written notes.
 - **The bridge is first-party Rust:** a `rust_static_library` with
   `cxx_bindings` in `components/domicile/content_blocking`, depending on
   `//third_party/rust/adblock/v0_13:lib`. It follows Brave's `lib.rs`, and drops

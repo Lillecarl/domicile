@@ -3,6 +3,8 @@
 
 #include "components/domicile/content_blocking/request_type.h"
 
+#include "base/notreached.h"
+
 namespace domicile::content_blocking {
 
 RequestType RequestTypeFor(network::mojom::RequestDestination destination,
@@ -50,7 +52,7 @@ RequestType RequestTypeFor(network::mojom::RequestDestination destination,
     case RequestDestination::kEmailVerification:
       return RequestType::kOther;
   }
-  return RequestType::kOther;
+  NOTREACHED();
 }
 
 }  // namespace domicile::content_blocking

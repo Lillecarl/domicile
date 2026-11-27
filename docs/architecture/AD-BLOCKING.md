@@ -130,6 +130,15 @@ Each checked request goes through an `AdBlockingLoader`, which acts on
   goes to.
 - **A server's redirect** is checked as a new request: one to a blocked
   address fails.
+- **CNAME uncloaking**: a request nothing blocked, that the lists could
+  block (another site's, or any in Strict), is checked again under the
+  canonical name its host resolves to, as Brave does, so a tracker a site
+  serves from a subdomain of its own (`metrics.news.example` →
+  `news.example.tracker.example`) is blocked. The name is asked of the
+  frame's network context, keyed as the frame's own requests are. Not
+  behind a proxy, where the name here is not the one the request reaches
+  and a lookup would tell the DNS server what the proxy hides, and not for
+  an address that is an IP.
 
 `guard-ad-blocking.sh` checks what a page loads and hides in each mode.
 

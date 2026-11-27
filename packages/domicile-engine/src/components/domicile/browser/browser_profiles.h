@@ -95,11 +95,9 @@ struct BrowserProfiles {
   // The user's own filter rules, on top of the lists'.
   std::vector<std::string> block_rules;
   // The scriptlets and stand-in files the rules name, as adblock-rust's
-  // JSON: an `https:` address or an absolute path. Empty for none, and when
-  // the message has none.
+  // JSON: an `https:` address or an absolute path. Empty for none.
   std::string block_resources;
-  // Whether Electron apps' web pages are blocked in too. False when the
-  // message does not say.
+  // Whether Electron apps' web pages are blocked in too.
   bool block_in_electron_apps = false;
 };
 

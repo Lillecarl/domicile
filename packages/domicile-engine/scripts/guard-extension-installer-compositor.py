@@ -35,7 +35,12 @@ PROTECTIONS = {
 
 # Unlike a desk's, no filter lists unless the guard names some, so a guard
 # that is not about blocking fetches none.
-BLOCKING = {"block_lists": [], "block_rules": []}
+BLOCKING = {
+    "block_lists": [],
+    "block_rules": [],
+    "block_resources": "",
+    "block_in_electron_apps": False,
+}
 
 
 def send(connection, message):

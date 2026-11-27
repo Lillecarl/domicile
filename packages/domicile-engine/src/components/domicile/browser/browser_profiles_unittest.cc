@@ -132,6 +132,19 @@ TEST(BrowserProfilesTest, AMessageReadsTheBlockListsAndRules) {
   EXPECT_TRUE(read->block_in_electron_apps);
 }
 
+TEST(BrowserProfilesTest, AMessageWithoutTheBlockResourcesIsRefused) {
+  constexpr const char* kLeftOut[] = {
+      R"("block_resources":"https://example.com/resources.json",)",
+      R"("block_in_electron_apps":true,)"};
+  for (const char* left_out : kLeftOut) {
+    std::string message = Message("{}");
+    const size_t at = message.find(left_out);
+    ASSERT_NE(at, std::string::npos) << left_out;
+    message.erase(at, std::string_view(left_out).size());
+    EXPECT_FALSE(ParseBrowserProfiles(Dict(message)).has_value()) << left_out;
+  }
+}
+
 TEST(BrowserProfilesTest, AnAdBlockingModeTheEngineDoesNotKnowIsRefused) {
   std::string message = Message("{}");
   const std::string standard = R"("block_ads_and_trackers":"standard")";

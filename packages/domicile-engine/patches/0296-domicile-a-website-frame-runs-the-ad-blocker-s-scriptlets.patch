@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 27 Nov 2026 00:00:00 +0000
+Subject: [PATCH] domicile: a website frame runs the ad blocker's scriptlets
+
+ChromeContentRendererClient::RunScriptsAtDocumentStart lets a frame's
+domicile::CosmeticFilters run the scriptlets the browser sent it, in
+the page's world before the page's own scripts and after an Electron
+app's preload, and start its procedural filters in their own isolated
+world, ISOLATED_WORLD_ID_DOMICILE_PROCEDURAL_FILTERS. See
+components/domicile/renderer/cosmetic_filters.h.
+
+Verified: built locally from this series; guard-ad-blocking.sh passes,
+its scriptlet and procedural filter checks with it.
+---
+ chrome/common/chrome_isolated_world_ids.h         | 4 ++++
+ chrome/renderer/chrome_content_renderer_client.cc | 5 +++++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/chrome/common/chrome_isolated_world_ids.h b/chrome/common/chrome_isolated_world_ids.h
+index d158c41755..09816fe93d 100644
+--- a/chrome/common/chrome_isolated_world_ids.h
++++ b/chrome/common/chrome_isolated_world_ids.h
+@@ -27,6 +27,10 @@ enum ChromeIsolatedWorldIDs {
+   ISOLATED_WORLD_ID_APPLESCRIPT,
+ #endif  // BUILDFLAG(IS_MAC)
+ 
++  // Domicile's engine fork: the ad blocker's procedural filters. See
++  // components/domicile/renderer/cosmetic_filters.h.
++  ISOLATED_WORLD_ID_DOMICILE_PROCEDURAL_FILTERS,
++
+   // Numbers for isolated worlds for extensions are set in
+   // extensions/renderer/script_injection.cc, and are are greater than or equal
+   // to this number.
+diff --git a/chrome/renderer/chrome_content_renderer_client.cc b/chrome/renderer/chrome_content_renderer_client.cc
+index f288108436..549e40160a 100644
+--- a/chrome/renderer/chrome_content_renderer_client.cc
++++ b/chrome/renderer/chrome_content_renderer_client.cc
+@@ -1595,6 +1595,11 @@ void ChromeContentRendererClient::RunScriptsAtDocumentStart(
+   if (!domicile::ElectronPreload::RunAtDocumentStart(render_frame)) {
+     return;
+   }
++  // Domicile's engine fork. A website frame's scriptlets, before the page's
++  // own scripts, and its procedural filters, in a world of their own. See
++  // components/domicile/renderer/cosmetic_filters.h.
++  domicile::CosmeticFilters::RunAtDocumentStart(
++      render_frame, ISOLATED_WORLD_ID_DOMICILE_PROCEDURAL_FILTERS);
+ 
+ #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+   extensions::ExtensionsRendererClient::Get()->RunScriptsAtDocumentStart(
+-- 
+2.43.0
+

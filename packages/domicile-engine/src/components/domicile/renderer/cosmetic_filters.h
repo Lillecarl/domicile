@@ -13,6 +13,7 @@
 #include "base/timer/timer.h"
 #include "components/domicile/mojom/cosmetic_filters.mojom.h"
 #include "content/public/renderer/render_frame_observer.h"
+#include "content/public/renderer/render_frame_observer_tracker.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
@@ -32,12 +33,26 @@ namespace domicile {
 // every few seconds for a while after, as pages add ads late, and asks the
 // browser which of the generic rules hide them.
 //
+// The browser also sends the page's scriptlets (`##+js()`), which run at
+// document start in the page's world, before its own scripts, and its
+// procedural filters (`:has-text()`, `:upward()`), which Brave's
+// content_cosmetic.ts applies, unchanged, from a world of their own as the
+// page changes.
+//
 // Every frame has one; only those the browser sends a Hide to do anything.
-class CosmeticFilters final : public content::RenderFrameObserver,
-                              public mojom::CosmeticFilters {
+class CosmeticFilters final
+    : public content::RenderFrameObserver,
+      public content::RenderFrameObserverTracker<CosmeticFilters>,
+      public mojom::CosmeticFilters {
  public:
   // Gives `frame` one. The frame owns it.
   static void Attach(content::RenderFrame* frame);
+
+  // Runs `frame`'s scriptlets, and starts its procedural filters in the
+  // isolated world `world_id`, for the document that just started. From
+  // ChromeContentRendererClient::RunScriptsAtDocumentStart.
+  static void RunAtDocumentStart(content::RenderFrame* frame,
+                                 int32_t world_id);
 
   CosmeticFilters(const CosmeticFilters&) = delete;
   CosmeticFilters& operator=(const CosmeticFilters&) = delete;
@@ -47,14 +62,17 @@ class CosmeticFilters final : public content::RenderFrameObserver,
   void ReadyToCommitNavigation(
       blink::WebDocumentLoader* document_loader) override;
   void DidCreateDocumentElement() override;
+  void DidCreateScriptContext(v8::Local<v8::Context> context,
+                              int32_t world_id) override;
   void DidDispatchDOMContentLoadedEvent() override;
   void DidFinishLoad() override;
   void OnDestruct() override;
 
   // mojom::CosmeticFilters:
   void Hide(const std::vector<std::string>& selectors,
-            mojo::PendingAssociatedRemote<mojom::CosmeticFiltersHost> host)
-      override;
+            mojo::PendingAssociatedRemote<mojom::CosmeticFiltersHost> host,
+            const std::string& scriptlets,
+            const std::vector<std::string>& procedural_filters) override;
 
  private:
   explicit CosmeticFilters(content::RenderFrame* frame);
@@ -70,10 +88,19 @@ class CosmeticFilters final : public content::RenderFrameObserver,
 
     std::vector<std::string> selectors;
     mojo::PendingAssociatedRemote<mojom::CosmeticFiltersHost> host;
+    std::string scriptlets;
+    std::vector<std::string> procedural_filters;
   };
 
   // Inserts `selectors` into the document as a user stylesheet.
   void Insert(const std::vector<std::string>& selectors);
+  // Inserts `css` into the document as a user stylesheet: content_cosmetic's
+  // `cf_worker.injectStylesheet`.
+  void InjectStylesheet(const std::string& css);
+  // Whether `url` is the document's own site: content_cosmetic's
+  // `cf_worker.isFirstPartyUrl`.
+  bool IsFirstPartyUrl(const std::string& url);
+  void RunScripts(int32_t world_id);
   // Asks the host about the document's classes and ids it has not asked
   // about yet.
   void Gather();
@@ -85,6 +112,13 @@ class CosmeticFilters final : public content::RenderFrameObserver,
   // its host.
   std::vector<std::string> pending_;
   mojo::AssociatedRemote<mojom::CosmeticFiltersHost> host_;
+  // The current document's, until document start runs them.
+  std::string scriptlets_;
+  std::vector<std::string> procedural_filters_;
+  // The world the procedural filters run in, once a document has had some:
+  // Blink makes its context again for each new document, before document
+  // start, and each needs `cf_worker`.
+  std::optional<int32_t> world_id_;
   // The classes and ids already asked about, as `.name` and `#name`.
   std::set<std::string> asked_;
   // Counts documents, so an answer for an older one is dropped.

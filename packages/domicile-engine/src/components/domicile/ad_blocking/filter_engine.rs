@@ -40,6 +40,12 @@ mod ffi {
         exceptions: Vec<String>,
         /// A `$generichide` exception matched: no generic rule applies.
         generichide: bool,
+        /// The page's scriptlets (`##+js()`), as one script, or empty.
+        /// Needs the resources.
+        injected_script: String,
+        /// The page's procedural filters (`:has-text()`, `:upward()`,
+        /// `:remove()`), each as adblock-rust's JSON.
+        procedural_actions: Vec<String>,
     }
 
     unsafe extern "C++" {
@@ -205,10 +211,19 @@ impl FilterEngine {
         let resources = self.0.url_cosmetic_resources(url);
         let mut hide_selectors: Vec<String> = resources.hide_selectors.into_iter().collect();
         let mut exceptions: Vec<String> = resources.exceptions.into_iter().collect();
+        let mut procedural_actions: Vec<String> =
+            resources.procedural_actions.into_iter().collect();
         // In order, so a page gets the same stylesheet each time.
         hide_selectors.sort_unstable();
         exceptions.sort_unstable();
-        ffi::Cosmetics { hide_selectors, exceptions, generichide: resources.generichide }
+        procedural_actions.sort_unstable();
+        ffi::Cosmetics {
+            hide_selectors,
+            exceptions,
+            generichide: resources.generichide,
+            injected_script: resources.injected_script,
+            procedural_actions,
+        }
     }
 
     fn hidden_class_id_selectors(

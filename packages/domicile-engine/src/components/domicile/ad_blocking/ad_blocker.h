@@ -80,6 +80,12 @@ class AdBlocker {
     // A `$generichide` exception matched: no generic rule applies, so the
     // page's classes and ids need no asking about.
     bool generichide = false;
+    // The lists' and the user's scriptlets (`##+js()`) for the page, as one
+    // script to run in its world, or empty. Empty without resources.
+    std::string scriptlets;
+    // The lists' and the user's procedural filters (`:has-text()`,
+    // `:upward()`), each as adblock-rust's JSON. In order, without repeats.
+    std::vector<std::string> procedural_filters;
   };
 
   // `lists` are filter lists' texts, each valid UTF-8; `rules` the user's own

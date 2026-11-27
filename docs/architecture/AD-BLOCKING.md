@@ -220,8 +220,30 @@ Not yet: workers (their `hardwareConcurrency` and `OffscreenCanvas`), WebGL's
 readings, an `AudioContext` played rather than rendered offline, and fonts and
 the screen's size.
 
-Not yet: procedural filters (`:has-text()`, `:upward()`) and scriptlets
-(`##+js()`), which need a script in the page's world.
+## Scriptlets and procedural filters
+
+The lists also run code in a page: a scriptlet (`example.com##+js(set, ads, false)`)
+defuses a site's own anti-adblock or tracking script, and a procedural filter
+(`##div:has-text(Sponsored)`, `:upward(2)`, `:remove()`) hides what no CSS
+selector can name. Both come with a page's cosmetic filters
+(`AdBlocker::CosmeticsFor`, `mojom::CosmeticFilters.Hide`), in Standard and
+Strict.
+
+- **Scriptlets** need `browser.block_resources`, which holds their code.
+  `CosmeticFilters::RunAtDocumentStart`, from
+  `ChromeContentRendererClient::RunScriptsAtDocumentStart` (patch 0296), runs
+  them as one script in the page's world, after an Electron app's preload and
+  before the page's own scripts, as Brave does. From there a page's CSP does
+  not stop them.
+- **Procedural filters** are applied by Brave's `content_cosmetic.ts` and
+  `procedural_filters.ts`, unchanged, from their own isolated world
+  (`ISOLATED_WORLD_ID_DOMICILE_PROCEDURAL_FILTERS`), as the page changes. Its
+  `cf_worker` is bound into each new context of that world. Its flags leave
+  it only the procedural filters: the class and id rules are
+  `CosmeticFilters`' own, and nothing is shown again over a site's own
+  content. `renderer/procedural_filters/bundle.sh` bundles the two scripts
+  from a pinned brave-core revision, checked by sha256; only the bundle is
+  checked in, as a string constant at build time (`embed_script.py`).
 
 ## Key decisions
 
@@ -261,6 +283,7 @@ Not yet: procedural filters (`:has-text()`, `:upward()`) and scriptlets
 - [x] cosmetic filters: what the lists hide by a page's elements
 - [x] tracking taken out of links to other sites
 - [x] `$redirect`, `$removeparam` and `$csp`, with Brave's resources
-- [ ] scriptlets and procedural filters, cookie banners
+- [x] scriptlets and procedural filters
+- [ ] cookie banners
 - [x] fingerprinting protection: canvas, audio and processor count farbled
 - [ ] farbling in workers, WebGL, fonts and the screen

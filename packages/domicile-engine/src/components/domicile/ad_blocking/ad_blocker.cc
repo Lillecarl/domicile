@@ -245,6 +245,13 @@ AdBlocker::Cosmetics AdBlocker::CosmeticsFor(const GURL& page) const {
   cosmetics.hide_selectors.assign(hide.begin(), hide.end());
   cosmetics.exceptions.assign(exceptions.begin(), exceptions.end());
   cosmetics.generichide = mine.generichide || listed.generichide;
+  // The lists' first, so the user's can wrap what they set up.
+  cosmetics.scriptlets =
+      std::string(listed.injected_script) + std::string(mine.injected_script);
+  std::set<std::string> procedural;
+  AddAll(procedural, mine.procedural_actions);
+  AddAll(procedural, listed.procedural_actions);
+  cosmetics.procedural_filters.assign(procedural.begin(), procedural.end());
   return cosmetics;
 }
 

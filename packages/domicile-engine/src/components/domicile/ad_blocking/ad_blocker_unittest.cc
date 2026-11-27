@@ -141,6 +141,35 @@ TEST(AdBlockerCspTest, IsEmptyWithoutACspRule) {
             "");
 }
 
+TEST(AdBlockerCosmeticsTest, GivesASitesProceduralFilters) {
+  std::unique_ptr<AdBlocker> blocker = AdBlocker::Build(
+      {"news.example##div:has-text(Sponsored)\n"}, {}, "");
+  const AdBlocker::Cosmetics cosmetics =
+      blocker->CosmeticsFor(GURL("https://news.example/"));
+  ASSERT_EQ(cosmetics.procedural_filters.size(), 1u);
+  EXPECT_NE(cosmetics.procedural_filters[0].find("Sponsored"),
+            std::string::npos);
+  EXPECT_TRUE(blocker->CosmeticsFor(GURL("https://other.example/"))
+                  .procedural_filters.empty());
+}
+
+TEST(AdBlockerCosmeticsTest, GivesASitesScriptletsWithResources) {
+  // A scriptlet is a template resource, `{{1}}` its first argument:
+  // `window.flag = '{{1}}';` in base64.
+  constexpr char kTemplate[] =
+      R"([{"name":"set-flag.js","kind":"template",)"
+      R"("content":"d2luZG93LmZsYWcgPSAne3sxfX0nOw=="}])";
+  constexpr char kScriptlet[] = "news.example##+js(set-flag, on)\n";
+  EXPECT_NE(AdBlocker::Build({kScriptlet}, {}, kTemplate)
+                ->CosmeticsFor(GURL("https://news.example/"))
+                .scriptlets.find("window.flag = 'on';"),
+            std::string::npos);
+  EXPECT_EQ(AdBlocker::Build({kScriptlet}, {}, "")
+                ->CosmeticsFor(GURL("https://news.example/"))
+                .scriptlets,
+            "");
+}
+
 TEST(BlockListExpiryTest, ReadsTheListsExpires) {
   EXPECT_EQ(BlockListExpiry("! Title: A\n! Expires: 4 days\n||ads.example^\n"),
             base::Days(4));

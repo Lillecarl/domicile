@@ -950,13 +950,18 @@ class CosmeticFiltering final
     VLOG(1) << "domicile: ad blocking: hiding "
             << cosmetics.hide_selectors.size() << " selectors"
             << (cosmetics.generichide ? ", and no generic ones," : "")
-            << " in " << url.possibly_invalid_spec() << " ("
+            << " with " << cosmetics.procedural_filters.size()
+            << " procedural filters and "
+            << (cosmetics.scriptlets.empty() ? "no" : "some")
+            << " scriptlets in " << url.possibly_invalid_spec() << " ("
             << AdBlockingModeName(mode) << ")";
     mojo::AssociatedRemote<mojom::CosmeticFilters> frame;
     navigation->GetRenderFrameHost()
         ->GetRemoteAssociatedInterfaces()
         ->GetInterface(&frame);
-    frame->Hide(std::move(cosmetics.hide_selectors), std::move(host));
+    frame->Hide(std::move(cosmetics.hide_selectors), std::move(host),
+                std::move(cosmetics.scriptlets),
+                std::move(cosmetics.procedural_filters));
   }
 
  private:

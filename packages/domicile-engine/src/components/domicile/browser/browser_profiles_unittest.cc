@@ -24,19 +24,37 @@ base::DictValue Dict(const std::string& json) {
   return *std::move(parsed);
 }
 
-// A message with these sites and a Personal, Work and Private profile.
+// Each protection on, as the config has it by default.
+constexpr char kProtections[] =
+    R"("protections":{"block_ads_and_trackers":"standard",)"
+    R"("block_third_party_cookies":true,)"
+    R"("global_privacy_control":true,"hide_local_ip_address":true,)"
+    R"("remove_tracking_from_links":true,"hide_device_details":true})";
+
+// The block lists and rules every message carries.
+constexpr char kBlocking[] =
+    R"("block_lists":["https://easylist.to/easylist/easylist.txt"],)"
+    R"("block_rules":["||ads.example^"],)";
+
+// A message with these sites and a Personal, Work and Private profile. Work
+// lets third-party cookies through and blocks no ads.
 std::string Message(const std::string& sites) {
-  return R"({"profiles":[)"
-         R"({"id":"personal","name":"Personal","color":"#0d9488",)"
-         R"("private":false,"extensions":null},)"
-         R"({"id":"work","name":"Work","color":"#d97706","private":false,)"
-         R"("extensions":["aeblfdkhhhdcdjpifhhbdiojplfjncoa"]},)"
+  return std::string(R"({"profiles":[)"
+                     R"({"id":"personal","name":"Personal","color":"#0d9488",)"
+                     R"("private":false,"extensions":null,)") +
+         kProtections +
+         R"(},{"id":"work","name":"Work","color":"#d97706","private":false,)"
+         R"("extensions":["aeblfdkhhhdcdjpifhhbdiojplfjncoa"],)"
+         R"("protections":{"block_ads_and_trackers":"off",)"
+         R"("block_third_party_cookies":false,)"
+         R"("global_privacy_control":true,"hide_local_ip_address":true,)"
+         R"("remove_tracking_from_links":true,"hide_device_details":true}},)"
          R"({"id":"incognito","name":"Private","color":"#a78bfa",)"
-         R"("private":true,"extensions":null}],)"
-         R"("default_profile":"personal",)"
-         R"("default_private_profile":"incognito",)"
-         R"("sites":)" +
-         sites + "}";
+         R"("private":true,"extensions":null,)" +
+         kProtections +
+         R"(}],"default_profile":"personal",)"
+         R"("default_private_profile":"incognito",)" +
+         kBlocking + R"("sites":)" + sites + "}";
 }
 
 TEST(BrowserProfilesTest, AMessageReadsAsTheConfigWroteIt) {
@@ -65,18 +83,67 @@ TEST(BrowserProfilesTest, AMessageThatContradictsItselfIsRefused) {
       ParseBrowserProfiles(Dict(Message(R"({"acme.com":"personal"})"))));
   // A private default, and a default private profile that is not private.
   EXPECT_FALSE(ParseBrowserProfiles(Dict(
-      R"({"profiles":[{"id":"incognito","name":"P","color":"#000000",)"
-      R"("private":true,"extensions":null}],"default_profile":"incognito",)"
-      R"("default_private_profile":"incognito","sites":{}})")));
+      std::string(R"({"profiles":[{"id":"incognito","name":"P",)"
+                  R"("color":"#000000","private":true,"extensions":null,)") +
+      kProtections +
+      R"(}],"default_profile":"incognito",)"
+      R"("default_private_profile":"incognito",)" + kBlocking +
+      R"("sites":{}})")));
   EXPECT_FALSE(ParseBrowserProfiles(Dict(
-      R"({"profiles":[{"id":"personal","name":"P","color":"#000000",)"
-      R"("private":false,"extensions":null}],"default_profile":"personal",)"
-      R"("default_private_profile":"personal","sites":{}})")));
+      std::string(R"({"profiles":[{"id":"personal","name":"P",)"
+                  R"("color":"#000000","private":false,"extensions":null,)") +
+      kProtections +
+      R"(}],"default_profile":"personal",)"
+      R"("default_private_profile":"personal",)" + kBlocking +
+      R"("sites":{}})")));
   // An id that is no directory name.
-  EXPECT_FALSE(ParseBrowserProfiles(
-      Dict(R"({"profiles":[{"id":"../p","name":"P","color":"#000000",)"
-           R"("private":false,"extensions":null}],"default_profile":"../p",)"
-           R"("default_private_profile":"../p","sites":{}})")));
+  EXPECT_FALSE(ParseBrowserProfiles(Dict(
+      std::string(R"({"profiles":[{"id":"../p","name":"P","color":"#000000",)"
+                  R"("private":false,"extensions":null,)") +
+      kProtections +
+      R"(}],"default_profile":"../p",)"
+      R"("default_private_profile":"../p",)" + kBlocking +
+      R"("sites":{}})")));
+}
+
+TEST(BrowserProfilesTest, EachProfileReadsItsOwnProtections) {
+  std::optional<BrowserProfiles> read =
+      ParseBrowserProfiles(Dict(Message("{}")));
+
+  ASSERT_TRUE(read.has_value());
+  EXPECT_EQ(read->Find("personal")->protections, BrowserProtections{});
+  EXPECT_EQ(read->Find("work")->protections,
+            (BrowserProtections{
+                .block_third_party_cookies = false,
+                .block_ads_and_trackers = AdBlockingMode::kOff}));
+}
+
+TEST(BrowserProfilesTest, AMessageReadsTheBlockListsAndRules) {
+  std::optional<BrowserProfiles> read =
+      ParseBrowserProfiles(Dict(Message("{}")));
+
+  ASSERT_TRUE(read.has_value());
+  EXPECT_EQ(read->block_lists, std::vector<std::string>{
+                                   "https://easylist.to/easylist/easylist.txt"});
+  EXPECT_EQ(read->block_rules, std::vector<std::string>{"||ads.example^"});
+}
+
+TEST(BrowserProfilesTest, AnAdBlockingModeTheEngineDoesNotKnowIsRefused) {
+  std::string message = Message("{}");
+  const std::string standard = R"("block_ads_and_trackers":"standard")";
+  message.replace(message.find(standard), standard.size(),
+                  R"("block_ads_and_trackers":"everything")");
+
+  EXPECT_FALSE(ParseBrowserProfiles(Dict(message)));
+}
+
+TEST(BrowserProfilesTest, AProfileMissingAProtectionIsRefused) {
+  // Personal's protections, the first in the message, lose their last.
+  std::string message = Message("{}");
+  const std::string last = R"(,"hide_device_details":true})";
+  message.replace(message.find(last), last.size(), "}");
+
+  EXPECT_FALSE(ParseBrowserProfiles(Dict(message)));
 }
 
 // Every profile gets every extension, so each can switch each one and keep

@@ -1,7 +1,10 @@
 // An in-memory stand-in for the settings host, for the app's tests.
 
+import type { ConfigPath } from "./config-document";
+import { parseDocument, valueAt } from "./config-document";
 import type {
   BrowserProfiles,
+  ConfigOverride,
   ExtensionSettings,
   InstalledExtension,
   KnownAgents,
@@ -10,6 +13,7 @@ import type {
   SettingsFiles,
   SettingsHost,
   SiteData,
+  SitePrivacy,
   SiteSettings,
   Target,
   WebAgents,
@@ -25,6 +29,8 @@ export type FakeHostState = {
   /** The extensions in the profile, which switches change. */
   installed: InstalledExtension[];
   sites: SiteSettings;
+  /** The sites with their own ad blocking; none by default. */
+  sitePrivacy?: SitePrivacy[] | undefined;
   /** The hosts that store data, which clearing one removes. */
   siteData: SiteData[];
   media: MediaDevices;
@@ -38,6 +44,8 @@ export type FakeHostState = {
   profiles?: BrowserProfiles | undefined;
   /** Whether detailed logging is on; off by default. */
   detailed?: boolean | undefined;
+  /** The temporary changes to the config; none by default. */
+  overrides?: ConfigOverride[] | undefined;
   /** The reason every write is refused, if any. */
   refuse?: string | undefined;
 };
@@ -48,6 +56,13 @@ export type FakeHostState = {
  */
 export const fakeHost = (state: FakeHostState) => {
   const changes = new Set<() => void>();
+  /** What the config file (or the evaluated module) has at `path`. */
+  const writtenAt = (path: ConfigPath): unknown => {
+    const text = state.files.evaluated ?? state.files.config?.text ?? "{}";
+    // A Nix config, which the fake does not evaluate, has nothing.
+    const document = parseDocument(text).unwrapOr({});
+    return valueAt(document, path) ?? null;
+  };
   const writes: { file: Target; text: string }[] = [];
   const loaded: string[] = [];
   const uninstalled: string[] = [];
@@ -91,6 +106,8 @@ export const fakeHost = (state: FakeHostState) => {
       return Promise.resolve();
     },
     configExtensions: () => Promise.resolve([...state.configExtensions]),
+    configOverrides: () =>
+      Promise.resolve(structuredClone(state.overrides ?? [])),
     configureExtension: (id, settings) => {
       const found = state.installed.find((extension) => extension.id === id);
       if (found === undefined) {
@@ -118,9 +135,26 @@ export const fakeHost = (state: FakeHostState) => {
       }
       return Promise.resolve();
     },
+    // The folder holds one extension, which loads off in every profile.
     loadUnpacked: (directory) => {
       loaded.push(directory);
-      return Promise.resolve("c".repeat(32));
+      const id = "c".repeat(32);
+      if (!state.installed.some((extension) => extension.id === id)) {
+        state.installed.push({
+          description: "",
+          enabled: true,
+          icon: undefined,
+          id,
+          name: "My Extension",
+          optionsUrl: undefined,
+          settings: {},
+          version: "0.1",
+        });
+        for (const profile of state.profiles?.profiles ?? []) {
+          profile.extensions.push({ enabled: false, id, locked: false });
+        }
+      }
+      return Promise.resolve(id);
     },
     mediaDevices: () => Promise.resolve(structuredClone(state.media)),
     monitors: () => Promise.resolve(structuredClone(state.monitors ?? [])),
@@ -151,9 +185,31 @@ export const fakeHost = (state: FakeHostState) => {
       return Promise.resolve();
     },
     read: () => Promise.resolve(structuredClone(state.files)),
+    resetConfigOverrides: (paths) => {
+      state.overrides = (state.overrides ?? []).filter(
+        ({ path }) => !paths.some((under) => startsWith(path, under)),
+      );
+      return Promise.resolve(structuredClone(state.overrides));
+    },
     retryWebAgents: () => {
       retried.times += 1;
       return Promise.resolve();
+    },
+    setConfigOverride: (path, value) => {
+      if (state.refuse === undefined) {
+        const written = writtenAt(path);
+        const others = (state.overrides ?? []).filter(
+          (change) => !startsWith(change.path, path),
+        );
+        // As the compositor does, the file's own value ends the change.
+        state.overrides =
+          JSON.stringify(value ?? null) === JSON.stringify(written)
+            ? others
+            : [...others, { path: [...path], value: value ?? null, written }];
+        return Promise.resolve(structuredClone(state.overrides));
+      } else {
+        return Promise.reject(new Error(state.refuse));
+      }
     },
     setDetailedLogging: (on) => {
       state.detailed = on;
@@ -201,6 +257,23 @@ export const fakeHost = (state: FakeHostState) => {
       };
       return Promise.resolve();
     },
+    setSitePrivacy: (change) => {
+      const others = (state.sitePrivacy ?? []).filter(
+        (kept) => kept.profile !== change.profile || kept.site !== change.site,
+      );
+      state.sitePrivacy =
+        change.block_ads_and_trackers === null
+          ? others
+          : [
+              ...others,
+              {
+                block_ads_and_trackers: change.block_ads_and_trackers,
+                profile: change.profile,
+                site: change.site,
+              },
+            ];
+      return Promise.resolve();
+    },
     signOutWebAgent: (client) => {
       if (state.webAgents !== undefined) {
         state.webAgents.signedIn = state.webAgents.signedIn.filter(
@@ -211,6 +284,8 @@ export const fakeHost = (state: FakeHostState) => {
     },
     siteData: () => Promise.resolve(structuredClone(state.siteData)),
     sitePermissions: () => Promise.resolve(structuredClone(state.sites)),
+    sitePrivacy: () =>
+      Promise.resolve(structuredClone(state.sitePrivacy ?? [])),
     stopAgent: (session) => {
       if (state.agents !== undefined) {
         state.agents.connected = state.agents.connected.filter(
@@ -265,3 +340,7 @@ export const fakeHost = (state: FakeHostState) => {
     writes,
   };
 };
+
+/** Whether `path` is `under` or below it. */
+const startsWith = (path: ConfigPath, under: ConfigPath) =>
+  under.every((key, at) => path[at] === key);

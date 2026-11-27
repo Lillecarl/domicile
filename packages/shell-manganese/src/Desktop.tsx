@@ -63,6 +63,7 @@ import { ShellLinksContext } from "@domicile-desktop/manganese-page-requests/she
 import { useWallpapers } from "@domicile-desktop/manganese-wallpaper/useWallpapers";
 import { Wallpaper } from "@domicile-desktop/manganese-wallpaper/Wallpaper";
 import type { Wallpapers } from "@domicile-desktop/manganese-wallpaper/wallpapers";
+import { BROWSER_KEYS } from "@domicile-desktop/manganese-window-management/browser/browser-command";
 import { desktopClientIcons } from "@domicile-desktop/manganese-window-management/client-icons";
 import type { Direction } from "@domicile-desktop/manganese-window-management/direction";
 import type { FloatingRules } from "@domicile-desktop/manganese-window-management/floating/floating-rules";
@@ -111,6 +112,7 @@ import {
   shutIdsOf,
   WindowAction,
   WindowActionKind,
+  windowNamed,
   workspaceHolding,
 } from "@domicile-desktop/manganese-window-management/window-state";
 import type { Workspaces } from "@domicile-desktop/manganese-window-management/workspaces-context";
@@ -799,6 +801,11 @@ export const Desktop = ({
   // A global shortcuts review flags these.
   const shellChords = useMemo(() => ownedChords(keybindings), [keybindings]);
 
+  // Browser windows' own keys come before extensions', as Chrome's do.
+  useEffect(() => {
+    domicile.extensions.reserveKeys(BROWSER_KEYS);
+  }, [domicile]);
+
   // The binding mode is desk-wide.
   useKeybindings({
     answer: (query) => answerQuery(query, windows),
@@ -811,6 +818,7 @@ export const Desktop = ({
       act(WindowAction.ModeSet(mode));
     },
     overviewOpen: windows.overviewOpen,
+    windowNamed: (name) => windowNamed(windows, name),
   });
 
   useScreenFollowsPointer({ act, displays, focused: windows.focused });

@@ -204,6 +204,7 @@ fn tools_list_describes_each_tool() {
             "browser_key",
             "browser_navigate",
             "browser_screenshot",
+            "browser_choose_files",
             "app_snapshot",
             "app_click",
             "app_focus",
@@ -258,8 +259,63 @@ fn a_failed_command_is_a_tool_error_saying_why() {
 #[test]
 fn send_shell_passes_its_words() {
     assert_eq!(
-        ran_for("send_shell", json!({"words": ["focus", "left"]})),
-        ["send-shell", "focus", "left"]
+        ran_for("send_shell", json!({"words": ["floating", "toggle"]})),
+        ["send-shell", "--agent", "7", "floating", "toggle"]
+    );
+}
+
+#[test]
+fn send_shell_on_a_window_takes_it_with_the_agents_keyboard_then_aims_at_it() {
+    // A command on the agent's own window moves nothing of the user's, so it
+    // doesn't wait for them.
+    let mut ran = Vec::new();
+    let replies = served(
+        &[call(
+            "send_shell",
+            json!({"words": ["move", "container", "to", "workspace", "3"], "window": "n1"}),
+        )],
+        |args: &[String]| match args[0].as_str() {
+            "idle-time" => panic!("a command on the agent's own window waited for the user"),
+            _ => desk(&mut ran)(args),
+        },
+    );
+    assert_eq!(replies[0]["result"]["isError"], false, "{replies:?}");
+    assert_eq!(
+        ran,
+        [
+            vec!["focus-window", "--agent", "7", "n1"],
+            vec![
+                "send-shell",
+                "--agent",
+                "7",
+                "--window",
+                "n1",
+                "move",
+                "container",
+                "to",
+                "workspace",
+                "3"
+            ],
+        ]
+    );
+}
+
+#[test]
+fn send_shell_on_a_window_the_agent_cant_take_says_why() {
+    let replies = served(
+        &[call(
+            "send_shell",
+            json!({"words": ["kill"], "window": "n1"}),
+        )],
+        |args: &[String]| match args[0].as_str() {
+            "focus-window" => refused("the user is using window n1"),
+            other => panic!("ran {other} after the window was refused"),
+        },
+    );
+    assert_eq!(replies[0]["result"]["isError"], true);
+    assert_eq!(
+        replies[0]["result"]["content"][0]["text"],
+        "the user is using window n1"
     );
 }
 
@@ -295,10 +351,23 @@ fn open_takes_an_app_flag_and_a_profile_for_the_agents_seat() {
 }
 
 #[test]
-fn window_actions_take_the_window_id() {
+fn closing_a_window_closes_the_agents_focus_or_takes_the_one_named_first() {
     assert_eq!(
-        ran_for("close_window", json!({"id": "abc"})),
-        ["close-window", "abc"]
+        ran_for("close_window", json!({})),
+        ["close-window", "--agent", "7"]
+    );
+    let mut ran = Vec::new();
+    let replies = served(
+        &[call("close_window", json!({"window": "abc"}))],
+        desk(&mut ran),
+    );
+    assert_eq!(replies[0]["result"]["isError"], false);
+    assert_eq!(
+        ran,
+        [
+            vec!["focus-window", "--agent", "7", "abc"],
+            vec!["close-window", "--agent", "7", "--window", "abc"],
+        ]
     );
 }
 
@@ -451,7 +520,7 @@ fn keys_and_text_go_to_key_and_type() {
 
 /// Each tool that points or types on the agent's own seat, with arguments it
 /// takes after a screenshot.
-fn on_its_own_seat() -> [(&'static str, Value); 7] {
+fn on_its_own_seat() -> [(&'static str, Value); 9] {
     [
         ("click", json!({"x": 1, "y": 1})),
         ("move_pointer", json!({"x": 1, "y": 1})),
@@ -460,12 +529,9 @@ fn on_its_own_seat() -> [(&'static str, Value); 7] {
         ("key", json!({"chord": "ctrl+l"})),
         ("type_text", json!({"text": "hi"})),
         ("focus_window", json!({"id": "n1"})),
+        ("send_shell", json!({"words": ["floating", "toggle"]})),
+        ("close_window", json!({})),
     ]
-}
-
-/// Each tool that moves the user's pointer, keyboard focus or windows.
-fn moving_the_users_hands() -> [(&'static str, Value); 1] {
-    [("send_shell", json!({"words": ["focus", "left"]}))]
 }
 
 #[test]
@@ -484,40 +550,6 @@ fn tools_on_the_agents_own_seat_run_while_the_user_uses_the_desktop() {
             ran.iter().all(|args| args[1..3] == ["--agent", "7"]),
             "{name} ran {ran:?}"
         );
-    }
-}
-
-#[test]
-fn tools_that_move_the_users_pointer_or_focus_wait_while_they_use_the_desktop() {
-    for (name, arguments) in moving_the_users_hands() {
-        let mut ran = Vec::new();
-        let replies = served(
-            &[call("screenshot", json!({})), call(name, arguments)],
-            |args: &[String]| match args[0].as_str() {
-                "idle-time" => idle_for(29),
-                _ => desk(&mut ran)(args),
-            },
-        );
-        assert_eq!(replies[1]["result"]["isError"], true, "{name}");
-        let text = replies[1]["result"]["content"][0]["text"].as_str().unwrap();
-        assert!(text.contains("browser_ and app_"), "{name}: {text}");
-        assert!(ran.is_empty(), "{name} ran {ran:?}");
-    }
-}
-
-#[test]
-fn tools_that_move_the_users_pointer_or_focus_run_once_they_step_away() {
-    for (name, arguments) in moving_the_users_hands() {
-        let mut ran = Vec::new();
-        let replies = served(
-            &[call("screenshot", json!({})), call(name, arguments)],
-            |args: &[String]| match args[0].as_str() {
-                "idle-time" => idle_for(30),
-                _ => desk(&mut ran)(args),
-            },
-        );
-        assert_eq!(replies[1]["result"]["isError"], false, "{name}");
-        assert!(!ran.is_empty(), "{name}");
     }
 }
 
@@ -571,7 +603,7 @@ fn arguments_that_are_not_an_object_are_a_tool_error() {
 
 /// The DevTools methods the engine sends for `domicile devtools`, as
 /// `kDevToolsMethods` in the engine's `command_protocol.h` lists them.
-const AGENTS_METHODS: [&str; 16] = [
+const AGENTS_METHODS: [&str; 18] = [
     "Accessibility.getFullAXTree",
     "Accessibility.getPartialAXTree",
     "Accessibility.queryAXTree",
@@ -579,6 +611,8 @@ const AGENTS_METHODS: [&str; 16] = [
     "DOM.getBoxModel",
     "DOM.getContentQuads",
     "DOM.scrollIntoViewIfNeeded",
+    "Domicile.chooseFiles",
+    "Domicile.fileChooser",
     "Input.dispatchKeyEvent",
     "Input.dispatchMouseEvent",
     "Input.insertText",
@@ -590,6 +624,32 @@ const AGENTS_METHODS: [&str; 16] = [
     "Page.reload",
 ];
 
+/// `domicile devtools` arguments without the agent session, which every input
+/// method names and no other does: the page it drives copies to that agent's
+/// own clipboard.
+fn for_the_agent(args: &[String]) -> Vec<String> {
+    match args {
+        [devtools, flag, session, rest @ ..] if devtools == "devtools" && flag == "--agent" => {
+            assert_eq!(session, "7", "sent for the agent's own session");
+            assert!(
+                rest.iter().any(|arg| arg.starts_with("Input.")),
+                "only input names the agent: {args:?}"
+            );
+            std::iter::once(devtools.clone())
+                .chain(rest.iter().cloned())
+                .collect()
+        }
+        [devtools, ..] if devtools == "devtools" => {
+            assert!(
+                !args.iter().any(|arg| arg.starts_with("Input.")),
+                "input names the agent: {args:?}"
+            );
+            args.to_vec()
+        }
+        _ => args.to_vec(),
+    }
+}
+
 /// Stands in for `domicile devtools` on browser window `w1`: answers each
 /// method from `answers` and records every run in `ran`.
 fn page<'a>(
@@ -600,15 +660,20 @@ fn page<'a>(
         if args == ["list-windows", "--json"] {
             return printed("[{\"id\": \"w1\", \"views\": []}]\n");
         }
-        assert_eq!(args[..2], ["devtools", "w1"]);
-        let params: Value = serde_json::from_str(&args[3]).unwrap();
-        ran.push((args[2].clone(), params));
-        if !AGENTS_METHODS.contains(&args[2].as_str()) {
-            return refused(&format!("\"{}\" is not a method agents get", args[2]));
+        if args[0] == "focus-window" {
+            ran.push((args.join(" "), json!({})));
+            return printed("");
+        }
+        let args = for_the_agent(args);
+        assert_eq!(args[..3], ["devtools", "--window", "w1"]);
+        let params: Value = serde_json::from_str(&args[4]).unwrap();
+        ran.push((args[3].clone(), params));
+        if !AGENTS_METHODS.contains(&args[3].as_str()) {
+            return refused(&format!("\"{}\" is not a method agents get", args[3]));
         }
         let answer = answers
             .iter()
-            .find(|(method, _)| *method == args[2])
+            .find(|(method, _)| *method == args[3])
             .map_or(json!({}), |(_, answer)| answer.clone());
         printed(&format!("{answer}\n"))
     }
@@ -662,6 +727,30 @@ fn a_batch_runs_its_steps_in_order_and_reads_the_window_once_at_the_end() {
     let text = texts(&replies[0]);
     assert!(
         text.starts_with("1. clicked element 12\n2. typed\n3. pressed Enter\nIn w1: "),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_batch_that_opens_a_file_chooser_says_the_page_waits_on_it() {
+    let mut ran = Vec::new();
+    let chooser =
+        json!({"chooser": {"mode": "open", "accept": [], "suggestedName": "", "folder": ""}});
+    let replies = served(
+        &[call(
+            "batch",
+            json!({"steps": [
+                {"tool": "browser_type", "arguments": {"window": "w1", "text": "hi"}},
+                {"tool": "browser_key", "arguments": {"window": "w1", "key": "Enter"}},
+            ]}),
+        )],
+        page(&[("Domicile.fileChooser", chooser)], &mut ran),
+    );
+    let text = texts(&replies[0]);
+    assert!(
+        text.contains(
+            "In w1: The page waits on a file chooser for a file: answer it with browser_choose_files."
+        ),
         "{text}"
     );
 }
@@ -840,8 +929,34 @@ fn a_browser_click_scrolls_the_element_into_view_and_clicks_its_middle() {
             mouse("mousePressed"),
             mouse("mouseReleased"),
             // Read again, to answer what it changed.
+            ("Domicile.fileChooser".to_string(), json!({})),
             ("Accessibility.getFullAXTree".to_string(), json!({})),
+            // The agent's keyboard goes where it clicked, as a hand's does.
+            ("focus-window --agent 7 w1".to_string(), json!({})),
         ]
+    );
+}
+
+#[test]
+fn a_browser_click_says_when_the_agents_keyboard_cant_follow_it() {
+    let mut ran = Vec::new();
+    let answers = [quads()];
+    let mut clicked = page(&answers, &mut ran);
+    let replies = served(
+        &[call("browser_click", json!({"window": "w1", "ref": 12}))],
+        |args: &[String]| {
+            if args[0] == "focus-window" {
+                return refused("the user is typing in w1");
+            }
+            clicked(args)
+        },
+    );
+    assert_eq!(replies[0]["result"]["isError"], false);
+    assert!(
+        texts(&replies[0]).contains(
+            "Your keyboard is not in it, so key and type_text can't type there: the user is typing in w1"
+        ),
+        "{replies:?}"
     );
 }
 
@@ -1034,6 +1149,7 @@ fn browser_key_presses_and_releases_a_named_key() {
                 "Input.dispatchKeyEvent".to_string(),
                 json!({"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})
             ),
+            ("Domicile.fileChooser".to_string(), json!({})),
             ("Accessibility.getFullAXTree".to_string(), json!({})),
         ]
     );
@@ -1045,6 +1161,72 @@ fn browser_key_presses_and_releases_a_named_key() {
         never_run,
     );
     assert_eq!(replies[0]["result"]["isError"], true);
+}
+
+#[test]
+fn a_press_that_opens_a_file_chooser_says_the_page_waits_on_it() {
+    let mut ran = Vec::new();
+    let chooser = json!({"chooser": {"mode": "open-multiple", "accept": ["mp4", "mov"], "suggestedName": "", "folder": ""}});
+    let replies = served(
+        &[call("browser_key", json!({"window": "w1", "key": "Enter"}))],
+        page(&[("Domicile.fileChooser", chooser)], &mut ran),
+    );
+    let said = replies[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(
+        said.contains(
+            "The page waits on a file chooser for one or more files, accepting .mp4, .mov: \
+             answer it with browser_choose_files."
+        ),
+        "{said}"
+    );
+}
+
+#[test]
+fn browser_choose_files_answers_the_chooser_with_paths_or_cancels_it() {
+    let mut ran = Vec::new();
+    let replies = served(
+        &[
+            call(
+                "browser_choose_files",
+                json!({"window": "w1", "paths": ["/home/me/clip.mp4"]}),
+            ),
+            call(
+                "browser_choose_files",
+                json!({"window": "w1", "cancel": true}),
+            ),
+        ],
+        page(&[], &mut ran),
+    );
+    assert_eq!(replies[0]["result"]["isError"], false);
+    assert_eq!(replies[1]["result"]["isError"], false);
+    let sent: Vec<_> = ran
+        .iter()
+        .filter(|(method, _)| method == "Domicile.chooseFiles")
+        .map(|(_, params)| params.clone())
+        .collect();
+    assert_eq!(
+        sent,
+        [
+            json!({"files": ["/home/me/clip.mp4"]}),
+            json!({"cancel": true})
+        ]
+    );
+}
+
+#[test]
+fn browser_choose_files_takes_absolute_paths_or_a_cancel() {
+    for arguments in [
+        json!({"window": "w1"}),
+        json!({"window": "w1", "paths": ["clip.mp4"]}),
+        json!({"window": "w1", "paths": ["/a"], "cancel": true}),
+        json!({"window": "w1", "paths": "/a"}),
+    ] {
+        let replies = served(
+            &[call("browser_choose_files", arguments.clone())],
+            never_run,
+        );
+        assert_eq!(replies[0]["result"]["isError"], true, "{arguments}");
+    }
 }
 
 #[test]
@@ -1094,7 +1276,8 @@ fn a_browser_screenshot_is_a_small_webp_of_the_page() {
 
 /// Stands in for `domicile` on Claude's window `w1`, whose page is empty and
 /// whose chat is view `9` at 200,40: answers each method from `answers` and
-/// records every run in `ran` with the view it went to.
+/// records every run in `ran` with the view it went to. Anything else, such
+/// as giving the window the agent's keyboard after a click in a view, fails.
 fn electron_window<'a>(
     answers: &'a [(&'a str, Value)],
     ran: &'a mut Vec<(Option<String>, String, Value)>,
@@ -1105,19 +1288,25 @@ fn electron_window<'a>(
                 "[{\"id\": \"w1\", \"views\": [{\"id\": \"9\", \"position\": [200, 40], \"size\": [600, 560]}]}]\n",
             );
         }
-        let (view, args) = match args {
-            [devtools, flag, view, rest @ ..] if devtools == "devtools" && flag == "--view" => {
+        let args = for_the_agent(args);
+        let (view, args) = match args.as_slice() {
+            [devtools, aim, window, flag, view, rest @ ..]
+                if devtools == "devtools" && aim == "--window" && flag == "--view" =>
+            {
+                assert_eq!(window, "w1");
                 (Some(view.clone()), rest)
             }
-            [devtools, rest @ ..] if devtools == "devtools" => (None, rest),
+            [devtools, aim, window, rest @ ..] if devtools == "devtools" && aim == "--window" => {
+                assert_eq!(window, "w1");
+                (None, rest)
+            }
             _ => panic!("ran domicile {args:?}"),
         };
-        assert_eq!(args[0], "w1");
-        let params: Value = serde_json::from_str(&args[2]).unwrap();
-        ran.push((view.clone(), args[1].clone(), params));
+        let params: Value = serde_json::from_str(&args[1]).unwrap();
+        ran.push((view.clone(), args[0].clone(), params));
         let answer = answers
             .iter()
-            .find(|(method, _)| *method == args[1] && view.is_some())
+            .find(|(method, _)| *method == args[0] && view.is_some())
             .map_or(json!({"nodes": []}), |(_, answer)| answer.clone());
         printed(&format!("{answer}\n"))
     }
@@ -1230,22 +1419,29 @@ fn a_browser_tool_passes_on_why_devtools_refused() {
 fn app_tools_read_and_act_on_a_native_windows_accessibility_tree() {
     assert_eq!(
         ran_for("app_snapshot", json!({"window": "kD3m"})),
-        ["accessibility", "kD3m"]
+        ["accessibility", "--window", "kD3m"]
     );
     assert_eq!(
         ran_for("app_click", json!({"window": "kD3m", "ref": ":1.7/w/1"})),
-        ["accessibility-act", "kD3m", ":1.7/w/1", "click"]
+        ["accessibility-act", "--window", "kD3m", ":1.7/w/1", "click"]
     );
     assert_eq!(
         ran_for("app_focus", json!({"window": "kD3m", "ref": ":1.7/w/1"})),
-        ["accessibility-act", "kD3m", ":1.7/w/1", "focus"]
+        ["accessibility-act", "--window", "kD3m", ":1.7/w/1", "focus"]
     );
     assert_eq!(
         ran_for(
             "app_set_text",
             json!({"window": "kD3m", "ref": ":1.7/w/1", "text": "hi"})
         ),
-        ["accessibility-act", "kD3m", ":1.7/w/1", "set-text", "hi"]
+        [
+            "accessibility-act",
+            "--window",
+            "kD3m",
+            ":1.7/w/1",
+            "set-text",
+            "hi"
+        ]
     );
     let replies = served(&[call("app_click", json!({"window": "kD3m"}))], never_run);
     assert_eq!(replies[0]["result"]["isError"], true);
@@ -1616,7 +1812,7 @@ fn what_an_agent_did_in_a_browser_window_names_the_page_it_shows_now() {
         ],
         move |args| match args[0].as_str() {
             "list-windows" => printed("[{\"id\": \"w1\", \"title\": \"Sway\", \"views\": []}]"),
-            "devtools" if args[2] == "Accessibility.getFullAXTree" => {
+            "devtools" if method_of(args) == "Accessibility.getFullAXTree" => {
                 printed(&format!("{new_page}\n"))
             }
             _ => printed("{}"),
@@ -1659,7 +1855,7 @@ fn with_only_some_windows_a_window_not_shared_is_refused() {
     for (name, arguments) in [
         ("browser_snapshot", json!({"window": "w2"})),
         ("app_snapshot", json!({"window": "n2"})),
-        ("close_window", json!({"id": "n2"})),
+        ("close_window", json!({"window": "n2"})),
     ] {
         let replies = served_letting(&[call(name, arguments)], never_run, |_| {
             Ok(reaching(two_windows()).0)
@@ -1721,6 +1917,18 @@ fn one_button(named: &str) -> Value {
     ]})
 }
 
+/// The DevTools method a `domicile devtools` run sends: the word after the
+/// window and any view.
+fn method_of(args: &[String]) -> &str {
+    let Some(window) = args.iter().position(|arg| arg == "--window") else {
+        return "";
+    };
+    match args.get(window + 2).map(String::as_str) {
+        Some("--view") => &args[window + 4],
+        _ => &args[window + 2],
+    }
+}
+
 /// Stands in for `domicile devtools` on browser window `w1`, whose tree is
 /// each of `trees` in turn, the last one from then on.
 fn changing_page(trees: Vec<Value>) -> impl FnMut(&[String]) -> io::Result<Ran> {
@@ -1729,7 +1937,7 @@ fn changing_page(trees: Vec<Value>) -> impl FnMut(&[String]) -> io::Result<Ran> 
         if args == ["list-windows", "--json"] {
             return printed("[{\"id\": \"w1\", \"views\": []}]\n");
         }
-        let answer = match args[2].as_str() {
+        let answer = match method_of(args) {
             "Accessibility.getFullAXTree" => {
                 read += 1;
                 trees[(read - 1).min(trees.len() - 1)].clone()
@@ -1906,7 +2114,7 @@ fn an_act_whose_window_cannot_be_read_again_says_so_and_that_it_acted() {
             call("browser_key", json!({"window": "w1", "key": "Tab"})),
             call("app_focus", json!({"window": "kD3m", "ref": ":1.7/w/1"})),
         ],
-        |args| match (args[0].as_str(), args.get(2).map(String::as_str)) {
+        |args| match (args[0].as_str(), args.get(3).map(String::as_str)) {
             ("devtools", Some("Accessibility.getFullAXTree")) | ("accessibility", _) => {
                 refused("domicile: the window closed\n")
             }
@@ -1939,7 +2147,13 @@ fn the_browser_tools_read_the_shells_own_page_as_window_shell() {
     // The shell holds no views, and list-windows doesn't list it.
     assert_eq!(
         ran,
-        [["devtools", "shell", "Accessibility.getFullAXTree", "{}"]]
+        [[
+            "devtools",
+            "--window",
+            "shell",
+            "Accessibility.getFullAXTree",
+            "{}"
+        ]]
     );
     assert_eq!(
         replies[0]["result"]["content"][0]["text"],
@@ -1955,4 +2169,42 @@ fn an_agent_given_only_some_windows_cannot_reach_the_shell() {
         |_| Ok(reaching(two_windows()).0),
     );
     assert_eq!(replies[0]["result"]["isError"], true);
+}
+
+#[test]
+fn a_window_tool_naming_no_window_acts_on_the_one_the_agents_keyboard_is_in() {
+    let mut ran = Vec::new();
+    let replies = served(&[call("app_snapshot", json!({}))], |args: &[String]| {
+        ran.push(args.to_vec());
+        match args[0].as_str() {
+            "list-windows" => printed(
+                r#"[{"id": "n1", "kind": "native", "title": "Notes", "app": null, "pid": 4, "size": null, "focused": true, "urgent": false, "url": null, "private": false, "engine_id": null},
+                    {"id": "n2", "kind": "native", "title": "Editor", "app": null, "pid": 5, "size": null, "focused": false, "urgent": false, "focused_by": "agent-7", "url": null, "private": false, "engine_id": null}]"#,
+            ),
+            _ => printed("[frame] Editor :1.7/w/1\n"),
+        }
+    });
+    assert_eq!(replies[0]["result"]["isError"], false);
+    assert_eq!(ran[1], ["accessibility", "--window", "n2"]);
+}
+
+#[test]
+fn an_agent_with_some_windows_names_the_window_it_acts_on() {
+    let replies = served_letting(&[call("app_snapshot", json!({}))], never_run, |_| {
+        Ok(reaching(two_windows()).0)
+    });
+    let text = replies[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("Name the window"), "{text}");
+}
+
+#[test]
+fn key_and_type_text_take_a_window_they_name_with_the_agents_keyboard() {
+    assert_eq!(
+        ran_for("type_text", json!({"text": "hi", "window": "n1"})),
+        ["type", "--agent", "7", "--window", "n1", "hi"]
+    );
+    assert_eq!(
+        ran_for("key", json!({"chord": "Return"})),
+        ["key", "--agent", "7", "Return"]
+    );
 }

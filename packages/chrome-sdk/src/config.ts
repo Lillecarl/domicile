@@ -54,6 +54,12 @@ export type AccelProfile = "adaptive" | "flat";
 export type AccentColor = string;
 
 /**
+ * How a profile's pages block ads and trackers. See
+ * [`Protections::block_ads_and_trackers`].
+ */
+export type AdBlocking = "standard" | "strict" | "off";
+
+/**
  * Agents that drive the desktop, such as Claude Code. See
  * `docs/AGENTS.md`.
  */
@@ -74,6 +80,19 @@ export type AgentsConfig = {
  * sites each opens. See `docs/architecture/BROWSER-PROFILES.md`.
  */
 export type BrowserConfig = {
+  /**
+   * The filter lists ads and trackers are blocked with, in Adblock Plus
+   * and uBlock Origin syntax: each an `https:` address, which the engine
+   * fetches and keeps up to date, or an absolute path. EasyList,
+   * EasyPrivacy and uBlock Origin's filters unless set; `[]` blocks with
+   * `block_rules` only.
+   */
+  block_lists?: string[];
+  /**
+   * Rules of your own, in the same syntax, which apply on top of
+   * `block_lists`.
+   */
+  block_rules?: string[];
   /** The profile a new private window opens in. Private. */
   default_private_profile?: string;
   /** The profile a site opens in when `sites` names none. Not private. */
@@ -112,6 +131,11 @@ export type BrowserProfile = {
   name: string;
   /** Keeps no history, sign-ins or site data after its last page closes. */
   private?: boolean;
+  /**
+   * What it keeps sites from learning about you. Each is on unless the
+   * config turns it off.
+   */
+  protections?: Protections;
 };
 
 /** Buttons assigned to one-, two- and three-finger taps. */
@@ -533,6 +557,47 @@ export type Profile = {
    * profile applies.
    */
   name: string;
+};
+
+/**
+ * What a browser profile keeps sites from learning about you. See
+ * [`BrowserProfile::protections`].
+ */
+export type Protections = {
+  /**
+   * How the profile's pages block ads and trackers, with
+   * [`BrowserConfig::block_lists`]. Unset: `standard`, or `strict` in a
+   * private profile.
+   */
+  block_ads_and_trackers?: AdBlocking | null;
+  /**
+   * Blocks cookies a page's embedded sites set or read, which track you
+   * from site to site.
+   */
+  block_third_party_cookies?: boolean;
+  /**
+   * Asks sites not to sell or share your data, with the
+   * `Sec-GPC: 1` header and `navigator.globalPrivacyControl`.
+   */
+  global_privacy_control?: boolean;
+  /**
+   * Shows sites the device's canvas drawing, audio and processor count a
+   * little off, the same way for a site until the desktop starts again,
+   * as Brave's farbling does, so they can't recognize the device by
+   * them. Not on a site or in a window whose ad blocking is off.
+   */
+  hide_device_details?: boolean;
+  /**
+   * Keeps WebRTC, as video calls use, from telling sites your local
+   * network address.
+   */
+  hide_local_ip_address?: boolean;
+  /**
+   * Takes the click ids (`fbclid`, `gclid` and the like) out of links to
+   * other sites, and in [`AdBlocking::Strict`] the `utm_` campaign
+   * parameters too. Not on a site or in a window whose ad blocking is off.
+   */
+  remove_tracking_from_links?: boolean;
 };
 
 /** How a touchpad generates scrolling. */

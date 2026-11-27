@@ -4,7 +4,9 @@
 #include "chrome/browser/domicile/domicile_tab_helpers.h"
 
 #include "base/check.h"
+#include "chrome/browser/domicile/domicile_ad_blocking.h"
 #include "chrome/browser/domicile/domicile_desk.h"
+#include "chrome/browser/domicile/domicile_device_details.h"
 #include "chrome/browser/domicile/domicile_devtools.h"
 #include "chrome/browser/domicile/domicile_permissions.h"
 #include "chrome/browser/domicile/domicile_printing.h"
@@ -13,6 +15,7 @@
 #include "chrome/browser/favicon/favicon_utils.h"
 #include "chrome/browser/history/history_tab_helper.h"
 #include "chrome/browser/sessions/session_tab_helper_factory.h"
+#include "chrome/browser/ui/prefs/prefs_tab_helper.h"
 #include "components/domicile/browser/web_view_guest.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/web_contents.h"
@@ -23,10 +26,18 @@ namespace domicile {
 namespace {
 
 void Attach(content::WebContents& guest, bool records_history) {
+  // As Chrome's TabFeatures does. Without it a page's renderer preferences
+  // are not its own profile's: a profile's Global Privacy Control and WebRTC
+  // IP policy never reach its pages, nor do later changes to them.
+  PrefsTabHelper::CreateForWebContents(&guest);
   // Before the popup check: a popup's page may ask for permissions too.
   AttachPermissionPrompts(guest);
   // A popup's page may print too.
   AttachPrinting(guest);
+  // And a popup's page may show ads too.
+  AttachCosmeticFiltering(guest);
+  // And read the device's details.
+  AttachDeviceDetailsHiding(guest);
 
   // An action popup is not a tab, as in Chrome. Without a SessionTabHelper,
   // tabs.getCurrent() returns nothing and it never becomes the active tab.

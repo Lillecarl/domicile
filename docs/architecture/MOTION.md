@@ -131,6 +131,12 @@ app[data-closing] {
     rebuilds the filter in the next frame without a style recalc. A
     compositor animation of the filter keeps the arrays the page committed.
     An element's arrays hold at most 64 KiB.
+  - Under a compositor animation of the filter, Blink calls new arrays a
+    simple value and writes them straight to the cc effect node, as it does
+    opacity, keeping the node's filter values, which the animation owns
+    (patch 0284). Blink calls any other filter change under the animation
+    the animation's, and schedules no property tree update for it, so the
+    arrays would otherwise wait for an unrelated one.
   - `outset: "screen"` is the viewport's longer side.
   - A filter animation whose only pixel-moving filters are shader effects
     runs on the compositor when every keyframe has the same outsets, since
@@ -225,8 +231,8 @@ smoke, cloth, swarm, liquid and cube.
 | Motion | Today | Refined | Shader effect |
 |---|---|---|---|
 | Open | fade, scale 0.85 → 1 | `springs.smooth` scale from the launcher or the window that opened it | none |
-| Close | fade, scale 1 → 0.85 | `springs.snappy` | dissolve |
-| Tab open / close | grow from or shrink into the tab (0.15) | spring, tab edge as a faded layer (no `box-shadow` keyframes) | none |
+| Close | fade, scale 1 → 0.85 | `springs.snappy`, fade and scale to 0.95; a tab's contents close the same way | none |
+| Tab open | grow from the tab (0.15) | spring, tab edge as a faded layer (no `box-shadow` keyframes) | none |
 | Tab switch | crossfade | short directional slide plus crossfade | ripple wipe, optional |
 | Send to workspace | fade, scale 0.6 | fly to the target in the workspace switcher | genie into the chip |
 | Workspace switch | slide one width, `emphasized` | spring, reversible mid-slide | slight motion blur along the slide |
@@ -248,7 +254,7 @@ smoke, cloth, swarm, liquid and cube.
 | Surface | Today | Refined | Shader effect |
 |---|---|---|---|
 | Bar panels (quick settings, sound, network, notifications, cast, downloads) | `Popover`: fade, scale 0.96 | grow from the bar button with `springs.snappy` | none |
-| Panel drawers (`ListRow` details) | base-ui collapsible height | scale reveal (clip-path), content fade | none |
+| Panel drawers (`ListRow` details) | base-ui collapsible height | height on springs (main thread: a clip leaves the rows below jumping), content fade | none |
 | Launcher | `ModalDialog`: fade, rise, scale 0.96 | spring from the launcher button or screen center | frosted backdrop |
 | Dialogs (`ModalDialog`, `PageModal`, page requests) | fade, rise, scale 0.96 | spring from the asking window | none |
 | Slide-overs | slide from the edge | spring | none |
@@ -326,7 +332,6 @@ Shader primitive (engine):
 
 Shader effects in manganese:
 
-- [x] dissolve on close
 - [ ] genie on send to workspace (needs mesh effects)
 - [ ] wobbly drag (needs mesh effects)
 - [x] workspace switch motion blur, overview depth of field

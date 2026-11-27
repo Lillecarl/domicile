@@ -16,6 +16,7 @@
 // docs/architecture/KEYBINDINGS.md.
 
 import type { Result } from "@cprussin/option-result";
+import { Err, Ok } from "@cprussin/option-result";
 
 import type { Gestures } from "./desktop/gestures";
 import type { Keyboard } from "./desktop/keyboard";
@@ -58,6 +59,23 @@ export type KeyHandlers = {
    * not run it, which `domicile send-shell` fails with.
    */
   onCommand: (args: readonly string[]) => Result<CommandRan, string>;
+  /**
+   * `domicile send-shell --window` sent a command to run on `window`, by app
+   * id or a browser window's engine id, rather than the user's focus: an
+   * agent's on a window it holds, say. Answered as `onCommand` is. Without
+   * it, the page never hears such a command.
+   */
+  onWindowCommand?: (
+    args: readonly string[],
+    window: string,
+  ) => Result<CommandRan, string>;
+  /**
+   * The words that can follow `args` in a command, for `domicile
+   * completions` to offer: values only the shell knows, such as its
+   * workspace names after `workspace`. Without it, the page never hears
+   * words to complete.
+   */
+  onComplete?: (args: readonly string[]) => readonly string[];
   /** The binding mode changed. */
   onModeChanged: (mode: string) => void;
   /** The page cannot hear `domicile send-shell`. Logs by default. */
@@ -103,7 +121,9 @@ export const bindKeys = (
   {
     commands: help,
     onCommand,
+    onComplete,
     onModeChanged,
+    onWindowCommand,
     report = reportToConsole,
     reportRefusal = refusalToConsole,
   }: KeyHandlers,
@@ -215,7 +235,7 @@ export const bindKeys = (
     domicile.shell,
     help,
     describedBindings(bindings),
-    onCommand,
+    { onCommand, onComplete, onWindowCommand },
     report,
   );
   return {
@@ -339,23 +359,53 @@ const hearCommands = (
   shell: Pick<ShellNamespace, "commands" | "answer">,
   help: readonly ShellCommandHelp[],
   bound: readonly ShellBinding[],
-  onCommand: (args: readonly string[]) => Result<CommandRan, string>,
+  {
+    onCommand,
+    onComplete,
+    onWindowCommand,
+  }: {
+    onCommand: KeyHandlers["onCommand"];
+    onComplete: KeyHandlers["onComplete"];
+    onWindowCommand: KeyHandlers["onWindowCommand"];
+  },
   report: (error: SystemError) => void,
 ): { stop: () => void } => {
   const state: {
     stopped: boolean;
     listening: Listening<ShellCommand> | undefined;
   } = { listening: undefined, stopped: false };
-  const runAndAnswer = ({ sent, words }: ShellCommand) => {
+  const run = ({
+    complete,
+    window,
+    words,
+  }: ShellCommand): Result<CommandRan, string> => {
+    if (complete) {
+      return completed(words, onComplete);
+    } else if (window === undefined) {
+      return onCommand(words);
+    } else if (onWindowCommand === undefined) {
+      // The compositor sends one only to a page that asked; run on the
+      // user's focus instead, it would act on the wrong window.
+      return Err("this shell runs no command on a given window");
+    } else {
+      return onWindowCommand(words, window);
+    }
+  };
+  const runAndAnswer = (command: ShellCommand) => {
     shell
-      .answer(sent, onCommand(words))
+      .answer(command.sent, run(command))
       .then((answered) => {
         answered.match({ Err: report, Ok: () => undefined });
       })
       .catch(reportToConsole);
   };
   shell
-    .commands(help, bound)
+    .commands(
+      help,
+      bound,
+      onWindowCommand !== undefined,
+      onComplete !== undefined,
+    )
     .then((result) => {
       result.match({
         Err: report,
@@ -377,6 +427,16 @@ const hearCommands = (
     },
   };
 };
+
+/** The words that can follow `words`, as `domicile completions` reads them. */
+const completed = (
+  words: readonly string[],
+  onComplete: KeyHandlers["onComplete"],
+): Result<CommandRan, string> =>
+  // The compositor sends words to complete only to a page that asked.
+  onComplete === undefined
+    ? Err("this shell completes no command")
+    : Ok({ output: JSON.stringify(onComplete(words)) });
 
 /** Call `each` with every item `items` brings, until it closes. */
 const eachOf = async <T>(

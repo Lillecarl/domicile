@@ -6,8 +6,13 @@ import { KeymapChoice } from "@domicile-desktop/sdk/keymap-choice";
 import { Axis, Direction } from "../direction";
 import { Layout } from "../tree/node";
 import type { WindowAction as Action } from "../window-state";
-import { WindowAction } from "../window-state";
-import { COMMAND_HELP, parseCommand } from "./command";
+import { WindowAction, WORKSPACES, windowActedOn } from "../window-state";
+import {
+  COMMAND_HELP,
+  completeCommand,
+  parseCommand,
+  parseWindowCommand,
+} from "./command";
 import { MediaKey } from "./media-key";
 
 /** Parse a command as written after `send-shell`. */
@@ -231,5 +236,52 @@ describe("COMMAND_HELP", () => {
     ].filter((command) => !described.includes(command));
 
     expect(undescribed).toStrictEqual([]);
+  });
+});
+
+describe("parseWindowCommand", () => {
+  it.each<readonly [string, Action]>([
+    ["move container to workspace 3", WindowAction.WindowSentToWorkspace("3")],
+    ["floating toggle", WindowAction.FloatToggled()],
+    ["fullscreen toggle", WindowAction.FullscreenToggled(false)],
+    ["kill", WindowAction.WindowKilled()],
+    ["move left", WindowAction.WindowStepped(Direction.Left)],
+    ["layout tabbed", WindowAction.LayoutSet(Layout.Tabbed)],
+    ["move scratchpad", WindowAction.WindowSentToScratchpad()],
+  ])(
+    "runs `%s` on the window it names, not the focused one",
+    (command, action) => {
+      expect(parseWindowCommand(command.split(" "), "app:app-3")).toStrictEqual(
+        Ok(windowActedOn("app:app-3", action)),
+      );
+    },
+  );
+
+  it("refuses a command that acts on no window", () => {
+    // On a window, it would act on the user's desk instead.
+    expect(parseWindowCommand(["workspace", "2"], "app:app-3")).toStrictEqual(
+      Err(
+        "manganese: `workspace 2` acts on no window, so it runs only on the focus",
+      ),
+    );
+  });
+
+  it("refuses a command it does not know", () => {
+    expect(parseWindowCommand(["teleport"], "app:app-3")).toStrictEqual(
+      Err("manganese: no command `teleport`"),
+    );
+  });
+});
+
+describe("completeCommand", () => {
+  it.each([["workspace"], ["move container to workspace"]])(
+    "offers every workspace after `%s`",
+    (typed) => {
+      expect(completeCommand(typed.split(" "))).toStrictEqual(WORKSPACES);
+    },
+  );
+
+  it("offers nothing after words that take no workspace", () => {
+    expect(completeCommand(["keymap"])).toStrictEqual([]);
   });
 });

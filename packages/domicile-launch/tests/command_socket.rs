@@ -6,23 +6,25 @@ use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use domicile_config::AdBlocking;
 use domicile_launch::browser_profiles::{
     BrowserProfileList, ListedBrowserProfile, ListedBrowserSite, ProfileExtension,
 };
 use domicile_launch::command::{
-    browser_profiles_line, clear_browsing_data_line, clear_site_data_line, config_extensions_line,
-    configure_extension_line, delete_history_line, devtools_line, disable_while_typing_line,
-    extensions_line, history_line, load_shell_line, load_unpacked_line, media_devices_line,
-    open_url_line, pin_browser_site_line, set_extension_enabled_line, set_log_levels_line,
-    set_media_device_line, set_site_permission_line, site_data_line, site_permissions_line,
-    uninstall_extension_line, visits_line,
+    browser_profiles_line, browser_windows_line, clear_browsing_data_line, clear_site_data_line,
+    config_extensions_line, configure_extension_line, delete_history_line, devtools_line,
+    disable_while_typing_line, extensions_line, history_line, load_shell_line, load_unpacked_line,
+    media_devices_line, open_url_line, pin_browser_site_line, set_extension_enabled_line,
+    set_log_levels_line, set_media_device_line, set_site_permission_line, site_data_line,
+    site_permissions_line, site_privacy_line, uninstall_extension_line, visits_line,
+    BrowserWindowLayout,
 };
 use domicile_launch::command_socket::{
-    browser_profiles, clear_browsing_data, clear_site_data, config_extensions, configure_extension,
-    delete_history, devtools, disable_while_typing, extensions, history, load_shell, load_unpacked,
-    media_devices, open_url, pin_browser_site, set_extension_enabled, set_log_levels,
-    set_media_device, set_site_permission, site_data, site_permissions, uninstall_extension,
-    visits, CommandError,
+    browser_profiles, browser_windows, clear_browsing_data, clear_site_data, config_extensions,
+    configure_extension, delete_history, devtools, disable_while_typing, extensions, history,
+    load_shell, load_unpacked, media_devices, open_url, pin_browser_site, set_extension_enabled,
+    set_log_levels, set_media_device, set_site_permission, site_data, site_permissions,
+    site_privacy, uninstall_extension, visits, CommandError,
 };
 use domicile_launch::extensions::{ExtensionSettings, InstalledExtension};
 use domicile_launch::history::{BrowsingData, HistoryItem, HistoryQuery};
@@ -30,6 +32,7 @@ use domicile_launch::media_devices::{MediaDevice, MediaDevices, MediaKind};
 use domicile_launch::shell_path::{Shell, ShellFiles};
 use domicile_launch::site_data::SiteData;
 use domicile_launch::site_permissions::{Permission, Setting, SitePermission, SiteSettings};
+use domicile_launch::site_privacy::SitePrivacy;
 
 /// Reply timeout: long enough for a loaded machine, short enough for a fast
 /// suite.
@@ -52,13 +55,50 @@ fn the_engine_is_sent_the_shell_and_says_it_is_serving_it() {
 #[test]
 fn the_engine_is_sent_the_address_and_says_it_opened_it() {
     let (_scratch, path) = scratch();
-    let heard = an_engine(&path, Some("{\"type\":\"opened\"}\n"));
+    let heard = an_engine(&path, Some("{\"type\":\"opened\",\"window\":\"7\"}\n"));
 
-    open_url(&path, "https://example.com/", None, BRIEFLY).expect("the engine opened it");
+    let window =
+        open_url(&path, "https://example.com/", None, None, BRIEFLY).expect("the engine opened it");
 
     assert_eq!(
         heard.join().expect("the engine was listening"),
-        open_url_line("https://example.com/", None)
+        open_url_line("https://example.com/", None, None)
+    );
+    assert_eq!(window, Some("7".to_string()));
+}
+
+#[test]
+fn the_engine_is_asked_for_each_browser_windows_focus_and_size() {
+    let (_scratch, path) = scratch();
+    let heard = an_engine(
+        &path,
+        Some(
+            "{\"type\":\"browser_windows\",\"windows\":[{\"id\":\"3\",\"focused\":true,\"width\":1280,\"height\":720},{\"id\":\"7\",\"focused\":false}]}\n",
+        ),
+    );
+
+    let windows = browser_windows(&path, BRIEFLY).expect("the engine listed them");
+
+    assert_eq!(
+        heard.join().expect("the engine was listening"),
+        browser_windows_line()
+    );
+    assert_eq!(
+        windows,
+        vec![
+            BrowserWindowLayout {
+                id: "3".to_string(),
+                focused: true,
+                width: Some(1280),
+                height: Some(720),
+            },
+            BrowserWindowLayout {
+                id: "7".to_string(),
+                focused: false,
+                width: None,
+                height: None,
+            },
+        ]
     );
 }
 
@@ -167,6 +207,28 @@ fn scratch() -> (tempfile::TempDir, PathBuf) {
     let directory = tempfile::tempdir().expect("a temp directory");
     let path = directory.path().join("command.sock");
     (directory, path)
+}
+
+#[test]
+fn the_engine_is_asked_for_the_sites_ad_blocking_and_lists_them() {
+    let (_scratch, path) = scratch();
+    let heard = an_engine(
+        &path,
+        Some("{\"type\":\"site_privacy\",\"sites\":[{\"profile\":\"work\",\"site\":\"nytimes.com\",\"block_ads_and_trackers\":\"off\"}]}\n"),
+    );
+
+    assert_eq!(
+        site_privacy(&path, BRIEFLY).expect("the engine listed them"),
+        vec![SitePrivacy {
+            profile: "work".to_string(),
+            site: "nytimes.com".to_string(),
+            block_ads_and_trackers: AdBlocking::Off,
+        }]
+    );
+    assert_eq!(
+        heard.join().expect("the engine was listening"),
+        site_privacy_line()
+    );
 }
 
 #[test]
@@ -571,12 +633,13 @@ fn the_engine_sends_a_devtools_method_and_answers_its_result() {
     let params = serde_json::json!({"url": "https://example.com/"});
 
     assert_eq!(
-        devtools(&path, "w7", "Page.navigate", &params, BRIEFLY).expect("the page answered"),
+        devtools(&path, "w7", Some(3), "Page.navigate", &params, BRIEFLY)
+            .expect("the page answered"),
         serde_json::json!({"frameId": "F"})
     );
     assert_eq!(
         heard.join().expect("the engine was listening"),
-        devtools_line("w7", "Page.navigate", &params)
+        devtools_line("w7", Some(3), "Page.navigate", &params)
     );
 }
 

@@ -398,6 +398,12 @@ export type DomicileBrowserWindow = {
    */
   readonly isCaptured: boolean;
   /**
+   * Whether the page is unloaded to free its memory, by discardBrowserWindow()
+   * or by the engine while memory is short. It loads when a <webview> shows
+   * the window.
+   */
+  readonly isDiscarded: boolean;
+  /**
    * The window's identifier on ext-foreign-toplevel-list-v1, which a capture
    * tool such as `grim -T` names it by, as DomicileWindow.toplevelId. Null
    * until the compositor has listed the window.
@@ -493,6 +499,12 @@ export type DomicileBrowserWindow = {
    * plain `<webview>`'s page opened.
    */
   readonly opener: string | null;
+  /**
+   * The agent seat that opened this window (`domicile open --agent`), as
+   * `agent-<session>`, so the shell opens it without taking the user's focus.
+   * Null for none. Who holds it from then on is the desk's seats'.
+   */
+  readonly agent: string | null;
 };
 
 /**
@@ -800,6 +812,14 @@ export type DomicileHostEventMap = {
    * did not see asked for is not one to open later.
    */
   extensionpopuprequested: DomicileExtensionPopupEvent;
+  extensioncommandschanged: Event;
+  /**
+   * The keys of an extension's command were pressed in a page: a MessageEvent
+   * whose `data` is the extension's `id`, the command's `name` and the page's
+   * `profile`, as JSON. The engine runs the command on that page, unless this
+   * has a listener: the shell then does, by runExtensionCommand().
+   */
+  extensioncommandpressed: MessageEvent<string>;
   /**
    * Fires when one is installed, uninstalled, switched on or off, or
    * reconfigured, or its icon loads.
@@ -817,6 +837,14 @@ export type DomicileHostEventMap = {
    * `browserWindows` for the current list.
    */
   browserwindowschanged: Event;
+  /**
+   * A MessageEvent whose `data` is the ids of the windows whose pages may be
+   * unloaded, hidden longest first, as a JSON array. Fires every few seconds
+   * while the computer is short of memory. The engine unloads the first one's
+   * page, unless this has a listener: the shell then decides, by
+   * discardBrowserWindow().
+   */
+  browsermemoryshort: MessageEvent<string>;
   /**
    * Fires when a profile is added, removed, renamed or recolored, the
    * defaults move, a site is pinned, or an extension is installed,
@@ -852,6 +880,12 @@ export type DomicileHostEventMap = {
    * sees pending dialogs.
    */
   portalrequests: MessageEvent<string>;
+  /**
+   * An answer to changeConfig(), as a MessageEvent whose `data` is the
+   * compositor's `config_overrides` line: every temporary change after it,
+   * and why it was refused if it was.
+   */
+  configoverrides: MessageEvent<string>;
   /**
    * The compositor exited and a new one took over. Fired after every window
    * of the old one has closed and every system call it had has ended with
@@ -918,6 +952,17 @@ export type DomicileHost = {
    * docs/PORTALS.md.
    */
   answerPortalRequest(id: number, answer: string): void;
+  /**
+   * A temporary change to the desk's config, until the desktop restarts or
+   * the config file changes that setting. `request` is JSON: a
+   * `set_config_override` with a `path` and the `value` as JSON text, a
+   * `reset_config_overrides` with `paths`, or a `which_config_overrides`.
+   * One of another type is dropped in the browser; the compositor checks the
+   * rest. Each is answered, in order, with a `configoverrides` event. See
+   * docs/SETTINGS.md#temporary-changes and the SDK's `config` module, which
+   * is the way to call this.
+   */
+  changeConfig(request: string): void;
   /**
    * Put a row of the clipboard's history back on the clipboard.
    *
@@ -988,11 +1033,16 @@ export type DomicileHost = {
    * coordinate outside this page is clamped to its own box -- what a page may
    * move is the pointer over itself -- and NaN throws.
    *
-   * `unlessOver`, a box in the same coordinates, skips the warp while the
-   * pointer is over it. The page cannot see the pointer over a browser
-   * window's page; the browser process can.
+   * The warp happens only while the pointer is over one of `onlyOver`, boxes
+   * in the same coordinates, and not over `unlessOver`. The page cannot see
+   * the pointer over a browser window's page; the browser process can.
    */
-  warpPointer(x: number, y: number, unlessOver?: DOMRectReadOnly | null): void;
+  warpPointer(
+    x: number,
+    y: number,
+    onlyOver: readonly DOMRectReadOnly[],
+    unlessOver?: DOMRectReadOnly | null,
+  ): void;
   /**
    * Ask a client to close. Not a kill -- the client decides, which is why a
    * window can refuse and show a save dialog instead.
@@ -1157,6 +1207,35 @@ export type DomicileHost = {
    */
   activateExtension(id: string): void;
   /**
+   * Keep `keys`, each as `Ctrl+T`, from extensions, in place of those given
+   * before: a command bound to one has no keys, and the page gets them, then
+   * the shell. None are kept by default. Over the tray's pipe, as
+   * activateExtension().
+   */
+  reserveExtensionKeys(keys: readonly string[]): void;
+  /**
+   * Run command `name` of extension `id`, one of `extensionCommands`, as its
+   * keys do in Chrome: the extension is granted activeTab on the active tab
+   * and hears `commands.onCommand`. The action's own command,
+   * `_execute_action`, runs the action, and is `extensionpopuprequested`
+   * when the action has a popup. A command that is gone does nothing; an
+   * empty id or name throws. Over the tray's pipe, as activateExtension().
+   */
+  runExtensionCommand(id: string, name: string): void;
+  /**
+   * The items extension `id` adds to its action's menu (chrome.contextMenus),
+   * matched now, as JSON: an array of entries as DomicileBrowserWindow.menu's,
+   * `[]` for none. Over the tray's pipe, as activateExtension(). An empty id
+   * throws.
+   */
+  extensionMenu(id: string): Promise<string>;
+  /**
+   * Run entry `item`, the `id` of one in the newest extensionMenu(), on the
+   * active tab: its extension is granted activeTab there and hears
+   * `contextMenus.onClicked`. An entry of an older menu does nothing.
+   */
+  runExtensionMenuItem(item: number): void;
+  /**
    * Show the actions of browser profile `profile`'s extensions in
    * `extensions`, and have activateExtension() click them there, on the
    * active tab of its pages: as Chrome's toolbar shows its window's
@@ -1255,6 +1334,14 @@ export type DomicileHost = {
    * on its <webview>; Cancel keeps the window. An unknown id does nothing.
    */
   closeBrowserWindow(id: string): void;
+  /**
+   * Unloads window `id`'s page to free its memory. Its history and scroll
+   * stay, and it loads again when a <webview> next shows the window; what was
+   * typed into it is not kept. Throws TypeError for an empty id. An unknown
+   * window, one a <webview> shows, an extension's popup window, a DevTools
+   * window, and an app module's or Electron app's do nothing.
+   */
+  discardBrowserWindow(id: string): void;
   /**
    * Moves window `id`'s page to browser profile `profile`, one of
    * `browserProfiles`, as a new page under the same id: the window keeps its
@@ -1493,6 +1580,14 @@ export type DomicileHost = {
   readonly tray: readonly DomicileTrayItem[] | null;
   readonly notifications: readonly DomicileNotification[] | null;
   readonly extensions: readonly DomicileExtension[] | null;
+  /**
+   * Every extension with commands (chrome.commands), as JSON: an array of its
+   * `id`, `name`, `profile` and `commands`, each with its `name`,
+   * `description`, `keys` (`Ctrl+Shift+L`, or empty for none) and whether
+   * they are `global`. Those of the profile setExtensionsProfile() named.
+   * Null until the browser says.
+   */
+  readonly extensionCommands: string | null;
   /**
    * Every extension installed in the shell's profile, switched on or off,
    * with its settings, for a menu that manages them. Null until the browser

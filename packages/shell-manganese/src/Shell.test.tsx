@@ -1221,13 +1221,7 @@ describe("Shell", () => {
         domicile.calls.flatMap(([method, name]) =>
           method === "registerShaderEffect" ? [name] : [],
         ),
-      ).toStrictEqual([
-        "depth-of-field",
-        "dissolve",
-        "slide-blur",
-        "frost",
-        "theme-wipe",
-      ]);
+      ).toStrictEqual(["depth-of-field", "slide-blur", "frost", "theme-wipe"]);
     });
   });
 
@@ -4775,6 +4769,7 @@ const pageMenuAsked = (): Event =>
     canRedo: false,
     canSelectAll: false,
     canUndo: false,
+    extensionItems: "[]",
     hasImageContents: false,
     inPictureInPicture: false,
     isEditable: false,
@@ -4787,6 +4782,9 @@ const pageMenuAsked = (): Event =>
     },
     run: () => {
       throw new Error("test: no action to run");
+    },
+    runExtensionItem: () => {
+      throw new Error("test: no extension item to run");
     },
     selectionText: "",
     spellingSuggestions: [],

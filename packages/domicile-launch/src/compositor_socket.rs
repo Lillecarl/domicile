@@ -15,10 +15,10 @@ use std::time::Duration;
 
 use domicile_host::system::DisplayPower;
 use domicile_protocol::{
-    AgentReach, ChromeMessage, DeskRect, DeskShot, DesktopStatus, DisplayChange, EmulatedInput,
-    HostMessage, KnownAgents, ListedDisplay, ListedInput, ListedWindow, LogLevels, MonitorInfo,
-    ShellBinding, ShellCommandHelp, SystemError, SystemErrorKind, SystemEvent, SystemReply,
-    SystemRequest, Theme, WatchTopic, WindowAct,
+    AgentReach, ChromeMessage, ConfigOverride, DeskRect, DeskShot, DesktopStatus, DisplayChange,
+    EmulatedInput, HostMessage, KnownAgents, ListedDisplay, ListedInput, ListedWindow, LogLevels,
+    MonitorInfo, ShellBinding, ShellCommandHelp, SystemError, SystemErrorKind, SystemEvent,
+    SystemReply, SystemRequest, Theme, WatchTopic, WindowAct,
 };
 
 use crate::cli::MonitorMode;
@@ -104,14 +104,19 @@ pub fn screen_record(socket: &Path) -> Result<Option<PathBuf>, CompositorError> 
 }
 
 /// Tells the compositor at `socket` to send `command` to every page listening
-/// for shell commands. Returns what the page that ran it printed, if anything.
+/// for shell commands, on `window` and for agent session `agent` if given.
+/// Returns what the page that ran it printed, if anything.
 pub fn send_shell(
     socket: &Path,
     command: &[String],
+    window: Option<&str>,
+    agent: Option<u32>,
     patience: Option<Duration>,
 ) -> Result<Option<String>, CompositorError> {
     let request = SystemRequest::SendShell {
         command: command.to_vec(),
+        window: window.map(str::to_string),
+        agent,
     };
     let answer = called(socket, request, patience)?;
     match answer.reply {
@@ -371,6 +376,32 @@ pub fn theme(
     }
 }
 
+/// Sends the compositor at `socket` `request`, one of
+/// [`ChromeMessage::SetConfigOverride`],
+/// [`ChromeMessage::ResetConfigOverrides`] and
+/// [`ChromeMessage::WhichConfigOverrides`], and returns the temporary changes
+/// to the config after it.
+pub fn config_overrides(
+    socket: &Path,
+    request: ChromeMessage,
+    patience: Option<Duration>,
+) -> Result<Vec<ConfigOverride>, CompositorError> {
+    let said = exchanged(socket, &[request], patience)?;
+    match serde_json::from_str::<HostMessage>(&said) {
+        Ok(HostMessage::ConfigOverrides {
+            overrides,
+            refused: None,
+        }) => Ok(overrides),
+        Ok(HostMessage::ConfigOverrides {
+            refused: Some(why), ..
+        }) => Err(CompositorError::Refused { why }),
+        _ => Err(CompositorError::Unreadable {
+            path: socket.display().to_string(),
+            said,
+        }),
+    }
+}
+
 /// Asks the compositor at `socket` for the lit monitors, under the names a
 /// display profile can call them by.
 pub fn monitors(
@@ -442,6 +473,28 @@ pub fn shell_commands(
             path: socket.display().to_string(),
             said,
         }),
+    }
+}
+
+/// Asks the shell pages at `socket` what can follow `command`, the
+/// `send-shell` words typed so far.
+pub fn complete_shell(
+    socket: &Path,
+    command: &[String],
+    patience: Option<Duration>,
+) -> Result<Vec<String>, CompositorError> {
+    let request = SystemRequest::CompleteShell {
+        command: command.to_vec(),
+    };
+    let answer = called(socket, request, patience)?;
+    match answer.reply {
+        SystemReply::Sent {
+            output: Some(output),
+        } => serde_json::from_str(&output).map_err(|_| CompositorError::Unreadable {
+            path: socket.display().to_string(),
+            said: output,
+        }),
+        reply => Err(not_done(socket, reply, answer.said)),
     }
 }
 

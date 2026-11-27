@@ -100,9 +100,9 @@ Workspaces belong to the desktop, and screens show them, as in sway:
 - **Agents' windows stand out too** (`AgentSeats.tsx`). A client window an
   agent's seat holds gets a violet ring and the agent's name on its top edge;
   its pointer, named, shows while it is over one of them. A window the user
-  took from an agent gets a "Yours now" strip along its bottom, whose
-  **Give back** calls `seats.giveBack`. Each sits at its window's raised
-  depth; the pointer at `AGENT_POINTER`. Only windows at rest and shown are
+  took from an agent gets an amber ring and a "You're using this window"
+  banner under its title bar, whose **Give back** calls `seats.giveBack`.
+  Each sits at its window's raised depth; the pointer at `AGENT_POINTER`. Only windows at rest and shown are
   marked (`holdable-windows.ts`), and none in the overview. See
   [AGENT-SEATS.md](../../../docs/architecture/AGENT-SEATS.md).
 - **`xdg-activation` requests are granted.** The compositor forwards them as
@@ -119,17 +119,15 @@ Workspaces belong to the desktop, and screens show them, as in sway:
 
 The pointer follows keyboard focus (sway's `mouse_warping container`):
 
-- The pointer warps only when it will not be over the newly focused window,
-  title bar included, once the layout settles. A window that slides in under
-  the pointer, such as a neighbor filling a closed window's space, leaves it
-  where it is. `warpTo` in `src/pointer-warp.ts` holds this rule for every
-  focus change below. The engine checks where the pointer is, since the shell
-  cannot see it move over a browser window's page.
+- The pointer warps only when focus changes and the pointer is over another
+  window, which would take focus back, once the layout settles. Over the top
+  bar or an empty screen it stays put, as it does when a window, title bar
+  included, slides in under it. `warpTo` in `src/pointer-warp.ts` holds this
+  rule for every focus change below. The engine checks where the pointer is,
+  since the shell cannot see it move over a browser window's page.
 - A keyed focus change, or a granted focus request, warps the pointer to the
   center of the new window's contents. An empty screen warps to its center.
-- A window that opens with the keyboard also warps the pointer, but only when
-  the pointer is over another window. Over the top bar or an empty workspace,
-  it stays put.
+- A window that opens with the keyboard also warps the pointer.
 - Focus changes on `pointerover` only when the pointer moves, however slowly.
   A window sliding under a still pointer does not take focus.
 
@@ -433,9 +431,6 @@ are switched on and motion is not reduced. Each takes the shell's
 `--device-pixel-ratio` last, so its lengths are CSS pixels. Each is a
 condition in `panda-preset.ts`:
 
-- `_dissolve`: a closing window burns away (`windowDissolving`) in place of
-  its fade, every part in one noise pattern laid from the frame's middle
-  (`--origin-x`, `--origin-y` from `originAt`).
 - `_slideBlur`: a workspace switch blurs each window along its slide, most
   where the spring moves fastest (`window*Blurred`).
 - `_depthOfField`: the overview's backdrop blurs the wallpaper under it, and
@@ -454,15 +449,15 @@ condition in `panda-preset.ts`:
   springs (`useSettling`'s `dragged`).
 - Moving a tab along its strip, by keys or by dragging: the tabs slide to
   their new places, the moved one included.
-- Closing: shrink and fade out.
+- Closing: fade out and shrink a little (`windowClosing`).
 - Sending to a workspace no screen shows: fly into the workspace's chip in
   the bar, shrinking to fit inside it, and fade out. The chip
   (`WORKSPACE_CHIP`) is measured once, as the window sets out. With no chip
   showing, the window shrinks in place instead. A tab group leaves as one:
   every part scales about the group's middle.
 - Closing a tab: it closes up toward its start as the tabs after it slide
-  back. Its contents shrink into the tab and fade out over the tab it
-  uncovers, as slowly as a new tab's grow out.
+  back. Its contents close as a closing window does, over the tab it
+  uncovers.
 - An opening or closing tab's contents carry a ring and shadow while they
   move, so they show over a tab that looks like them. They are a layer of
   their own under the contents (`TabEdge`) that scales with them and fades,
@@ -480,7 +475,8 @@ condition in `panda-preset.ts`:
   slides into view. Switching back before it ends is a switch the other way,
   started where the windows are, as the scratchpad's slides do.
 - Tab switch: the revealed tab slides a short way in from its tab's side of
-  the hidden one and fades in over it. On a workspace sliding in, the tab
+  the hidden one and fades in over it, clipped to its frame so it stays inside
+  its group (`clippedToFrame`). On a workspace sliding in, the tab
   switched to slides with it instead. Parts first drawn partway through (a hidden tab's
   contents, the strip it opens) start where the slide has got to
   (`DrawnWindow.shownRewound`).

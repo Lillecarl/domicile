@@ -9,9 +9,10 @@ use std::time::Duration;
 use domicile_host::system::DisplayPower;
 use domicile_launch::cli::MonitorMode;
 use domicile_launch::compositor_socket::{
-    act_on_window, agent, agents, displays, forget_agent, inputs, launch, lock, monitors,
-    power_displays, screen_record, screenshot, send_shell, set_log_levels, shell_bindings,
-    shell_commands, status, stop_agent, theme, virtual_monitor, windows, CompositorError,
+    act_on_window, agent, agents, complete_shell, displays, forget_agent, inputs, launch, lock,
+    monitors, power_displays, screen_record, screenshot, send_shell, set_log_levels,
+    shell_bindings, shell_commands, status, stop_agent, theme, virtual_monitor, windows,
+    CompositorError,
 };
 use domicile_launch::control::Shot;
 use domicile_protocol::{
@@ -260,6 +261,8 @@ fn the_compositor_is_told_to_send_the_command_and_says_it_did() {
         send_shell(
             &path,
             &["focus".to_string(), "right".to_string()],
+            None,
+            None,
             Some(BRIEFLY)
         ),
         Ok(Some("done".to_string()))
@@ -268,6 +271,29 @@ fn the_compositor_is_told_to_send_the_command_and_says_it_did() {
         heard.join().expect("the compositor was listening"),
         "{\"type\":\"system_request\",\"id\":1,\"request\":{\"call\":\"send_shell\",\
          \"command\":[\"focus\",\"right\"]}}\n"
+    );
+}
+
+#[test]
+fn the_shell_is_asked_what_follows_the_words_and_its_list_comes_back() {
+    let (_scratch, path) = scratch();
+    let heard = a_compositor(
+        &path,
+        Duration::ZERO,
+        Some(
+            "{\"type\":\"system_reply\",\"id\":1,\"reply\":{\"kind\":\"sent\",\
+             \"output\":\"[\\\"mail\\\"]\"}}\n",
+        ),
+    );
+
+    assert_eq!(
+        complete_shell(&path, &["workspace".to_string()], Some(BRIEFLY)),
+        Ok(vec!["mail".to_string()])
+    );
+    assert_eq!(
+        heard.join().expect("the compositor was listening"),
+        "{\"type\":\"system_request\",\"id\":1,\"request\":{\"call\":\"complete_shell\",\
+         \"command\":[\"workspace\"]}}\n"
     );
 }
 
@@ -309,7 +335,7 @@ fn a_command_the_compositor_did_not_send_is_carried_back_in_its_own_words() {
     );
 
     assert_eq!(
-        send_shell(&path, &["focus".to_string()], Some(BRIEFLY)),
+        send_shell(&path, &["focus".to_string()], None, None, Some(BRIEFLY)),
         Err(CompositorError::Refused {
             why: "the desktop is locked".to_string()
         })

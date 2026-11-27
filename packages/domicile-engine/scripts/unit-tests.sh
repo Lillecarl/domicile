@@ -18,15 +18,15 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 . "$ROOT/packages/domicile-engine/scripts/lib-engine-guard.sh"
 require_engine_out
 
-FILTER='PinchMetadataTest.*:ScrollMetadataTest.*:FrameSinkBrokerTest.*:WindowDiffTest.*:EngineEventQueueTest.*:ShortcutRegistryTest.*:ShellURLLoaderFactoryTest.*:ShellDocumentTest.*:ShellSourceTest.*:CursorShapeTest.*:CommandProtocolTest.*:DomicileDisplayListTest.*:DomicileKeyboardLayoutTest.*:ShellWindowsTest.*:ShellWindowPlacesTest.*:ShellWindowsToFitTest.*:LineFramerTest.*:DesktopPrefsTest.*:SurfaceCropTest.*:SurfaceTransformTest.*:SurfaceAlphaTest.*:ExtensionInstallerTest.*:ExtensionSettingsTest.*:ExtensionTrayEntryTest.*:DeskTabsTest.*:DeskGeometryTest.*:DomicileDisplayRegionsTest.*:DomicileDeskTargeterTest.*:PlaceholderStageTest.*:SystemCallTest.*:PortalRequestTest.*:FileChoiceTest.*:DisplayCaptureTest.*:CapturedFourccTest.*:DisplayCaptureTargetTest.*:HeldChordsTest.*:ForwardedKeysTest.*:SitePermissionsTest.*:ControlChannelTest.*:DeviceChoicesTest.*:SurfaceFramesTest.*:SurfaceHoldsTest.*:GuestDialogsTest.*:DownloadTallyTest.*:SurfaceSubmitsTest.*:SurfaceBacklogTest.*:PrivatePagesTest.*:ShellOriginTest.*:AppRootsTest.*:AppChannelTest.*:AppDocumentTest.*:WebViewUrlTest.*:ShellFetchTest.*:BrowserWindowCaptureTargetTest.*:BrowserWindowListingTest.*:ShellWindowWaitTest.*:ShellSwapTest.*:DeskCursorThemeSourceTest.*:XCursorThemeTest.*:XCursorThemeDirectoryTest.*:SyncedFrameTest.*:RenderProcessTest.*:ShellDeathTest.*:ProbeWaitTest.*:ScreenCaptureTest.*:ScreenChoiceTest.*:WebViewPartitionTest.*:WillNavigateTest.*:DeskActivityTest.*:DeskActivityReporterTest.*:DeskPointerTest.*:PointerWarpTest.*:PageMatchesTest.*:ForceDarkTest.*:HiddenFromCapturesTest.*:LocaleFallbackTest.*:DomicileLcdTextActivationTest.*:RtkitTest.*:DeskGesturesTest.*:NativeGestureSequenceTest.*:EdgeSwipeTest.*:DeskPointerHidingTest.*:PointerHidingTest.*:InputMethodLinesTest.*:AgentInputLinesTest.*:DeskModifierTapsTest.*:TapModifierOfTest.*:IdentityDialogTest.*:PictureInPictureVideosTest.*:BufferColorTest.*:ElectronProtocolTest.*:ElectronAppTest.*:ElectronSessionEventsTest.*:ElectronPageCallTest.*:ElectronPageReportsTest.*:ElectronInputTest.*:ElectronPermissionForTest.*:ElectronSchemesTest.*:ContextBridgeTest.*:ContextMenuTest.*:UnacceleratedMotionTest.*:WarpLandingTest.*:PointerConfinementBoxesTest.*:BrowserProfilesTest.*:UnfocusedWebViewsTest.*:HistoryMenuTest.*:ShellDevServerTest.*:ShellDevServerLoadTest.*:ShellDevServerGoneTest.*:ForCaptureToolsTest.*:DeskDragTest.*:DomicileMonitorTwinActivationTest.*:CursorDisplayTest.*:DomicileHiddenPageTilesTest.*:ChannelDisconnectOrderTest.*:BrokerSocketTest.*:ShaderEffectCompileTest.*:ShaderFilterTest.*:ShaderEffectsTest.*:ShadedImageFilterTest.*:ShaderEffectsHostTest.*:MeshVerticesTest.*:MeshEffectBoundsTest.*'
+FILTER='PinchMetadataTest.*:ScrollMetadataTest.*:FrameSinkBrokerTest.*:WindowDiffTest.*:EngineEventQueueTest.*:ShortcutRegistryTest.*:ShellURLLoaderFactoryTest.*:ShellDocumentTest.*:ShellSourceTest.*:CursorShapeTest.*:CommandProtocolTest.*:DomicileDisplayListTest.*:DomicileKeyboardLayoutTest.*:ShellWindowsTest.*:ShellWindowPlacesTest.*:ShellWindowsToFitTest.*:LineFramerTest.*:DesktopPrefsTest.*:ProtectionSettingsTest.*:AdBlockerTest.*:AdBlockRequestTypeTest.*:CosmeticStylesheetTest.*:LinkTrackingTest.*:DeviceDetailsTest.*:SitePrivacyTest.*:SurfaceCropTest.*:SurfaceTransformTest.*:SurfaceAlphaTest.*:ExtensionInstallerTest.*:ExtensionMenuTest.*:ExtensionSettingsTest.*:ExtensionTrayEntryTest.*:DeskTabsTest.*:StalledPercentTest.*:DeskGeometryTest.*:DomicileDisplayRegionsTest.*:DomicileDeskTargeterTest.*:PlaceholderStageTest.*:SystemCallTest.*:PortalRequestTest.*:FileChoiceTest.*:DisplayCaptureTest.*:CapturedFourccTest.*:DisplayCaptureTargetTest.*:HeldChordsTest.*:ForwardedKeysTest.*:SitePermissionsTest.*:ControlChannelTest.*:DeviceChoicesTest.*:SurfaceFramesTest.*:SurfaceHoldsTest.*:GuestDialogsTest.*:DownloadTallyTest.*:SurfaceSubmitsTest.*:SurfaceBacklogTest.*:PrivatePagesTest.*:ShellOriginTest.*:AppRootsTest.*:AppChannelTest.*:AppDocumentTest.*:WebViewUrlTest.*:ShellFetchTest.*:BrowserWindowCaptureTargetTest.*:BrowserWindowListingTest.*:ShellWindowWaitTest.*:ShellSwapTest.*:DeskCursorThemeSourceTest.*:XCursorThemeTest.*:XCursorThemeDirectoryTest.*:SyncedFrameTest.*:RenderProcessTest.*:ShellDeathTest.*:ProbeWaitTest.*:ScreenCaptureTest.*:ScreenChoiceTest.*:WebViewPartitionTest.*:WillNavigateTest.*:DeskActivityTest.*:DeskActivityReporterTest.*:DeskPointerTest.*:PointerWarpTest.*:PageMatchesTest.*:ForceDarkTest.*:HiddenFromCapturesTest.*:LocaleFallbackTest.*:DomicileLcdTextActivationTest.*:RtkitTest.*:DeskGesturesTest.*:NativeGestureSequenceTest.*:EdgeSwipeTest.*:DeskPointerHidingTest.*:PointerHidingTest.*:InputMethodLinesTest.*:AgentInputLinesTest.*:AgentClipboardsTest.*:DeskModifierTapsTest.*:TapModifierOfTest.*:IdentityDialogTest.*:PictureInPictureVideosTest.*:BufferColorTest.*:ElectronProtocolTest.*:ElectronAppTest.*:ElectronSessionEventsTest.*:ElectronPageCallTest.*:ElectronPageReportsTest.*:ElectronInputTest.*:ElectronPermissionForTest.*:ElectronSchemesTest.*:ContextBridgeTest.*:ContextMenuTest.*:UnacceleratedMotionTest.*:WarpLandingTest.*:PointerConfinementBoxesTest.*:BrowserProfilesTest.*:UnfocusedWebViewsTest.*:HistoryMenuTest.*:ShellDevServerTest.*:ShellDevServerLoadTest.*:ShellDevServerGoneTest.*:ForCaptureToolsTest.*:DeskDragTest.*:DomicileMonitorTwinActivationTest.*:CursorDisplayTest.*:DomicileHiddenPageTilesTest.*:ChannelDisconnectOrderTest.*:BrokerSocketTest.*:ShaderEffectCompileTest.*:ShaderFilterTest.*:ShaderEffectsTest.*:ShadedImageFilterTest.*:ShaderEffectsHostTest.*:MeshVerticesTest.*:MeshEffectBoundsTest.*'
 
 # Every suite in the filter, counted rather than estimated: FrameSinkBroker 61,
 # WindowDiff 7, EngineEventQueue 9, ShortcutRegistry 17, ShellURLLoaderFactory
-# 16, ShellDocument 13, ShellSource 6, CursorShape 3, CommandProtocol 75,
+# 16, ShellDocument 13, ShellSource 6, CursorShape 3, CommandProtocol 87,
 # DomicileDisplayList 13, DomicileKeyboardLayout 3, ShellWindows 10,
 # ShellWindowPlaces 8, LineFramer 4, DesktopPrefs 1, SurfaceCrop 3,
 # SurfaceTransform 3, SurfaceAlpha 2, BufferColor 4, ExtensionInstaller 4,
-# ExtensionSettings 7, ExtensionTrayEntry 3, DeskTabs 12, DeskGeometry 32,
+# ExtensionMenu 3, ExtensionSettings 7, ExtensionTrayEntry 3, DeskTabs 12, DeskGeometry 32,
 # DomicileDisplayRegions 27, DomicileDeskTargeter 4, PlaceholderStage 3,
 # SystemCall 6, PortalRequest 3, FileChoice 13, DisplayCapture 9,
 # CapturedFourcc 1, DisplayCaptureTarget 4, HeldChords 6, ForwardedKeys 5,
@@ -46,13 +46,39 @@ FILTER='PinchMetadataTest.*:ScrollMetadataTest.*:FrameSinkBrokerTest.*:WindowDif
 # ElectronSessionEvents 1, ElectronPageCall 4, ElectronPageReports 12,
 # ElectronInput 12, ElectronPermissionFor 2, ElectronSchemes 8,
 # ContextBridge 11, ContextMenu 13, UnacceleratedMotion 5, WarpLanding 4,
-# BrowserProfiles 12, UnfocusedWebViews 7, HistoryMenu 2, ShellDevServer 7,
+# BrowserProfiles 17, UnfocusedWebViews 7, HistoryMenu 2, ShellDevServer 7,
 # ShellDevServerLoad 4, ShellDevServerGone 1, ForCaptureTools 2, DeskDrag 6,
 # DomicileMonitorTwinActivation 1, CursorDisplay 7, DomicileHiddenPageTiles 4,
 # ChannelDisconnectOrder 2, BrokerSocket 3, ShaderEffectCompile 22,
 # ShaderFilter 11, ShaderEffects 7, ShadedImageFilter 11, ShaderEffectsHost 9,
-# MeshVertices 2, MeshEffectBounds 1.
+# MeshVertices 2, MeshEffectBounds 1, StalledPercent 3, ProtectionSettings 2,
+# AdBlocker 15, AdBlockRequestType 1, AgentClipboards 6, CosmeticStylesheet 3, SitePrivacy 7,
+# LinkTracking 4, DeviceDetails 4.
 #
+# 1172, and it was 1168 — reading the device's details a little off is four
+# DeviceDetails cases. Before that
+# 1168, and it was 1164 — taking the tracking out of links is four
+# LinkTracking cases. Before that
+# 1164, and it was 1156 — hiding what the lists name by a page's elements is
+# five AdBlocker cases and three CosmeticStylesheet ones. Before that
+# 1156, and it was 1151 — listing and setting each profile's sites with
+# their own ad blocking for the Settings app is four CommandProtocol cases and
+# one SitePrivacy case. Before that
+# 1151, and it was 1145 — where a profile's sites keep their own ad blocking
+# is six SitePrivacy cases. Before that
+# 1145, and it was 1137 — agents' own clipboards are the AgentClipboards
+# suite, and devtools naming an agent seat is two CommandProtocol cases.
+# Before that
+# 1137, and it was 1120 — a profile's protections are two ProtectionSettings
+# cases and two more BrowserProfiles ones, and blocking ads and trackers is
+# ten AdBlocker cases, one AdBlockRequestType case and two more
+# BrowserProfiles ones. Before that
+# 1120, and it was 1117 — extensions' menus and commands as JSON are three
+# ExtensionMenu cases. Before that
+# 1117, and it was 1111 — an agent's own browser window and each browser
+# window's focus and size are six more CommandProtocol cases. Before that
+# 1111, and it was 1108 — reading how long tasks wait on memory is the
+# StalledPercent suite. Before that
 # 1108, and it was 1100 — which input is reported, and as what kind, are seven
 # DeskActivityReporter cases, and an input kind's name is one more DeskActivity
 # case. Before that
@@ -385,7 +411,7 @@ FILTER='PinchMetadataTest.*:ScrollMetadataTest.*:FrameSinkBrokerTest.*:WindowDif
 # so the floor sat 12 below the truth and a whole suite could have stopped
 # linking with room to spare. That is the failure this exists to catch, so the
 # number is the real one.
-FLOOR=1108
+FLOOR=1172
 
 # From inside the out directory, because this is a component build and the
 # binary loads its own .so files from beside it.

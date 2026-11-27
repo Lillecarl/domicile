@@ -55,6 +55,10 @@ cat >"$BINARIES/domicile" <<'STUB'
 if [ "$1 $2" = "help --man" ]; then
   mkdir -p "$3" && echo '.TH DOMICILE 1' >"$3/domicile.1"
 fi
+# `completions <shell>` prints a script, as the real one does.
+if [ "$1" = completions ]; then
+  echo "domicile completions --complete= # $2"
+fi
 STUB
 
 ENGINE="$WORK/engine"
@@ -163,6 +167,11 @@ expect "bin holds only what the flake installs" "$FLAKE_BINARIES" \
   ok "the engine is libexec/domicile/engine, as unpacked" ||
   fail "the engine is libexec/domicile/engine, as unpacked" \
     "$(ls -R "$LIBEXEC/engine" 2>&1)"
+grep -q "# nushell" "$USR/share/nushell/vendor/autoload/domicile.nu" 2>/dev/null &&
+  grep -q "# zsh" "$USR/share/zsh/site-functions/_domicile" &&
+  grep -q "# bash" "$USR/share/bash-completion/completions/domicile" &&
+  ok "tab completion is where each shell looks" ||
+  fail "tab completion is where each shell looks" "no completion scripts under $USR/share"
 [ -f "$USR/share/man/man1/domicile.1" ] &&
   ok "the man pages are in share/man/man1" ||
   fail "the man pages are in share/man/man1" "no $USR/share/man/man1/domicile.1"
@@ -228,7 +237,7 @@ SESSION="$USR/share/wayland-sessions/domicile.desktop"
 holds_line "the session runs domicile" "$SESSION" "Exec=/usr/bin/domicile"
 holds_line "the session names the desktop" "$SESSION" "DesktopNames=domicile"
 MIRACAST="$USR/lib/systemd/user/domicile-miracast.service"
-holds_line "D-Bus starts Miracast as a unit" "$USR/share/dbus-1/services/net.domicile.Miracast.service" \
+holds_line "D-Bus starts Miracast as a unit" "$USR/share/dbus-1/services/com.domicile_desktop.Miracast.service" \
   "SystemdService=domicile-miracast.service"
 holds_line "the Miracast unit runs domicile-miracast" "$MIRACAST" "ExecStart=/usr/bin/domicile-miracast"
 holds_line "the Miracast unit ends with the desk" "$MIRACAST" "PartOf=graphical-session.target"

@@ -39,8 +39,8 @@ use domicile_protocol::{
     SystemReply, SystemRequest, WindowState,
 };
 use notify::{EventKindMask, RecursiveMode, Watcher};
-use zbus::blocking::{Connection, MessageIterator};
-use zbus::zvariant::{Signature, Structure, StructureBuilder};
+use zbus::export::ordered_stream::OrderedStreamExt;
+use zbus::{Connection, DBusError, MessageStream, Signature, Structure};
 
 use crate::base64::{decoded, encoded};
 use crate::bells::Bells;
@@ -52,7 +52,7 @@ use crate::keymaps::Keymaps;
 use crate::links::Links;
 use crate::lock_screen_readouts::is_a_readout;
 use crate::priority;
-use crate::shell_commands::ShellCommands;
+use crate::shell_commands::{Heard, Sent, ShellCommands};
 use crate::unlock_refusals::UnlockRefusals;
 use crate::white_point::{white_point, WhitePoint, NEUTRAL, WARMEST};
 use crate::window_requests::WindowRequests;
@@ -379,6 +379,7 @@ pub fn reach(request: &SystemRequest) -> Reach {
         | SystemRequest::ScreenRecord
         | SystemRequest::PreviewWindow { .. }
         | SystemRequest::SendShell { .. }
+        | SystemRequest::CompleteShell { .. }
         | SystemRequest::OpenLink { .. }
         | SystemRequest::VirtualMonitor { .. }
         | SystemRequest::Agent { .. }
@@ -417,6 +418,7 @@ pub fn locked_out(id: u32, request: &SystemRequest) -> Option<HostMessage> {
         | SystemRequest::IdleHolds
         | SystemRequest::UnlockRefusals
         | SystemRequest::SendShell { .. }
+        | SystemRequest::CompleteShell { .. }
         | SystemRequest::SetWindowStates { .. }
         | SystemRequest::SetColorTemperature { .. }
         | SystemRequest::SleepDisplays { .. }
@@ -474,6 +476,7 @@ pub fn refused_to_an_app(id: u32, request: &SystemRequest) -> Option<HostMessage
         | SystemRequest::ShellCommands { .. }
         | SystemRequest::AnswerShellCommand { .. }
         | SystemRequest::SendShell { .. }
+        | SystemRequest::CompleteShell { .. }
         | SystemRequest::ClaimLinks { .. }
         | SystemRequest::OpenLink { .. }
         | SystemRequest::IdleAfter { .. }
@@ -526,8 +529,8 @@ impl System {
             tell: Arc::new(tell),
             running: Arc::new(Mutex::new(HashMap::new())),
             connect: Arc::new(|bus| match bus {
-                Bus::Session => Connection::session(),
-                Bus::System => Connection::system(),
+                Bus::Session => zbus::block_on(Connection::session()),
+                Bus::System => zbus::block_on(Connection::system()),
             }),
             buses: Arc::default(),
             screenshot: None,
@@ -816,25 +819,28 @@ impl System {
                     let values = dbus_json::read(&signature, &body)?;
                     let connection = shared(&connect, &buses, bus)?;
                     let returned = if values.is_empty() {
-                        connection.call_method(
+                        zbus::block_on(connection.call_method(
                             Some(destination.as_str()),
                             path.as_str(),
                             Some(interface.as_str()),
                             member.as_str(),
                             &(),
-                        )
+                        ))
                     } else {
                         let arguments = values
                             .into_iter()
-                            .fold(StructureBuilder::new(), StructureBuilder::append_field)
+                            .fold(
+                                Structure::builder(),
+                                zbus::wire::StructureBuilder::append_field,
+                            )
                             .build()?;
-                        connection.call_method(
+                        zbus::block_on(connection.call_method(
                             Some(destination.as_str()),
                             path.as_str(),
                             Some(interface.as_str()),
                             member.as_str(),
                             &arguments,
-                        )
+                        ))
                     }?;
                     let (signature, body) = body_of(&returned)?;
                     Ok(SystemReply::Returned { signature, body })
@@ -857,7 +863,11 @@ impl System {
                 .filter_map(|(field, value)| value.map(|value| format!(",{field}='{value}'")))
                 .fold("type='signal'".to_string(), |rule, field| rule + &field);
                 let connection = (system.connect)(bus)?;
-                let signals = MessageIterator::for_match_rule(rule.as_str(), &connection, None)?;
+                let signals = zbus::block_on(MessageStream::for_match_rule(
+                    rule.as_str(),
+                    &connection,
+                    None,
+                ))?;
                 let (tell, running) = (system.tell.clone(), system.running.clone());
                 let go = move || {
                     thread::spawn(move || matched(id, signals, &tell, &running));
@@ -887,7 +897,7 @@ impl System {
                         drop(running);
                         // Ends the match's iterator, and so its thread. An
                         // error here is a connection already gone.
-                        let _ = connection.close();
+                        let _ = zbus::block_on(connection.close());
                         Handled::Done
                     }
                     Some(Running::Listening(listener)) => {
@@ -1025,12 +1035,18 @@ impl System {
                     })
                 })
             }
-            SystemRequest::ShellCommands { commands, bindings } => self.starting(id, |system| {
+            SystemRequest::ShellCommands {
+                commands,
+                bindings,
+                on_a_window,
+                completes,
+            } => self.starting(id, |system| {
                 let (tell, running) = (system.tell.clone(), Arc::downgrade(&system.running));
                 let listener = system.shell_commands.listen(
                     commands,
                     bindings,
-                    Arc::new(move |(command, sent): &(Vec<String>, u64)| {
+                    (on_a_window, completes),
+                    Arc::new(move |(command, sent, sending): &Heard| {
                         let Some(running) = running.upgrade() else {
                             return;
                         };
@@ -1038,11 +1054,18 @@ impl System {
                         // or after `Unwatch` ends it.
                         let running = running.lock().unwrap();
                         if matches!(running.get(&id), Some(Running::Listening(_))) {
+                            let (command, sent) = (command.clone(), *sent);
                             tell(HostMessage::SystemEvent {
                                 id,
-                                event: SystemEvent::ShellCommand {
-                                    command: command.clone(),
-                                    sent: *sent,
+                                event: match sending {
+                                    Sent::Run(window) => SystemEvent::ShellCommand {
+                                        command,
+                                        sent,
+                                        window: window.clone(),
+                                    },
+                                    Sent::Complete => {
+                                        SystemEvent::CompleteShellCommand { command, sent }
+                                    }
                                 },
                             });
                         }
@@ -1121,33 +1144,12 @@ impl System {
                 seconds,
                 Mark::BeforeBlanking(Duration::from_secs(seconds)),
             ),
-            SystemRequest::SendShell { command } => {
-                let tell = self.tell.clone();
-                let sent = self.shell_commands.send(
-                    &command,
-                    Box::new(move |outcome| {
-                        let reply = match outcome {
-                            Ok(output) => SystemReply::Sent { output },
-                            Err(message) => failed(SystemError {
-                                kind: SystemErrorKind::Other,
-                                message,
-                            }),
-                        };
-                        tell(HostMessage::SystemReply { id, reply });
-                    }),
-                );
-                if !sent {
-                    (self.tell)(HostMessage::SystemReply {
-                        id,
-                        reply: failed(SystemError {
-                            kind: SystemErrorKind::Other,
-                            message: "no page of this desktop listens for commands; a shell \
-                                      hears them through bindKeys"
-                                .into(),
-                        }),
-                    });
-                }
-                Handled::Done
+            // The compositor checked `agent` holds `window`.
+            SystemRequest::SendShell {
+                command, window, ..
+            } => self.send_shell(id, &command, Sent::Run(window)),
+            SystemRequest::CompleteShell { command } => {
+                self.send_shell(id, &command, Sent::Complete)
             }
             SystemRequest::SetWindowStates { app_id, states } => {
                 let reply = match &self.set_window_states {
@@ -1425,6 +1427,38 @@ impl System {
             },
         };
         (self.tell)(HostMessage::SystemReply { id, reply });
+        Handled::Done
+    }
+
+    /// Send `command` to the pages listening for shell commands, to run or
+    /// to complete as `sending` says, and reply under `id` with how it ended.
+    fn send_shell(&self, id: u32, command: &[String], sending: Sent) -> Handled {
+        let tell = self.tell.clone();
+        let sent = self.shell_commands.send(
+            command,
+            sending,
+            Box::new(move |outcome| {
+                let reply = match outcome {
+                    Ok(output) => SystemReply::Sent { output },
+                    Err(message) => failed(SystemError {
+                        kind: SystemErrorKind::Other,
+                        message,
+                    }),
+                };
+                tell(HostMessage::SystemReply { id, reply });
+            }),
+        );
+        if !sent {
+            (self.tell)(HostMessage::SystemReply {
+                id,
+                reply: failed(SystemError {
+                    kind: SystemErrorKind::Other,
+                    message: "no page of this desktop listens for commands; a shell \
+                              hears them through bindKeys"
+                        .into(),
+                }),
+            });
+        }
         Handled::Done
     }
 
@@ -1731,7 +1765,7 @@ impl Drop for System {
                 // closed rather than dropped. An error is a connection already
                 // gone.
                 Running::Match(connection) => {
-                    let _ = connection.close();
+                    let _ = zbus::block_on(connection.close());
                 }
                 Running::Listening(listener) => drop(listener),
                 Running::VirtualMonitor(lease) => drop(lease),
@@ -1863,12 +1897,6 @@ impl From<zbus::Error> for Failure {
     }
 }
 
-impl From<zbus::zvariant::Error> for Failure {
-    fn from(err: zbus::zvariant::Error) -> Failure {
-        Failure::Dbus(err.into())
-    }
-}
-
 impl From<NotABody> for Failure {
     fn from(err: NotABody) -> Failure {
         Failure::Body(err)
@@ -1886,8 +1914,23 @@ impl From<Failure> for SystemError {
                     None => name.to_string(),
                 },
             },
+            // A method error whose name the D-Bus spec defines.
+            Failure::Dbus(zbus::Error::FDO(err)) => SystemError {
+                kind: SystemErrorKind::Dbus,
+                message: match err.description() {
+                    Some(text) => format!("{}: {text}", err.name()),
+                    None => err.name().to_string(),
+                },
+            },
             // A name that is not a bus, object or member name.
-            Failure::Dbus(err @ (zbus::Error::Names(_) | zbus::Error::Variant(_))) => SystemError {
+            Failure::Dbus(
+                err @ (zbus::Error::InvalidName(_)
+                | zbus::Error::InvalidNameConversion { .. }
+                | zbus::Error::InvalidObjectPath
+                | zbus::Error::IncorrectType
+                | zbus::Error::SignatureMismatch(..)
+                | zbus::Error::SignatureParse(_)),
+            ) => SystemError {
                 kind: SystemErrorKind::InvalidInput,
                 message: err.to_string(),
             },
@@ -1937,8 +1980,13 @@ fn body_of(message: &zbus::Message) -> zbus::Result<(String, String)> {
 
 /// Tell each signal `signals` yields as an event of match `id`, until the
 /// match is stopped or its connection breaks.
-fn matched(id: u32, signals: MessageIterator, tell: &Tell, running: &Mutex<HashMap<u32, Running>>) {
-    for signal in signals {
+fn matched(
+    id: u32,
+    mut signals: MessageStream,
+    tell: &Tell,
+    running: &Mutex<HashMap<u32, Running>>,
+) {
+    for signal in std::iter::from_fn(|| zbus::block_on(signals.next())) {
         let told = signal.map_err(Failure::from).and_then(|signal| {
             let header = signal.header();
             let (signature, body) = body_of(&signal)?;

@@ -11,7 +11,8 @@ import type { CursorShape } from "@domicile-desktop/sdk/cursor-shape";
 import type { BrowserWindow as ListedBrowserWindow } from "@domicile-desktop/sdk/desktop/browser";
 import type { InhibitorAction } from "@domicile-desktop/sdk/inhibitor-action";
 import type { KeymapChoice } from "@domicile-desktop/sdk/keymap-choice";
-import type { Axis, Direction } from "./direction";
+import type { Direction } from "./direction";
+import { Axis } from "./direction";
 import type { Float } from "./floating/float";
 import { floatHolds, limitedTo, movedTo } from "./floating/float";
 import type { MediaKey } from "./keyboard/media-key";
@@ -326,6 +327,19 @@ export const workspaceHolding = (
   state.workspaces.find((workspace) => holds(workspace, id));
 
 /**
+ * The window on a workspace that seats and `send-shell --window` name `name`:
+ * a client's by its app id, or a browser window's by the engine's id for it.
+ * `undefined` when no workspace holds one, as in the scratchpad.
+ */
+export const windowNamed = (
+  state: Pick<WindowState, "workspaces">,
+  name: string,
+): string | undefined =>
+  [appWindowId(name), browserWindowId(name)].find(
+    (id) => workspaceHolding(state, id) !== undefined,
+  );
+
+/**
  * The screen showing the client `appId`'s window, or `undefined` while none
  * is.
  */
@@ -487,6 +501,7 @@ export enum WindowActionKind {
   TerminalOpened,
   VirtualMonitorAdded,
   VirtualMonitorRemoved,
+  WindowActedOn,
   WindowBarPressed,
   WindowClosed,
   WindowDropped,
@@ -1269,9 +1284,31 @@ export const WindowAction = {
   }),
 };
 
-export type WindowAction = ReturnType<
-  (typeof WindowAction)[keyof typeof WindowAction]
->;
+export type WindowAction =
+  | ReturnType<(typeof WindowAction)[keyof typeof WindowAction]>
+  | WindowActedOn;
+
+/**
+ * A command on the focused window, {@link ON_A_WINDOW}, run on window `id`
+ * instead, as `send-shell --window` or an agent asks. The user's screens,
+ * workspaces and focus stay as they were. Outside {@link WindowAction}, as it
+ * holds one.
+ */
+export type WindowActedOn = {
+  readonly action: WindowAction;
+  readonly id: string;
+  readonly kind: WindowActionKind.WindowActedOn;
+};
+
+/** {@link WindowActedOn}. */
+export const windowActedOn = (
+  id: string,
+  action: WindowAction,
+): WindowActedOn => ({
+  action,
+  id,
+  kind: WindowActionKind.WindowActedOn,
+});
 
 export const reduceWindows = (
   state: WindowState,
@@ -1318,6 +1355,24 @@ const SHUT_IN_OVERVIEW: ReadonlySet<WindowActionKind> = new Set([
   WindowActionKind.WindowStepped,
   WindowActionKind.WorkspaceSelected,
   WindowActionKind.WorkspaceStepped,
+]);
+
+/**
+ * The commands that act on the focused window, which can run on any window
+ * instead: {@link WindowActedOn}.
+ */
+export const ON_A_WINDOW: ReadonlySet<WindowActionKind> = new Set([
+  WindowActionKind.ContainerSplit,
+  WindowActionKind.FloatToggled,
+  WindowActionKind.FullscreenToggled,
+  WindowActionKind.LayoutSet,
+  WindowActionKind.SplitToggled,
+  WindowActionKind.TabSubgrouped,
+  WindowActionKind.WindowGrown,
+  WindowActionKind.WindowKilled,
+  WindowActionKind.WindowSentToScratchpad,
+  WindowActionKind.WindowSentToWorkspace,
+  WindowActionKind.WindowStepped,
 ]);
 
 // The overview's aim lasts only while it is open and its workspace has a
@@ -1391,6 +1446,7 @@ const reduceAction = (
         state,
         openApp(state, action.appId, action.title, action.opener),
         action.held,
+        true,
       );
     }
     case WindowActionKind.AppAppearedFloating: {
@@ -1786,6 +1842,12 @@ const reduceAction = (
     case WindowActionKind.WindowMovedToWorkspace: {
       return moveToWorkspace(state, action.id, action.name);
     }
+    case WindowActionKind.WindowActedOn: {
+      return ON_A_WINDOW.has(action.action.kind) &&
+        !isShutInOverview(state, action.action)
+        ? actedOn(state, action.id, action.action)
+        : state;
+    }
     case WindowActionKind.WindowResized: {
       return onWorkspaceWith(state, action.id, (workspace) =>
         floatSized(workspace, action.id, action.box),
@@ -1925,20 +1987,83 @@ const stepWindow = (state: WindowState, direction: Direction): WindowState => {
   }
 };
 
+/**
+ * `state` as a command on window `id` finds it: `id` focused on its own
+ * workspace, alone, with that workspace shown. `undefined` for a window on
+ * no workspace.
+ */
+export const aimedAt = (
+  state: WindowState,
+  id: string,
+): WindowState | undefined =>
+  workspaceHolding(state, id) === undefined
+    ? undefined
+    : reachWindow(state, id, picked);
+
+// Runs `action`, a command on the focused window, on window `id` as if it had
+// the keyboard, then puts back what the user sees: each screen's workspace,
+// the focused screen, and each workspace's focus where its window is still
+// there.
+const actedOn = (
+  state: WindowState,
+  id: string,
+  action: WindowAction,
+): WindowState => {
+  const aimed = aimedAt(state, id);
+  if (aimed === undefined) {
+    return state;
+  }
+  const acted = reduceAction(aimed, action);
+  const focusedBefore = new Map(
+    state.workspaces.map((workspace) => [workspace.name, focusedOn(workspace)]),
+  );
+  return {
+    ...acted,
+    focused: state.focused,
+    overviewAim: state.overviewAim,
+    screens: acted.screens.map((screen) => {
+      const was = state.screens.find(({ name }) => name === screen.name);
+      return was === undefined || was.current === screen.current
+        ? screen
+        : { ...screen, current: was.current };
+    }),
+    workspaces: acted.workspaces.map((workspace) => {
+      const was = focusedBefore.get(workspace.name);
+      return was === undefined ||
+        was === focusedOn(workspace) ||
+        !holds(workspace, was)
+        ? workspace
+        : reached(workspace, was);
+    }),
+  };
+};
+
 // A window an agent holds opens without taking the user's focus: the window
 // focused `before` keeps it, so the shell never hands the user's keyboard to
-// the agent's window. On an empty workspace the user's keyboard has nowhere
-// else to be, so the new window keeps the focus it opened with.
+// the agent's window. A tiled one opens `apart`, in a group of its own beside
+// the user's, so it shows rather than waiting behind their tab. On an empty
+// workspace the user's keyboard has nowhere else to be, so the new window
+// keeps the focus it opened with.
 const focusKept = (
   before: WindowState,
   opened: WindowState,
   held: boolean,
+  apart = false,
 ): WindowState => {
   const focused = activeIdOf(before);
   return held &&
+    opened !== before &&
     focused !== undefined &&
     currentHere(opened) === currentHere(before)
-    ? onCurrent(opened, (workspace) => reached(workspace, focused))
+    ? onCurrent(opened, (workspace) =>
+        reached(
+          // A float keeps its box: splitting in it would squeeze the user's.
+          apart && workspace.floatFocus === undefined
+            ? containerSplit(workspace, Axis.Horizontal)
+            : workspace,
+          focused,
+        ),
+      )
     : opened;
 };
 
@@ -2010,9 +2135,15 @@ const listBrowsers = (
           // Its app hid it: listed, on no workspace until the app shows it.
           return { ...opening, windows: [...opening.windows, window] };
         }
+        // An agent opened it: it opens as a window it holds.
+        const held = entry.agent !== undefined;
         return entry.width === 0 && entry.height === 0
-          ? openWindow(opening, window)
-          : openPopupWindow(opening, window, entry.width, entry.height);
+          ? focusKept(opening, openWindow(opening, window), held, true)
+          : focusKept(
+              opening,
+              openPopupWindow(opening, window, entry.width, entry.height),
+              held,
+            );
       },
       appsHidOrShowed(
         pagesShown(

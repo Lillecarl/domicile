@@ -11,8 +11,8 @@ at the computer ([AGENTS.md](../AGENTS.md)). The `browser_` and `app_` tools
 act by ref and need no seat.
 
 UX mockup: violet agent cursor with its name, a ring and name tag on held
-windows, a "Yours now · Give back" strip, and held windows listed in the bar
-pill.
+windows, a "You're using this window" banner with Give back, and held
+windows listed in the bar pill.
 
 ## Design
 
@@ -103,9 +103,13 @@ it does to a client. It asks the browser instead:
   does not take the user's focus. The compositor knows it by the process
   that `exec` started, or a descendant of it, and sends the seats before it
   announces the window, so `heldBy` is set when the shell first sees it. A
-  shell opens such a window without focusing it. Manganese still focuses one
+  shell opens such a window without focusing it. Manganese opens a tiled one
+  in a group of its own beside the user's, so it shows, and still focuses one
   that opens on an empty workspace, where the user's keyboard has nowhere
   else to be.
+- A URL an agent opens gets a new browser window. The engine lists it with
+  `agent` set, so the shell opens it unfocused, and answers its id; `domicile`
+  then puts the seat's keyboard in it, as `focus_window` does.
 
 ### Clipboard
 
@@ -114,6 +118,37 @@ selection of the seat driving it, so an agent's copy never replaces the
 user's clipboard. Clipboard managers (data control) and the clipboard
 history see only the user's. An agent's selection ends with its session. Copying
 between them is explicit: a future `clipboard_read` / `clipboard_write` tool.
+
+Browser windows share the engine's one process clipboard, so the engine keeps
+an agent's apart:
+
+- A page an agent seat last pressed or keyed in, by DevTools or at a desk
+  position, copies to and pastes from that seat's own in-memory clipboard
+  (`AgentClipboards`, patch 0289). The user's press or key there gives the
+  page back the desktop's.
+- `domicile mcp` sends its input methods with `devtools --agent <session>`,
+  so the engine knows the seat. DevTools sent with no seat (`domicile
+  devtools` by hand) copies to the desktop's.
+- The compositor never sees an agent's browser copies. They end with its
+  session (`agent_input` `gone`), and are not shared with its native windows'
+  selection.
+
+### File choosers
+
+A file request an agent's input sets off is the agent's to answer, never a
+picker in the user's shell: an `<input type="file">`, a page's
+`showOpenFilePicker()` or `showSaveFilePicker()`, or a download's save.
+
+- Each browser window's page remembers who last pressed or keyed in it: an
+  agent (DevTools input or its seat) or the person. A request made while an
+  agent did is held for the agent; the shell gets no
+  `domicile-file-chooser`.
+- The agent reads it with `Domicile.fileChooser` and answers it with
+  `Domicile.chooseFiles`, the engine's own `devtools` methods. A path that
+  isn't there is refused and the request keeps waiting. A newer request
+  cancels the older one.
+- MCP: an act that leaves the page waiting says so, and
+  `browser_choose_files` answers it.
 
 ### Shell primitives
 
@@ -141,9 +176,16 @@ domicile.seats.giveBack(windowId);
 - `click`, `move_pointer`, `drag`, `scroll`, `key`, `type_text` and
   `focus_window` use the agent's seat. The 30-second wait remains only for X11
   windows.
-- `send_shell` stays on the user's seat behind the wait: shell commands act on
-  the user's focus.
-- `list_windows` adds `heldBy`.
+- Every tool that acts on a window takes an optional `window`; left out, it
+  is the window the agent's seat keyboard is in (`focused_by` in
+  `list-windows --json`), never the user's focus. The CLI does the same:
+  `--agent` with no `--window` acts on the agent's focus.
+- `send_shell` always acts on a window the agent's seat holds, and doesn't
+  wait. `SystemRequest::SendShell` names the agent session and maybe the
+  window; the compositor fills in the seat's focus when it names none, checks
+  the seat holds it, and names it as the shell knows it. Only a page
+  listening `on_a_window` hears it, so an agent can't run a desk command.
+- `list_windows` adds `heldBy` and `focusedBy`.
 
 ## Key decisions
 
@@ -155,6 +197,8 @@ domicile.seats.giveBack(windowId);
 - **The browser routes an agent's input in browser windows**, because only
   it knows what is under a desk point inside the shell's surface. The
   compositor still owns the seat, and the browser answers each step.
+- **An agent's file chooser skips the shell**, because the agent can't use a
+  picker drawn in the user's shell, and the picker would interrupt the user.
 - **The shell draws agent cursors**, because there is one hardware cursor
   plane per CRTC and the page already knows where windows are.
 
@@ -173,14 +217,19 @@ domicile.seats.giveBack(windowId);
 - [x] protocol and SDK: `seats`, `heldBy`, `takeOver`, `giveBack`
 - [x] MCP: raw tools on the agent seat
 - [x] MCP: `heldBy` in `list_windows` (`held_by`)
-- [x] manganese: agent cursor, ring and name tag, "Yours now · Give back"
-      strip, held windows in the agent pill
+- [x] manganese: agent cursor, ring and name tag, "You're using this
+      window" banner with Give back, held windows in the agent pill
 - [x] new windows from an agent's `open`/`exec` start held by it
 - [x] engine and compositor: an agent seat's pointer, buttons, scrolls,
       keys and drags reach browser windows at desk positions
       (`agent_input`, patch 0277); the shell refuses them; the user's press
       or key takes the window
 - [x] manganese: ring, name tag and cursor on browser windows too
+- [x] engine and MCP: an agent's copies and pastes in browser windows use
+      its own clipboard (patch 0289)
+- [x] engine and MCP: file choosers an agent's input opens wait for the
+      agent (`Domicile.fileChooser`, `Domicile.chooseFiles`,
+      `browser_choose_files`)
 
 ## Open questions
 

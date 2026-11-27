@@ -26,6 +26,7 @@
 #include "base/types/expected.h"
 #include "base/values.h"
 #include "components/domicile/browser/site_permissions.h"
+#include "components/domicile/browser/site_privacy.h"
 
 namespace domicile {
 namespace {
@@ -36,6 +37,8 @@ constexpr char kRunApp[] = "run_app";
 constexpr char kOpenUrl[] = "open_url";
 constexpr char kListSitePermissionsCommand[] = "site_permissions";
 constexpr char kSetSitePermissionCommand[] = "set_site_permission";
+constexpr char kSitePrivacy[] = "site_privacy";
+constexpr char kSetSitePrivacy[] = "set_site_privacy";
 constexpr char kLoadUnpacked[] = "load_unpacked";
 constexpr char kUninstallExtension[] = "uninstall_extension";
 constexpr char kConfigExtensions[] = "config_extensions";
@@ -55,6 +58,7 @@ constexpr char kClearSiteData[] = "clear_site_data";
 constexpr char kDisableWhileTyping[] = "disable_while_typing";
 constexpr char kSetLogLevels[] = "set_log_levels";
 constexpr char kDevTools[] = "devtools";
+constexpr char kBrowserWindows[] = "browser_windows";
 
 std::string Line(base::DictValue reply) {
   std::string line;
@@ -82,9 +86,16 @@ void AnswerOpenUrl(const base::DictValue& request,
                    HasBrowserProfile has_browser_profile,
                    CommandReply reply);
 void AnswerOpened(const std::string& refusal, CommandReply reply, bool opened);
+void AnswerOpenedWindow(CommandReply reply, std::optional<std::string> window);
+std::string AnswerBrowserWindows(ListBrowserWindowLayouts list_browser_windows);
 std::string AnswerSitePermissions(ListSitePermissions list_site_permissions);
 std::string AnswerSetSitePermission(const base::DictValue& request,
                                     SetSitePermission set_site_permission);
+std::string SitePrivacyLine(
+    const std::optional<std::vector<StoredSitePrivacy>>& list);
+void AnswerSitePrivacy(ListSitePrivacy list_site_privacy, CommandReply reply);
+std::string AnswerSetSitePrivacy(const base::DictValue& request,
+                                 SetSitePrivacy set_site_privacy);
 void AnswerLoadUnpacked(const base::DictValue& request,
                         LoadUnpacked load_unpacked,
                         CommandReply reply);
@@ -231,6 +242,15 @@ void AnswerCommand(std::string_view line,
     std::move(reply).Run(AnswerSitePermissions(actions.list_site_permissions));
     return;
   }
+  if (*type == kSitePrivacy) {
+    AnswerSitePrivacy(actions.list_site_privacy, std::move(reply));
+    return;
+  }
+  if (*type == kSetSitePrivacy) {
+    std::move(reply).Run(
+        AnswerSetSitePrivacy(*request, actions.set_site_privacy));
+    return;
+  }
   if (*type == kSetSitePermissionCommand) {
     std::move(reply).Run(
         AnswerSetSitePermission(*request, actions.set_site_permission));
@@ -319,19 +339,24 @@ void AnswerCommand(std::string_view line,
     std::move(reply).Run(AnswerSetLogLevels(*request, actions.set_log_levels));
     return;
   }
+  if (*type == kBrowserWindows) {
+    std::move(reply).Run(AnswerBrowserWindows(actions.list_browser_windows));
+    return;
+  }
   std::move(reply).Run(RefusedCommand(base::StrCat(
       {"\"", *type, "\" is not a command this engine knows; it takes \"",
        kLoadShell, "\", \"", kRunApp, "\", \"", kOpenUrl, "\", \"",
        kListSitePermissionsCommand,
-       "\", \"", kSetSitePermissionCommand, "\", \"", kLoadUnpacked, "\", \"",
+       "\", \"", kSetSitePermissionCommand, "\", \"", kSitePrivacy, "\", \"",
+       kSetSitePrivacy, "\", \"", kLoadUnpacked, "\", \"",
        kUninstallExtension, "\", \"", kConfigExtensions, "\", \"",
        kExtensions, "\", \"", kSetExtensionEnabled, "\", \"",
        kConfigureExtension, "\", \"",
        kMediaDevices, "\", \"", kSetMediaDevice, "\", \"", kHistory, "\", \"",
        kVisits, "\", \"", kDeleteHistory, "\", \"", kClearBrowsingData,
        "\", \"", kSiteData, "\", \"", kClearSiteData, "\", \"",
-       kDisableWhileTyping, "\", \"", kDevTools, "\" and \"", kSetLogLevels,
-       "\""})));
+       kDisableWhileTyping, "\", \"", kDevTools, "\", \"", kSetLogLevels,
+       "\" and \"", kBrowserWindows, "\""})));
 }
 
 namespace {
@@ -512,16 +537,61 @@ void AnswerOpenUrl(const base::DictValue& request,
          "\"; the config's browser.profiles names them"})));
     return;
   }
-  open_url(
-      parsed, *launch,
-      profile != nullptr ? profile->GetString() : std::string(),
-      base::BindOnce(&AnswerOpened,
-                     std::string("this engine has no shell page to open it in"),
-                     std::move(reply)));
+  // Optional: none is the user's.
+  const base::Value* agent = request.Find("agent");
+  if (agent != nullptr &&
+      (!agent->is_string() || agent->GetString().empty())) {
+    std::move(reply).Run(RefusedCommand(
+        "open_url's \"agent\" is an agent seat's id, such as \"agent-3\""));
+    return;
+  }
+  if (agent != nullptr && is_app) {
+    std::move(reply).Run(RefusedCommand(
+        "open_url's \"agent\" is for a browser window; an app window may be "
+        "the user's open one"));
+    return;
+  }
+  open_url(parsed, *launch,
+           profile != nullptr ? profile->GetString() : std::string(),
+           agent != nullptr ? agent->GetString() : std::string(),
+           base::BindOnce(&AnswerOpenedWindow, std::move(reply)));
 }
 
-// Replies to `run_app` or `open_url` once its window opened, or with
-// `refusal` when there was no shell to own it.
+// Replies to `open_url` with the window it opened or reused, or refuses when
+// there was no shell to own it.
+void AnswerOpenedWindow(CommandReply reply, std::optional<std::string> window) {
+  if (!window.has_value()) {
+    std::move(reply).Run(
+        RefusedCommand("this engine has no shell page to open it in"));
+    return;
+  }
+  base::DictValue opened;
+  opened.Set("type", "opened");
+  opened.Set("window", *std::move(window));
+  std::move(reply).Run(Line(std::move(opened)));
+}
+
+std::string AnswerBrowserWindows(
+    ListBrowserWindowLayouts list_browser_windows) {
+  base::ListValue windows;
+  for (const BrowserWindowLayout& window : list_browser_windows()) {
+    base::DictValue entry;
+    entry.Set("id", window.id);
+    entry.Set("focused", window.focused);
+    if (window.width > 0 && window.height > 0) {
+      entry.Set("width", window.width);
+      entry.Set("height", window.height);
+    }
+    windows.Append(std::move(entry));
+  }
+  base::DictValue reply;
+  reply.Set("type", kBrowserWindows);
+  reply.Set("windows", std::move(windows));
+  return Line(std::move(reply));
+}
+
+// Replies to `run_app` once its window opened, or with `refusal` when there
+// was no shell to own it.
 void AnswerOpened(const std::string& refusal, CommandReply reply, bool opened) {
   std::move(reply).Run(opened ? Done("opened") : RefusedCommand(refusal));
 }
@@ -588,6 +658,67 @@ std::string AnswerSetSitePermission(const base::DictValue& request,
   if (!set_site_permission(url::Origin::Create(site), *permission, *setting)) {
     return RefusedCommand(
         "this engine has no shell, and so no profile to store the setting in");
+  }
+  return Done("set");
+}
+
+void AnswerSitePrivacy(ListSitePrivacy list_site_privacy, CommandReply reply) {
+  list_site_privacy(base::BindOnce(
+      [](CommandReply reply,
+         std::optional<std::vector<StoredSitePrivacy>> list) {
+        std::move(reply).Run(SitePrivacyLine(list));
+      },
+      std::move(reply)));
+}
+
+std::string SitePrivacyLine(
+    const std::optional<std::vector<StoredSitePrivacy>>& list) {
+  if (!list) {
+    return RefusedCommand(
+        "this engine has no shell, and so no profiles whose sites to list");
+  }
+  base::ListValue sites;
+  for (const StoredSitePrivacy& site : *list) {
+    sites.Append(base::DictValue()
+                     .Set("profile", site.profile)
+                     .Set("site", site.site)
+                     .Set("block_ads_and_trackers",
+                          AdBlockingModeName(site.block_ads_and_trackers)));
+  }
+  base::DictValue reply;
+  reply.Set("type", kSitePrivacy);
+  reply.Set("sites", std::move(sites));
+  return Line(std::move(reply));
+}
+
+std::string AnswerSetSitePrivacy(const base::DictValue& request,
+                                 SetSitePrivacy set_site_privacy) {
+  const std::string* profile = request.FindString("profile");
+  const std::string* site = request.FindString("site");
+  const base::Value* mode_value = request.Find("block_ads_and_trackers");
+  if (profile == nullptr || site == nullptr || mode_value == nullptr ||
+      !(mode_value->is_none() || mode_value->is_string())) {
+    return RefusedCommand(
+        "set_site_privacy needs a \"profile\", a \"site\" and its "
+        "\"block_ads_and_trackers\", or null for the profile's");
+  }
+  if (site->empty()) {
+    return RefusedCommand("set_site_privacy needs a site, not \"\"");
+  }
+  std::optional<AdBlockingMode> mode;
+  if (mode_value->is_string()) {
+    mode = AdBlockingModeNamed(mode_value->GetString());
+    if (!mode) {
+      return RefusedCommand(base::StrCat(
+          {"\"", mode_value->GetString(),
+           "\" is not a way to block ads and trackers; it is \"standard\", "
+           "\"strict\" or \"off\""}));
+    }
+  }
+  const base::expected<void, std::string> set =
+      set_site_privacy(*profile, *site, mode);
+  if (!set.has_value()) {
+    return RefusedCommand(set.error());
   }
   return Done("set");
 }
@@ -1214,6 +1345,14 @@ void AnswerDevTools(const base::DictValue& request,
         "to"));
     return;
   }
+  const base::Value* agent = request.Find("agent");
+  if (agent != nullptr &&
+      (!agent->is_string() || agent->GetString().empty())) {
+    std::move(reply).Run(RefusedCommand(
+        "devtools's \"agent\" is the agent seat it is sent for, such as "
+        "\"agent-3\", or left out"));
+    return;
+  }
   const std::string* method = request.FindString("method");
   if (method == nullptr) {
     std::move(reply).Run(RefusedCommand(
@@ -1243,7 +1382,10 @@ void AnswerDevTools(const base::DictValue& request,
     }
   }
   send_devtools(
-      *window, *method, std::move(params),
+      *window,
+      agent != nullptr ? std::optional<std::string>(agent->GetString())
+                       : std::nullopt,
+      *method, std::move(params),
       base::BindOnce(
           [](CommandReply reply,
              base::expected<base::DictValue, std::string> answered) {

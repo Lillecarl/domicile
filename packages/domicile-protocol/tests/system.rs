@@ -476,6 +476,8 @@ fn a_shell_command_goes_to_each_page_that_listens_for_one() {
             request: SystemRequest::ShellCommands {
                 commands: Vec::new(),
                 bindings: Vec::new(),
+                on_a_window: false,
+                completes: false,
             },
         }
     );
@@ -491,6 +493,8 @@ fn a_shell_command_goes_to_each_page_that_listens_for_one() {
                     description: "Lock the desktop.".into(),
                 }],
                 bindings: Vec::new(),
+                on_a_window: false,
+                completes: false,
             },
         }
     );
@@ -515,6 +519,8 @@ fn a_shell_command_goes_to_each_page_that_listens_for_one() {
             id: 1,
             request: SystemRequest::SendShell {
                 command: vec!["focus".into(), "right".into()],
+                window: None,
+                agent: None,
             },
         }
     );
@@ -547,6 +553,8 @@ fn a_shell_command_goes_to_each_page_that_listens_for_one() {
                     chord: "Meta+l".into(),
                     action: "send-shell lock".into(),
                 }],
+                on_a_window: false,
+                completes: false,
             },
         }
     );
@@ -556,9 +564,98 @@ fn a_shell_command_goes_to_each_page_that_listens_for_one() {
             event: SystemEvent::ShellCommand {
                 command: vec!["focus".into(), "right".into()],
                 sent: 4,
+                window: None,
             },
         }),
         r#"{"type":"system_event","id":12,"event":{"kind":"shell_command","command":["focus","right"],"sent":4}}"#
+    );
+}
+
+/// A command can name the window it acts on, for an agent session that holds
+/// it; it goes only to pages that run commands on a given window, naming the
+/// window as the shell knows it.
+#[test]
+fn a_shell_command_can_act_on_a_window_it_names() {
+    assert_eq!(
+        chrome(
+            r#"{"type":"system_request","id":1,"request":{"call":"send_shell","command":["move","container","to","workspace","3"],"window":"Xy7pQ2mN","agent":4}}"#
+        ),
+        ChromeMessage::SystemRequest {
+            id: 1,
+            request: SystemRequest::SendShell {
+                command: ["move", "container", "to", "workspace", "3"]
+                    .map(String::from)
+                    .to_vec(),
+                window: Some("Xy7pQ2mN".into()),
+                agent: Some(4),
+            },
+        }
+    );
+    assert_eq!(
+        chrome(
+            r#"{"type":"system_request","id":12,"request":{"call":"shell_commands","on_a_window":true}}"#
+        ),
+        ChromeMessage::SystemRequest {
+            id: 12,
+            request: SystemRequest::ShellCommands {
+                commands: Vec::new(),
+                bindings: Vec::new(),
+                on_a_window: true,
+                completes: false,
+            },
+        }
+    );
+    assert_eq!(
+        host(&HostMessage::SystemEvent {
+            id: 12,
+            event: SystemEvent::ShellCommand {
+                command: vec!["kill".into()],
+                sent: 5,
+                window: Some("app-3".into()),
+            },
+        }),
+        r#"{"type":"system_event","id":12,"event":{"kind":"shell_command","command":["kill"],"sent":5,"window":"app-3"}}"#
+    );
+}
+
+/// A page that completes commands hears the words typed so far, and answers
+/// with the words that can come next as a JSON list.
+#[test]
+fn a_page_that_completes_commands_hears_the_words_typed() {
+    assert_eq!(
+        chrome(
+            r#"{"type":"system_request","id":1,"request":{"call":"complete_shell","command":["workspace"]}}"#
+        ),
+        ChromeMessage::SystemRequest {
+            id: 1,
+            request: SystemRequest::CompleteShell {
+                command: vec!["workspace".into()],
+            },
+        }
+    );
+    assert_eq!(
+        chrome(
+            r#"{"type":"system_request","id":12,"request":{"call":"shell_commands","completes":true}}"#
+        ),
+        ChromeMessage::SystemRequest {
+            id: 12,
+            request: SystemRequest::ShellCommands {
+                commands: Vec::new(),
+                bindings: Vec::new(),
+                on_a_window: false,
+                completes: true,
+            },
+        }
+    );
+    assert_eq!(
+        host(&HostMessage::SystemEvent {
+            id: 12,
+            event: SystemEvent::CompleteShellCommand {
+                command: vec!["workspace".into()],
+                sent: 6,
+            },
+        }),
+        r#"{"type":"system_event","id":12,"event":{"kind":"complete_shell_command","command":["workspace"],"sent":6}}"#
     );
 }
 

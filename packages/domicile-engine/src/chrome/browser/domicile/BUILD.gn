@@ -26,6 +26,10 @@ action("domicile_dictionaries") {
 
 source_set("domicile") {
   sources = [
+    "domicile_ad_blocking.cc",
+    "domicile_ad_blocking.h",
+    "domicile_device_details.cc",
+    "domicile_device_details.h",
     "domicile_agent_devtools.cc",
     "domicile_agent_devtools.h",
     "domicile_agent_input.cc",
@@ -80,6 +84,8 @@ source_set("domicile") {
     "domicile_electron_socket.h",
     "domicile_extension_installer.cc",
     "domicile_extension_installer.h",
+    "domicile_extension_menus.cc",
+    "domicile_extension_menus.h",
     "domicile_extension_settings.cc",
     "domicile_extension_settings.h",
     "domicile_extension_tray.cc",
@@ -96,6 +102,8 @@ source_set("domicile") {
     "domicile_media_devices.h",
     "domicile_modifier_taps.cc",
     "domicile_modifier_taps.h",
+    "domicile_page_discarding.cc",
+    "domicile_page_discarding.h",
     "domicile_page_unloading.cc",
     "domicile_page_unloading.h",
     "domicile_permissions.cc",
@@ -140,9 +148,14 @@ source_set("domicile") {
     "//chrome/browser/media/router:media_router_feature",
     "//components/media_router/browser",
     "//components/media_router/common",
+    # What a page is doing, for which pages a shortage of memory may unload.
+    "//components/domicile:memory_stall",
+    "//components/performance_manager",
     "//third_party/webrtc_overrides:webrtc_component",
     "//chrome/browser/ui/browser_window",
     "//chrome/browser/web_applications",
+    # Ad and tracker blocking, with Brave's filter engine.
+    "//components/domicile/ad_blocking",
     "//components/domicile:app_roots",
     # Finds a browser window's page for a capture of it alone.
     "//components/domicile:browser_window_capture_target",
@@ -193,11 +206,19 @@ source_set("domicile") {
     # menu's "Add to dictionary".
     "//chrome/browser/spellchecker",
     "//components/domicile:spellcheck_settings",
+    "//components/domicile:protection_settings",
+    # Each page's ad blocking, its site's and its window's, for the shield.
+    "//components/domicile:page_privacy",
+    "//components/domicile:site_privacy",
+    # The seed each page's device details are farbled with, under a key the
+    # profile keeps for the session.
+    "//components/user_prefs",
     "//components/domicile:shortcut_registry",
     "//components/tabs:public",
     "//content/public/browser",
     # Electron sessions' clearData removes their downloads.
     "//components/download/public/common:public",
+    "//crypto",
     "//net",
     # The certificates an Electron app is asked about, and their chains.
     "//third_party/boringssl",
@@ -217,6 +238,11 @@ source_set("domicile") {
     # An agent seat's input into the browser's pages, from the control
     # channel, as the pages' own keyboard and mouse events.
     "//components/domicile:agent_input_lines",
+    # Their copies and pastes in the pages they drove, on their own
+    # clipboards.
+    "//components/domicile:agent_clipboards",
+    # Their keys, on the desk's keymap.
+    "//components/domicile:keyboard_layout",
     "//components/input",
     "//third_party/blink/public/common:headers",
     "//ui/events/blink",
@@ -229,6 +255,12 @@ source_set("domicile") {
     "//extensions/browser",
     "//extensions/common",
     "//extensions/common:mojom",
+    # Extensions' menus and commands, which the shell draws and runs.
+    "//components/domicile:extension_menu",
+    "//ui/base",
+    "//ui/content_accelerators",
+    "//ui/events:events_base",
+    "//ui/menus",
     # The shell's tray: extension actions and their icons as PNGs.
     "//components/domicile:extension_tray_entry",
     "//components/domicile/mojom",

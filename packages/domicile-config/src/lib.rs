@@ -15,6 +15,7 @@
 mod desktop;
 mod files;
 mod input_devices;
+mod overrides;
 mod pointers;
 mod profile;
 mod startup;
@@ -25,6 +26,7 @@ pub use input_devices::{
     AccelProfile, ButtonMap, ClickMethod, DisableWhileTyping, MouseConfig, ScrollMethod,
     TouchpadConfig,
 };
+pub use overrides::{ConfigKey, ConfigOverride};
 pub use pointers::{PointerConfig, PointerTarget};
 pub use profile::{
     Connected, Desk, DisplayOverride, DisplayPlacement, Layout, Placed, Profile, Scanout,
@@ -891,7 +893,23 @@ pub struct BrowserConfig {
     /// addresses under it. The most specific match wins. A site is never in
     /// `default_profile`, which opens every unlisted site.
     pub sites: BTreeMap<String, String>,
+    /// The filter lists ads and trackers are blocked with, in Adblock Plus
+    /// and uBlock Origin syntax: each an `https:` address, which the engine
+    /// fetches and keeps up to date, or an absolute path. EasyList,
+    /// EasyPrivacy and uBlock Origin's filters unless set; `[]` blocks with
+    /// `block_rules` only.
+    pub block_lists: Vec<String>,
+    /// Rules of your own, in the same syntax, which apply on top of
+    /// `block_lists`.
+    pub block_rules: Vec<String>,
 }
+
+/// The lists [`BrowserConfig::block_lists`] names unless set.
+pub const DEFAULT_BLOCK_LISTS: [&str; 3] = [
+    "https://easylist.to/easylist/easylist.txt",
+    "https://easylist.to/easylist/easyprivacy.txt",
+    "https://ublockorigin.github.io/uAssets/filters/filters.txt",
+];
 
 impl Default for BrowserConfig {
     fn default() -> Self {
@@ -900,6 +918,7 @@ impl Default for BrowserConfig {
             color: AccentColor(color),
             private,
             extensions: None,
+            protections: Protections::default(),
         };
         BrowserConfig {
             profiles: BTreeMap::from([
@@ -916,6 +935,8 @@ impl Default for BrowserConfig {
             default_profile: "default".to_string(),
             default_private_profile: "private".to_string(),
             sites: BTreeMap::new(),
+            block_lists: DEFAULT_BLOCK_LISTS.map(String::from).to_vec(),
+            block_rules: Vec::new(),
         }
     }
 }
@@ -937,6 +958,87 @@ pub struct BrowserProfile {
     /// profile, whose pages stay away from extensions unless allowed.
     #[serde(default)]
     pub extensions: Option<Vec<String>>,
+    /// What it keeps sites from learning about you. Each is on unless the
+    /// config turns it off.
+    #[serde(default)]
+    pub protections: Protections,
+}
+
+/// What a browser profile keeps sites from learning about you. See
+/// [`BrowserProfile::protections`].
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct Protections {
+    /// Blocks cookies a page's embedded sites set or read, which track you
+    /// from site to site.
+    pub block_third_party_cookies: bool,
+    /// Asks sites not to sell or share your data, with the
+    /// `Sec-GPC: 1` header and `navigator.globalPrivacyControl`.
+    pub global_privacy_control: bool,
+    /// Keeps WebRTC, as video calls use, from telling sites your local
+    /// network address.
+    pub hide_local_ip_address: bool,
+    /// Takes the click ids (`fbclid`, `gclid` and the like) out of links to
+    /// other sites, and in [`AdBlocking::Strict`] the `utm_` campaign
+    /// parameters too. Not on a site or in a window whose ad blocking is off.
+    pub remove_tracking_from_links: bool,
+    /// Shows sites the device's canvas drawing, audio and processor count a
+    /// little off, the same way for a site until the desktop starts again,
+    /// as Brave's farbling does, so they can't recognize the device by
+    /// them. Not on a site or in a window whose ad blocking is off.
+    pub hide_device_details: bool,
+    /// How the profile's pages block ads and trackers, with
+    /// [`BrowserConfig::block_lists`]. Unset: `standard`, or `strict` in a
+    /// private profile.
+    pub block_ads_and_trackers: Option<AdBlocking>,
+}
+
+/// How a profile's pages block ads and trackers. See
+/// [`Protections::block_ads_and_trackers`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum AdBlocking {
+    /// Blocks what the lists name from other sites, and lets a site's own
+    /// ads through unless a rule is `$important`, as Brave's Standard does.
+    Standard,
+    /// Blocks a site's own ads too. Some pages may break.
+    Strict,
+    /// Blocks nothing.
+    Off,
+}
+
+impl BrowserProfile {
+    /// How its pages block ads and trackers, defaults applied.
+    pub fn ad_blocking(&self) -> AdBlocking {
+        self.protections
+            .block_ads_and_trackers
+            .unwrap_or(if self.private {
+                AdBlocking::Strict
+            } else {
+                AdBlocking::Standard
+            })
+    }
+}
+
+impl Default for Protections {
+    fn default() -> Self {
+        Protections {
+            block_third_party_cookies: true,
+            global_privacy_control: true,
+            hide_local_ip_address: true,
+            remove_tracking_from_links: true,
+            hide_device_details: true,
+            block_ads_and_trackers: None,
+        }
+    }
+}
+
+/// Whether `list` can name a filter list: an `https:` address, or an
+/// absolute path.
+fn is_block_list(list: &str) -> bool {
+    list.strip_prefix("https://")
+        .is_some_and(|rest| !rest.is_empty())
+        || std::path::Path::new(list).is_absolute()
 }
 
 /// Whether `id` can name a profile's directory.
@@ -1001,6 +1103,11 @@ impl BrowserConfig {
             return invalid(format!(
                 "browser.profiles' extension {id:?} is not an extension id, which is 32 \
                  letters from `a` to `p`"
+            ));
+        }
+        if let Some(list) = self.block_lists.iter().find(|list| !is_block_list(list)) {
+            return invalid(format!(
+                "browser.block_lists {list:?} is not an `https:` address or an absolute path"
             ));
         }
         match profile(&self.default_profile) {
@@ -1379,6 +1486,13 @@ impl Config {
         Config::settled(parsed, home)
     }
 
+    /// [`Config::parse`] on JSON already parsed.
+    pub fn from_value(value: serde_json::Value) -> Result<Config, ConfigError> {
+        let parsed: Config =
+            serde_json::from_value(value).map_err(|e| ConfigError::Parse(e.to_string()))?;
+        Config::settled(parsed, home_directory().as_deref())
+    }
+
     /// A config as it was written, with its paths taken from `home` and
     /// validated.
     fn settled(parsed: Config, home: Option<&Path>) -> Result<Config, ConfigError> {
@@ -1432,7 +1546,56 @@ fn home_directory() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
-/// Holds the live configuration and applies hot-reloads.
+/// A config as its file holds it, and parsed.
+///
+/// The JSON is kept so temporary changes can be laid over it
+/// ([`ConfigStore::set_override`]).
+#[derive(Debug, Clone)]
+pub struct Written {
+    value: serde_json::Value,
+    config: Config,
+}
+
+impl Default for Written {
+    /// No config file: no keys, every default.
+    fn default() -> Self {
+        Written {
+            value: serde_json::Value::Object(serde_json::Map::new()),
+            config: Config::default(),
+        }
+    }
+}
+
+impl Written {
+    /// A config from JSON text, applying defaults and validating it.
+    pub fn parse(text: &str) -> Result<Written, ConfigError> {
+        let config = Config::parse(text)?;
+        let value = serde_json::from_str(text).map_err(|e| ConfigError::Parse(e.to_string()))?;
+        Ok(Written { value, config })
+    }
+
+    /// Read and parse a config from a file.
+    pub fn load(path: impl AsRef<Path>) -> Result<Written, ConfigError> {
+        let path = path.as_ref();
+        let text = std::fs::read_to_string(path).map_err(|e| ConfigError::Io {
+            path: path.display().to_string(),
+            message: e.to_string(),
+        })?;
+        // Add the path to parse errors; the read error above already has it.
+        Written::parse(&text).map_err(|why| ConfigError::At {
+            path: path.display().to_string(),
+            why: Box::new(why),
+        })
+    }
+
+    /// The parsed config.
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+}
+
+/// Holds the live configuration, applies hot-reloads, and lays temporary
+/// changes over the config as written.
 ///
 /// A reload replaces the live config only when the new one is valid.
 /// Otherwise the previous config stays and the error is kept in
@@ -1440,19 +1603,23 @@ fn home_directory() -> Option<PathBuf> {
 /// compositor.
 #[derive(Debug, Clone)]
 pub struct ConfigStore {
+    written: serde_json::Value,
+    overrides: Vec<ConfigOverride>,
     current: Config,
     last_error: Option<ConfigError>,
 }
 
 impl ConfigStore {
-    pub fn new(initial: Config) -> Self {
+    pub fn new(initial: Written) -> Self {
         ConfigStore {
-            current: initial,
+            written: initial.value,
+            overrides: Vec::new(),
+            current: initial.config,
             last_error: None,
         }
     }
 
-    /// The live configuration.
+    /// The live configuration: the file's, with the temporary changes.
     pub fn current(&self) -> &Config {
         &self.current
     }
@@ -1462,21 +1629,106 @@ impl ConfigStore {
         self.last_error.as_ref()
     }
 
+    /// The temporary changes, in the order they were made.
+    pub fn overrides(&self) -> Vec<ConfigOverride> {
+        self.overrides.clone()
+    }
+
+    /// What the file has at `path`, under any temporary change: `null` where
+    /// it has nothing.
+    pub fn written_at(&self, path: &[ConfigKey]) -> serde_json::Value {
+        overrides::value_at(&self.written, path)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null)
+    }
+
+    /// Lays `value` over the config at `path` until the desktop stops, a
+    /// reload changes what the file has there, or
+    /// [`reset_overrides`](ConfigStore::reset_overrides). `null` takes the
+    /// setting back to its default. A value the config already has there,
+    /// under the other changes, ends the change instead. Refused, changing nothing, when the config would
+    /// refuse the result, or when an index in `path` is more than one past
+    /// the end of its list.
+    pub fn set_override(
+        &mut self,
+        path: Vec<ConfigKey>,
+        value: serde_json::Value,
+    ) -> Result<(), ConfigError> {
+        let mut overrides: Vec<ConfigOverride> = self
+            .overrides
+            .iter()
+            .filter(|change| !change.path.starts_with(&path))
+            .cloned()
+            .collect();
+        // Compared with the file under the other changes, so a change under
+        // an earlier change of a section above it stays.
+        let without = overrides::overridden(&self.written, &overrides);
+        overrides::within_reach(&without, &path).map_err(ConfigError::Validation)?;
+        let unchanged =
+            overrides::value_at(&without, &path).unwrap_or(&serde_json::Value::Null) == &value;
+        if !unchanged {
+            overrides.push(ConfigOverride { path, value });
+        }
+        self.take_up(overrides)
+    }
+
+    /// Ends the temporary changes at or under each of `paths`.
+    pub fn reset_overrides(&mut self, paths: &[Vec<ConfigKey>]) -> Result<(), ConfigError> {
+        let overrides = self
+            .overrides
+            .iter()
+            .filter(|change| !paths.iter().any(|path| change.path.starts_with(path)))
+            .cloned()
+            .collect();
+        self.take_up(overrides)
+    }
+
+    /// Makes `overrides` the temporary changes, if the config they make is
+    /// valid.
+    fn take_up(&mut self, overrides: Vec<ConfigOverride>) -> Result<(), ConfigError> {
+        self.current = Config::from_value(overrides::overridden(&self.written, &overrides))?;
+        self.overrides = overrides;
+        Ok(())
+    }
+
     /// Attempt to replace the live config from JSON text.
     pub fn reload_from_str(&mut self, text: &str) -> Result<(), ConfigError> {
-        self.apply(Config::parse(text))
+        self.apply(Written::parse(text))
     }
 
     /// Attempt to replace the live config from a file on disk.
     pub fn reload_from_path(&mut self, path: impl AsRef<Path>) -> Result<(), ConfigError> {
-        self.apply(Config::load(path))
+        self.apply(Written::load(path))
     }
 
-    fn apply(&mut self, result: Result<Config, ConfigError>) -> Result<(), ConfigError> {
+    /// Takes up a reloaded file. A temporary change whose setting the file
+    /// changed ends, as does one past the end of a list the file shortened,
+    /// and every one when together they no longer make a valid config.
+    fn apply(&mut self, result: Result<Written, ConfigError>) -> Result<(), ConfigError> {
         match result {
-            Ok(config) => {
-                self.current = config;
+            Ok(written) => {
+                // In order, so a change still reaches the list it adds to
+                // when the file shortened it only by what earlier changes put
+                // back.
+                let kept = self.overrides.iter().fold(Vec::new(), |mut kept, change| {
+                    let alike = overrides::value_at(&self.written, &change.path)
+                        == overrides::value_at(&written.value, &change.path);
+                    let reached = overrides::within_reach(
+                        &overrides::overridden(&written.value, &kept),
+                        &change.path,
+                    )
+                    .is_ok();
+                    if alike && reached {
+                        kept.push(change.clone());
+                    }
+                    kept
+                });
+                self.written = written.value;
                 self.last_error = None;
+                if self.take_up(kept).is_err() {
+                    self.overrides.clear();
+                    self.current = written.config;
+                }
                 Ok(())
             }
             Err(err) => {
@@ -1490,7 +1742,7 @@ impl ConfigStore {
 /// How long a config file must go unchanged before a watcher reloads it.
 const SETTLE: Duration = Duration::from_millis(100);
 
-/// Watches a config file and sends a parsed [`Config`] or [`ConfigError`] on
+/// Watches a config file and sends a parsed [`Written`] or [`ConfigError`] on
 /// `rx` after each burst of changes, once the file has settled. Pass the
 /// results to [`ConfigStore::apply_watch`].
 ///
@@ -1505,7 +1757,7 @@ const SETTLE: Duration = Duration::from_millis(100);
 /// to move the whole struct.
 pub struct ConfigWatcher {
     _watcher: notify::RecommendedWatcher,
-    pub rx: std::sync::mpsc::Receiver<Result<Config, ConfigError>>,
+    pub rx: std::sync::mpsc::Receiver<Result<Written, ConfigError>>,
 }
 
 /// Begin watching `path` for changes.
@@ -1530,7 +1782,7 @@ pub fn watch(path: impl AsRef<Path>) -> Result<ConfigWatcher, ConfigError> {
             // A save truncates, then writes. Reloading between the two reads an
             // empty file, so wait for the file to settle.
             while heard.recv_timeout(SETTLE).is_ok() {}
-            if tx.send(Config::load(&reload_path)).is_err() {
+            if tx.send(Written::load(&reload_path)).is_err() {
                 return;
             }
         }
@@ -1576,7 +1828,7 @@ pub fn watch(path: impl AsRef<Path>) -> Result<ConfigWatcher, ConfigError> {
 
 impl ConfigStore {
     /// Apply a reload result delivered by a [`ConfigWatcher`].
-    pub fn apply_watch(&mut self, result: Result<Config, ConfigError>) -> Result<(), ConfigError> {
+    pub fn apply_watch(&mut self, result: Result<Written, ConfigError>) -> Result<(), ConfigError> {
         self.apply(result)
     }
 }

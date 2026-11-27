@@ -5,6 +5,7 @@ import type { WindowMotion } from "./window-motion";
 import {
   clippedAlong,
   clippedTo,
+  clippedToFrame,
   collapsedAlong,
   contentsScaledAbout,
   movingStyles,
@@ -58,15 +59,6 @@ describe("scaledAbout", () => {
   it("turns a box that is the whole frame about its own middle", () => {
     // A hidden tab's window shows only its tab, so the tab is the frame.
     expect(scaledAbout(BAR, BAR).transformOrigin).toBe("960px 15px");
-  });
-
-  // The dissolve's noise is laid from this point, so it runs on unbroken
-  // from the bar into the contents.
-  it("hands the point to a shader effect as numbers", () => {
-    expect(scaledAbout(FRAME, BAR)).toMatchObject({
-      "--origin-x": 960,
-      "--origin-y": 524,
-    });
   });
 });
 
@@ -146,11 +138,13 @@ describe("movingStyles", () => {
     expect(delayed()).toEqual(expect.arrayContaining([...uncoveringDelay()]));
   });
 
-  // A fade alone, over the tab it uncovers, reads as a tab switch.
-  it("shrinks a closing tab's contents rather than only fading them", () => {
+  // Closing one tab looks like closing a window.
+  it("closes a closing tab's contents as a closing window closes", () => {
     expect(
-      delayed().filter((name) => !uncoveringDelay().includes(name)),
-    ).not.toHaveLength(0);
+      JSON.stringify(
+        movingStyles.raw({ contents: true, motion: "closing-tab" }),
+      ),
+    ).toContain('"animationName":"windowClosing"');
   });
 
   it("starts other motions at once", () => {
@@ -263,6 +257,24 @@ describe("clippedTo", () => {
   });
 });
 
+describe("clippedToFrame", () => {
+  // A revealed tab slides in from its tab's side; past its frame it would
+  // spill out of its tab group.
+  it("clips a revealing window to its frame", () => {
+    expect(clippedToFrame(RECT, "revealing")).toStrictEqual({
+      clip: "rect(20px, 310px, 220px, 10px)",
+    });
+  });
+
+  it("leaves any other window unclipped", () => {
+    expect(clippedToFrame(RECT, "concealing")).toStrictEqual({});
+  });
+
+  it("leaves a window with no frame unclipped", () => {
+    expect(clippedToFrame(undefined, "revealing")).toStrictEqual({});
+  });
+});
+
 describe("slidingAcross", () => {
   const SCREEN = { height: 1024, width: 1280, x: 1920, y: 0 };
 
@@ -301,18 +313,15 @@ describe("contentsScaledAbout", () => {
   const tab = { height: 32, width: 100, x: 100, y: 0 };
   const contents = { height: 400, width: 600, x: 0, y: 32 };
 
-  it("scales a window's contents about its whole frame", () => {
-    expect(contentsScaledAbout("closing", frame, tab, contents)).toStrictEqual(
-      scaledAbout(frame, contents),
-    );
-  });
-
-  // So they are seen to go into it.
-  it("shrinks a closing tab's contents about its tab", () => {
-    expect(
-      contentsScaledAbout("closing-tab", frame, tab, contents),
-    ).toStrictEqual(scaledAbout(tab, contents));
-  });
+  // A closing tab's contents close as a closing window's do.
+  it.each(["closing", "closing-tab"] as const)(
+    "scales a %s window's contents about its whole frame",
+    (motion) => {
+      expect(contentsScaledAbout(motion, frame, tab, contents)).toStrictEqual(
+        scaledAbout(frame, contents),
+      );
+    },
+  );
 
   it("grows a new tab's contents out of its tab", () => {
     expect(

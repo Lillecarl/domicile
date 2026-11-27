@@ -831,12 +831,24 @@ mod shell_commands {
         SystemRequest::ShellCommands {
             commands,
             bindings: Vec::new(),
+            on_a_window: false,
+            completes: false,
         }
     }
 
     fn send() -> SystemRequest {
         SystemRequest::SendShell {
             command: focus_right(),
+            window: None,
+            agent: None,
+        }
+    }
+
+    fn send_to(window: &str) -> SystemRequest {
+        SystemRequest::SendShell {
+            command: focus_right(),
+            window: Some(window.into()),
+            agent: None,
         }
     }
 
@@ -863,7 +875,12 @@ mod shell_commands {
     fn heard_sent(heard: &Receiver<HostMessage>) -> u64 {
         match next(heard) {
             HostMessage::SystemEvent {
-                event: SystemEvent::ShellCommand { command, sent },
+                event:
+                    SystemEvent::ShellCommand {
+                        command,
+                        sent,
+                        window: None,
+                    },
                 ..
             } if command == focus_right() => sent,
             other => panic!("expected focus right, heard {other:?}"),
@@ -933,6 +950,8 @@ mod shell_commands {
             SystemRequest::ShellCommands {
                 commands: Vec::new(),
                 bindings: vec![lock.clone()],
+                on_a_window: false,
+                completes: false,
             },
         );
         reply(&page_heard, 7);
@@ -979,6 +998,147 @@ mod shell_commands {
         sender.handle(1, send());
 
         assert_eq!(failure(reply(&sender_heard, 1)), SystemErrorKind::Other);
+    }
+
+    #[test]
+    fn a_command_on_a_window_goes_only_to_pages_that_run_one() {
+        // A page that can't aim a command would run it on the user's focus.
+        let commands = commands();
+        let home = std::env::temp_dir();
+        let ((plain, plain_heard), (aiming, aiming_heard)) = two_pages(&commands);
+        let (sender, sender_heard) = system_in(&home);
+        let sender = sender.sharing_shell_commands(commands.clone());
+        plain.handle(7, listening(Vec::new()));
+        reply(&plain_heard, 7);
+        aiming.handle(
+            7,
+            SystemRequest::ShellCommands {
+                commands: Vec::new(),
+                bindings: Vec::new(),
+                on_a_window: true,
+                completes: false,
+            },
+        );
+        reply(&aiming_heard, 7);
+
+        sender.handle(1, send_to("app-3"));
+
+        let sent = match next(&aiming_heard) {
+            HostMessage::SystemEvent {
+                event:
+                    SystemEvent::ShellCommand {
+                        sent,
+                        window: Some(window),
+                        ..
+                    },
+                ..
+            } if window == "app-3" => sent,
+            other => panic!("expected focus right on app-3, heard {other:?}"),
+        };
+        assert!(plain_heard.try_recv().is_err());
+        aiming.handle(
+            8,
+            SystemRequest::AnswerShellCommand {
+                sent,
+                refused: None,
+                output: None,
+            },
+        );
+        assert_eq!(reply(&sender_heard, 1), SystemReply::Sent { output: None });
+    }
+
+    #[test]
+    fn a_command_on_a_window_no_page_runs_says_so() {
+        let commands = commands();
+        let ((page, page_heard), (sender, sender_heard)) = two_pages(&commands);
+        page.handle(7, listening(Vec::new()));
+        reply(&page_heard, 7);
+
+        sender.handle(1, send_to("app-3"));
+
+        match reply(&sender_heard, 1) {
+            SystemReply::Failed { error } => assert_eq!(
+                error.message,
+                "the shell runs no command on a given window, only on the user's focus"
+            ),
+            other => panic!("expected a failure, got {other:?}"),
+        }
+        assert!(page_heard.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_completion_goes_only_to_pages_that_complete_and_brings_back_their_words() {
+        // A page that doesn't complete would run the words as a command.
+        let commands = commands();
+        let home = std::env::temp_dir();
+        let ((plain, plain_heard), (completing, completing_heard)) = two_pages(&commands);
+        let (sender, sender_heard) = system_in(&home);
+        let sender = sender.sharing_shell_commands(commands.clone());
+        plain.handle(7, listening(Vec::new()));
+        reply(&plain_heard, 7);
+        completing.handle(
+            7,
+            SystemRequest::ShellCommands {
+                commands: Vec::new(),
+                bindings: Vec::new(),
+                on_a_window: false,
+                completes: true,
+            },
+        );
+        reply(&completing_heard, 7);
+
+        sender.handle(
+            1,
+            SystemRequest::CompleteShell {
+                command: vec!["workspace".into()],
+            },
+        );
+
+        let sent = match next(&completing_heard) {
+            HostMessage::SystemEvent {
+                event: SystemEvent::CompleteShellCommand { command, sent },
+                ..
+            } if command == ["workspace"] => sent,
+            other => panic!("expected a completion of workspace, heard {other:?}"),
+        };
+        assert!(plain_heard.try_recv().is_err());
+        completing.handle(
+            8,
+            SystemRequest::AnswerShellCommand {
+                sent,
+                refused: None,
+                output: Some(r#"["mail","code"]"#.into()),
+            },
+        );
+        assert_eq!(
+            reply(&sender_heard, 1),
+            SystemReply::Sent {
+                output: Some(r#"["mail","code"]"#.into())
+            }
+        );
+    }
+
+    #[test]
+    fn a_completion_no_page_answers_says_so() {
+        let commands = commands();
+        let ((page, page_heard), (sender, sender_heard)) = two_pages(&commands);
+        page.handle(7, listening(Vec::new()));
+        reply(&page_heard, 7);
+
+        sender.handle(
+            1,
+            SystemRequest::CompleteShell {
+                command: vec!["workspace".into()],
+            },
+        );
+
+        match reply(&sender_heard, 1) {
+            SystemReply::Failed { error } => {
+                assert_eq!(error.message, "the shell completes no command")
+            }
+            other => panic!("expected a failure, got {other:?}"),
+        }
+        assert!(page_heard.try_recv().is_err());
     }
 
     #[test]
@@ -2007,6 +2167,8 @@ mod locked {
             },
             SystemRequest::SendShell {
                 command: vec!["focus".into(), "right".into()],
+                window: None,
+                agent: None,
             },
             SystemRequest::OpenLink {
                 url: "mailto:a@example.com".into(),
@@ -2076,9 +2238,13 @@ mod apps {
             SystemRequest::ShellCommands {
                 commands: Vec::new(),
                 bindings: Vec::new(),
+                on_a_window: false,
+                completes: false,
             },
             SystemRequest::SendShell {
                 command: vec!["focus".into(), "right".into()],
+                window: None,
+                agent: None,
             },
             SystemRequest::AnswerShellCommand {
                 sent: 1,
@@ -2127,15 +2293,15 @@ mod dbus {
     use std::os::unix::net::UnixStream;
     use std::sync::{Arc, Mutex};
 
-    use zbus::blocking::connection::Builder;
-    use zbus::blocking::Connection;
+    use zbus::connection::Builder;
+    use zbus::Connection;
 
     use super::*;
 
     /// The service the tests call.
     struct Greeter;
 
-    #[zbus::interface(name = "org.domicile.Test")]
+    #[zbus::interface(name = "com.domicile_desktop.Test")]
     impl Greeter {
         fn greet(&self, name: &str, times: u32) -> String {
             format!("hello {name}").repeat(times as usize)
@@ -2161,13 +2327,15 @@ mod dbus {
             move |_bus| {
                 let (ours, theirs) = UnixStream::pair()?;
                 let serving = std::thread::spawn(move || {
-                    Builder::async_io_unix_stream(theirs)
-                        .server(zbus::Guid::generate())?
-                        .p2p()
-                        .serve_at("/test", Greeter)?
-                        .build()
+                    zbus::block_on(
+                        Builder::unix_stream(theirs)
+                            .server(zbus::Guid::generate())
+                            .p2p()
+                            .serve_at("/test", Greeter)
+                            .build(),
+                    )
                 });
-                let client = Builder::async_io_unix_stream(ours).p2p().build()?;
+                let client = zbus::block_on(Builder::unix_stream(ours).p2p().build())?;
                 services
                     .lock()
                     .unwrap()
@@ -2181,9 +2349,9 @@ mod dbus {
     fn call(member: &str, signature: &str, body: &str) -> SystemRequest {
         SystemRequest::DbusCall {
             bus: Bus::Session,
-            destination: "org.domicile.Test".into(),
+            destination: "com.domicile_desktop.Test".into(),
             path: "/test".into(),
-            interface: "org.domicile.Test".into(),
+            interface: "com.domicile_desktop.Test".into(),
             member: member.into(),
             signature: signature.into(),
             body: body.into(),
@@ -2247,24 +2415,28 @@ mod dbus {
                 bus: Bus::Session,
                 sender: None,
                 path: None,
-                interface: Some("org.domicile.Test".into()),
+                interface: Some("com.domicile_desktop.Test".into()),
                 member: Some("Pinged".into()),
             },
         );
         assert_eq!(reply(&heard, 1), SystemReply::Started);
         let service = services.lock().unwrap().last().cloned().expect("a service");
-        service
-            .emit_signal(None::<&str>, "/test", "org.domicile.Test", "Ignored", &())
-            .unwrap();
-        service
-            .emit_signal(
-                None::<&str>,
-                "/test",
-                "org.domicile.Test",
-                "Pinged",
-                &(7u32,),
-            )
-            .unwrap();
+        zbus::block_on(service.emit_signal(
+            None::<&str>,
+            "/test",
+            "com.domicile_desktop.Test",
+            "Ignored",
+            &(),
+        ))
+        .unwrap();
+        zbus::block_on(service.emit_signal(
+            None::<&str>,
+            "/test",
+            "com.domicile_desktop.Test",
+            "Pinged",
+            &(7u32,),
+        ))
+        .unwrap();
 
         let HostMessage::SystemEvent {
             id: 1,
@@ -2285,7 +2457,7 @@ mod dbus {
             (path, interface, member, signature, body),
             (
                 "/test".into(),
-                "org.domicile.Test".into(),
+                "com.domicile_desktop.Test".into(),
                 "Pinged".into(),
                 "u".into(),
                 "[7]".into()
@@ -2324,7 +2496,7 @@ mod dbus {
 
         let (closed, heard_closed) = channel();
         std::thread::spawn(move || {
-            service.closed();
+            zbus::block_on(service.closed());
             let _ = closed.send(());
         });
         heard_closed

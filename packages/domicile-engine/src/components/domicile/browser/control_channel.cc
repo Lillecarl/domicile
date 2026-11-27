@@ -326,6 +326,15 @@ void ControlChannel::OnConnect(int result) {
   }
   pending_.insert(pending_.begin(), greeting.begin(), greeting.end());
 
+  // A config change made while no compositor was there was asked of the one
+  // that hung up, so the new compositor must not answer it: the page hears it
+  // refused, before anything the new one answers.
+  if (replacing) {
+    std::erase_if(pending_, [](const std::string& line) {
+      return ConfigChangeLine(line).has_value();
+    });
+    RefuseTheUnansweredConfigChanges();
+  }
   // Before anything the new compositor says, so the page resubscribes against
   // the desk state that follows. A page with no client yet has nothing to
   // resubscribe.
@@ -348,16 +357,18 @@ void ControlChannel::OnHungUp() {
   socket_.reset();
   framer_ = std::make_unique<LineFramer>();
 
-  // A queued call is ended below, so the next compositor must not answer it
-  // too. Everything else the page said still goes: a line about a window the
-  // next compositor never had is one it ignores.
+  // A queued call and a queued config change are ended below, so the next
+  // compositor must not answer either.
+  // Everything else the page said still goes: a line about a window the next
+  // compositor never had is one it ignores.
   std::erase_if(pending_, [](const std::string& line) {
-    return IsSystemRequestLine(line);
+    return IsAskedOfOneCompositor(line);
   });
 
   for (const std::string& line : calls_.EndAll()) {
     DispatchLine(line, /*from_compositor=*/false);
   }
+  RefuseTheUnansweredConfigChanges();
   std::set<std::string> apps;
   apps.swap(open_apps_);
   for (const std::string& app_id : apps) {
@@ -654,6 +665,30 @@ void ControlChannel::AnswerPortalRequest(uint32_t id,
   Send(*line);
 }
 
+// Checked only for its type, like CallSystem: the compositor judges the
+// change. See components/domicile/browser/system_call.h.
+void ControlChannel::ChangeConfig(const std::string& request) {
+  std::optional<std::string> line = ConfigChangeLine(request);
+  if (!line) {
+    LOG(ERROR) << "domicile: a page's change to the config is not a JSON "
+                  "object whose `type` is a change to the config; it was "
+                  "dropped.";
+    return;
+  }
+  ++config_changes_unanswered_;
+  Send(*line);
+}
+
+void ControlChannel::RefuseTheUnansweredConfigChanges() {
+  base::DictValue refusal = Typed("config_overrides");
+  refusal.Set("overrides", base::ListValue());
+  refusal.Set("refused", "the compositor exited before it answered");
+  const std::string line = Line(refusal);
+  for (; config_changes_unanswered_ > 0; --config_changes_unanswered_) {
+    DispatchLine(line, /*from_compositor=*/false);
+  }
+}
+
 // The one member that names a row of the clipboard, and the whole of what a
 // page may do to the seat's selection: it says which of the things already
 // copied to put back, and cannot say what was copied.
@@ -735,8 +770,9 @@ void ControlChannel::SyncFrames() {
 // `GrabShortcut` has for the same kind of reason.
 void ControlChannel::WarpPointer(double x,
                                  double y,
+                                 const std::vector<gfx::RectF>& only_over,
                                  const std::optional<gfx::RectF>& unless_over) {
-  warp_sink_.Run(x, y, unless_over);
+  warp_sink_.Run(x, y, only_over, unless_over);
 }
 
 // Nothing is sent, for WarpPointer's reason. The answer comes back from the UI
@@ -1273,6 +1309,16 @@ void ControlChannel::DispatchLine(const std::string& line,
   }
   if (from_compositor) {
     Track(message);
+    // Counted as it arrives, not as the page hears it, which may wait for
+    // SetClient.
+    if (IsConfigChangeAnswer(*type)) {
+      if (config_changes_unanswered_ == 0) {
+        LOG(ERROR) << "domicile: the compositor answered a config change the "
+                      "page never made; the page's answers are out of step.";
+      } else {
+        --config_changes_unanswered_;
+      }
+    }
   }
 
   // THE ONE MESSAGE ON THIS SOCKET THAT IS NOT THE PAGE'S, and the one that is
@@ -2125,6 +2171,12 @@ void ControlChannel::DispatchLine(const std::string& line,
   // Relayed as it arrived, like `shell_config`: the page parses it.
   if (IsSystemAnswer(*type)) {
     client_->System(line);
+    return;
+  }
+
+  // Relayed as it arrived, like a system call's answer: the page parses it.
+  if (IsConfigChangeAnswer(*type)) {
+    client_->ConfigOverrides(line);
     return;
   }
 

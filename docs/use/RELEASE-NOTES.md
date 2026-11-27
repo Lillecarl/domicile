@@ -7,28 +7,54 @@ building shells is in [Domicile's release notes](../RELEASE-NOTES.md).
 
 _Unreleased_
 
+### Ads and trackers blocked
+
+Browser windows now block ads and the trackers that follow you from site to site, with the same lists uBlock Origin uses, built into the browser, so pages load faster and nothing has to be installed. The empty boxes ads leave, and the ads a site serves itself that the lists name, are hidden too. Links from one site to another lose the click ids that tell the next site where you came from, and sites read your graphics, audio and processor details slightly off, so they can't recognize you by them. Standard blocks what other sites put on a page; Strict also blocks a site's own, and private windows use it. Each profile also blocks cookies from other sites, asks sites not to sell or share your data, and hides your local network address from video calls. All of it is on by default. When a site doesn't work, the shield at the end of the address field shows what was blocked and turns protections off for this window only, or always on that site. Choose how much each profile blocks, and undo what you changed for a site, in Settings, under Privacy.
+
+[Privacy](BROWSER.md#privacy)
+
 ### Window effects and smoother motion
 
 ![A workspace switch, the overview, a theme change and a window closing, with manganese's window effects](../media/release-window-effects.png)
 
-Closing windows dissolve, the overview blurs your wallpaper, and windows, panels and toasts move on springs that turn back midway when you change your mind. Turn the effects off with Window effects in Settings.
+Workspace switches blur as they slide, the overview blurs your wallpaper, and windows, panels and toasts move on springs that turn back midway when you change your mind. Turn the effects off with Window effects in Settings.
 
 [Window effects](APPEARANCE.md#window-effects)
 
 ### Agents work beside you
 
-An agent now has its own pointer, keyboard and clipboard, so it can work in any app or browser window while you keep working in yours, without ever taking your typing. A ring shows which windows it's using: click or type in one to take it over, and give it back from the banner. An idle agent leaves after two minutes.
+![Claude opening a page in its own window and searching there with its own pointer while you type in yours, then you taking its window over and giving it back](../media/release-agents.png)
+
+An agent now has its own pointer, keyboard and clipboard, so it can work in any app or browser window while you keep working in yours, without ever taking your typing. A page it opens gets its own window beside yours. A ring shows which windows it's using: click or type in one to take it over, and give it back from the banner. An idle agent leaves after two minutes.
 
 [Agents](AGENTS.md)
 
 ### Also new
 
-- When your config file can't be changed from Settings, its switches look plainly off, and the note at the top says why.
+- Closing a window or a tab is a short, quiet fade, and closing one tab of a group looks the same as closing the whole group.
+- Extensions are switched on per profile, each with its own data. Installing one asks which profiles to turn it on in, the tray's menu switches it in the profile you're on, and its site and file access apply in every profile even while it's off. A config you can't write switches until the desktop restarts. [Extensions](BROWSER.md#extensions)
+- Settings changes a config file it can't write, such as home-manager's, until the desktop restarts or the file changes that setting. Each change says "Changed from your config", with Reset. [Configure](CONFIGURE.md)
+- Extensions' keyboard shortcuts work in browser windows, such as Bitwarden's Ctrl+Shift+L, including extensions you installed before. The desk's and the browser's own shortcuts come first. [Extensions](BROWSER.md#extensions)
+- Extensions' items show in a page's right-click menu, above Inspect, and right-clicking an extension's icon in the bar, or its row in the tray's menu, shows its own, without a submenu named after it. [Extensions](BROWSER.md#extensions)
+- Bar panels no longer scroll sideways, as the tray's menu did.
+- The browser no longer downloads parts of Chrome it doesn't use, such as its on-device AI models, asks Google for the time or about AI Mode, or connects to your search engine before you search. Left alone, it only fetches certificate, video and hyphenation updates.
+- When memory runs low, pages you can't see, like background tabs and windows on other workspaces, unload as in Chrome, and load again where you left off when you switch to them.
 
 ### Fixes
 
+- The clipboard history's Remove button has a trash icon, so it reads as a button, as Forget does on saved Wi-Fi networks. [Clipboard](CLIPBOARD.md)
+- A Wi-Fi network's sign-in page, as at a hotel or an airport, now opens even when the network is slow to answer at first.
+- Switching tabs no longer slides the new tab past the edge of its group.
 - Element no longer says it is open in another window after you log out and quickly in again.
-- Bar panels such as notifications, agents, downloads, quick settings and the tray menu stay on their screen and scroll when they hold more than fits, even on a small screen beside a taller one.
+- Tabs and windows you can't see turn with the theme, so they no longer flash the old theme the first time you show them.
+- Pausing or resuming notifications no longer moves the notifications panel's title.
+- Bar panels such as notifications, agents, downloads, quick settings and the tray menu stay on their screen, below the bar, and take at most 60% of its height, scrolling the rest, even on a small screen beside a taller one. Panels and dialogs grow and shrink smoothly as what's in them changes, such as when a notification arrives or you clear them, and clearing downloads no longer scrolls the panel sideways.
+- Moving the pointer into an embedded frame, such as an artifact on claude.ai, no longer shows the frame's label far away from the pointer.
+- Workspace switches stay smooth with busy pages open: a sliding page no longer redraws on every frame of the slide.
+- Switching tabs or windows with the keyboard no longer moves the pointer off the top bar.
+- The agents panel's Take over button stays on one line next to a long window title.
+- On a computer with no sound server running, the desktop checks for one less and less often, rather than every five seconds, so it uses less CPU while you aren't doing anything.
+- Forget on saved Wi-Fi networks no longer sits against the edge of its tile.
 
 ## 1.3.0
 

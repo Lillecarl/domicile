@@ -45,6 +45,20 @@ every page and keep one state (one Bitwarden login).
   extension switches to it. Unset leaves the switches to the user: each
   starts on, or off in a private profile. `private` keeps nothing past the
   profile's last page.
+- **`protections`**: what the profile keeps from sites, each on unless set
+  `false`: `block_third_party_cookies` (the profile's cookie controls mode),
+  `global_privacy_control` (`Sec-GPC` and `navigator.globalPrivacyControl`)
+  `hide_local_ip_address` (WebRTC's `default_public_interface_only`
+  policy), `remove_tracking_from_links` (`LinkTrackingThrottle`, see
+  [Links](AD-BLOCKING.md#links)) and `hide_device_details` (canvas, audio and
+  processor count farbled, see [Device details](AD-BLOCKING.md#device-details)). The engine sets them as the profile's prefs when the profiles
+  arrive, and on a private profile's off-the-record one as it is made
+  (`protection_settings.cc`). `block_ads_and_trackers` is `standard`,
+  `strict` or `off`, unset `standard` or `strict` in a private profile: see
+  [Ad and tracker blocking](AD-BLOCKING.md).
+- **`block_lists`** and **`block_rules`**: the filter lists every profile
+  that blocks ads uses, and the user's own rules on top. See
+  [Ad and tracker blocking](AD-BLOCKING.md#the-config).
 - **`order`**: the order the compositor sends the profiles in, and so the
   order the shell and Settings list them in: these ids, then the rest by id.
   Each id must be a profile, once.

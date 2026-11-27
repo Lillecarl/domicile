@@ -3,14 +3,15 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use domicile_config::AdBlocking;
 use domicile_launch::command::{
-    browser_profiles_line, clear_browsing_data_line, clear_site_data_line, config_extensions_line,
-    configure_extension_line, delete_history_line, devtools_line, disable_while_typing_line,
-    extensions_line, history_line, load_shell_line, load_unpacked_line, media_devices_line,
-    open_app_line, open_url_line, pin_browser_site_line, reply, run_app_line,
+    browser_profiles_line, browser_windows_line, clear_browsing_data_line, clear_site_data_line,
+    config_extensions_line, configure_extension_line, delete_history_line, devtools_line,
+    disable_while_typing_line, extensions_line, history_line, load_shell_line, load_unpacked_line,
+    media_devices_line, open_app_line, open_url_line, pin_browser_site_line, reply, run_app_line,
     set_extension_enabled_line, set_log_levels_line, set_media_device_line,
-    set_site_permission_line, site_data_line, site_permissions_line, uninstall_extension_line,
-    visits_line, Reply,
+    set_site_permission_line, set_site_privacy_line, site_data_line, site_permissions_line,
+    site_privacy_line, uninstall_extension_line, visits_line, Reply,
 };
 use domicile_launch::control::AppReuse;
 use domicile_launch::extensions::{
@@ -21,6 +22,7 @@ use domicile_launch::media_devices::{MediaDevice, MediaDevices, MediaKind};
 use domicile_launch::shell_path::{Shell, ShellFiles};
 use domicile_launch::site_data::SiteData;
 use domicile_launch::site_permissions::{Permission, Setting, SitePermission, SiteSettings};
+use domicile_launch::site_privacy::{SitePrivacy, SitePrivacyChange};
 
 #[test]
 fn a_load_shell_names_the_version_it_is_written_in() {
@@ -62,7 +64,7 @@ fn a_run_app_names_the_apps_root_and_module() {
 #[test]
 fn an_open_url_names_the_version_it_is_written_in() {
     assert_eq!(
-        open_url_line("https://example.com/?q=\"x\"", None),
+        open_url_line("https://example.com/?q=\"x\"", None, None),
         "{\"type\":\"open_url\",\"version\":1,\"url\":\"https://example.com/?q=\\\"x\\\"\"}\n"
     );
 }
@@ -70,7 +72,7 @@ fn an_open_url_names_the_version_it_is_written_in() {
 #[test]
 fn an_open_url_names_its_browser_profile_when_it_has_one() {
     assert_eq!(
-        open_url_line("https://example.com/", Some("work")),
+        open_url_line("https://example.com/", Some("work"), None),
         "{\"type\":\"open_url\",\"version\":1,\"url\":\"https://example.com/\",\"profile\":\"work\"}\n"
     );
 }
@@ -102,7 +104,32 @@ fn an_open_app_with_an_id_names_it_and_how_to_reuse_its_window() {
 
 #[test]
 fn an_engine_that_opened_the_address_says_so() {
-    assert_eq!(reply("{\"type\":\"opened\"}").unwrap(), Reply::Opened);
+    assert_eq!(
+        reply("{\"type\":\"opened\"}").unwrap(),
+        Reply::Opened { window: None }
+    );
+    assert_eq!(
+        reply("{\"type\":\"opened\",\"window\":\"7\"}").unwrap(),
+        Reply::Opened {
+            window: Some("7".to_string())
+        }
+    );
+}
+
+#[test]
+fn an_open_url_for_an_agent_names_its_seat() {
+    assert_eq!(
+        open_url_line("https://example.com/", None, Some(3)),
+        "{\"type\":\"open_url\",\"version\":1,\"url\":\"https://example.com/\",\"agent\":\"agent-3\"}\n"
+    );
+}
+
+#[test]
+fn browser_windows_names_the_version_it_is_written_in() {
+    assert_eq!(
+        browser_windows_line(),
+        "{\"type\":\"browser_windows\",\"version\":1}\n"
+    );
 }
 
 #[test]
@@ -133,6 +160,55 @@ fn a_question_about_site_permissions_names_the_version_it_is_written_in() {
     assert_eq!(
         site_permissions_line(),
         "{\"type\":\"site_permissions\",\"version\":1}\n"
+    );
+}
+
+#[test]
+fn a_question_about_the_sites_ad_blocking_names_the_version_it_is_written_in() {
+    assert_eq!(
+        site_privacy_line(),
+        "{\"type\":\"site_privacy\",\"version\":1}\n"
+    );
+}
+
+#[test]
+fn a_sites_ad_blocking_is_set_by_profile_and_site() {
+    assert_eq!(
+        set_site_privacy_line(&SitePrivacyChange {
+            profile: "work".to_string(),
+            site: "nytimes.com".to_string(),
+            block_ads_and_trackers: Some(AdBlocking::Strict),
+        }),
+        "{\"type\":\"set_site_privacy\",\"version\":1,\"profile\":\"work\",\"site\":\"nytimes.com\",\"block_ads_and_trackers\":\"strict\"}\n"
+    );
+}
+
+#[test]
+fn a_sites_ad_blocking_goes_back_to_the_profiles_with_null() {
+    // The engine refuses a request without the field, so none is sent as
+    // `null`, not left out.
+    assert_eq!(
+        set_site_privacy_line(&SitePrivacyChange {
+            profile: "work".to_string(),
+            site: "nytimes.com".to_string(),
+            block_ads_and_trackers: None,
+        }),
+        "{\"type\":\"set_site_privacy\",\"version\":1,\"profile\":\"work\",\"site\":\"nytimes.com\",\"block_ads_and_trackers\":null}\n"
+    );
+}
+
+#[test]
+fn the_sites_ad_blocking_is_read_from_the_engines_answer() {
+    assert_eq!(
+        reply("{\"type\":\"site_privacy\",\"sites\":[{\"profile\":\"work\",\"site\":\"nytimes.com\",\"block_ads_and_trackers\":\"off\"}]}")
+            .expect("a reply"),
+        Reply::SitePrivacy {
+            sites: vec![SitePrivacy {
+                profile: "work".to_string(),
+                site: "nytimes.com".to_string(),
+                block_ads_and_trackers: AdBlocking::Off,
+            }]
+        }
     );
 }
 
@@ -494,8 +570,19 @@ fn an_open_app_names_its_browser_profile_when_it_has_one() {
 #[test]
 fn devtools_sends_a_method_to_a_browser_window() {
     assert_eq!(
-        devtools_line("w7", "DOM.getBoxModel", &serde_json::json!({"backendNodeId": 4})),
+        devtools_line(
+            "w7",
+            None,
+            "DOM.getBoxModel",
+            &serde_json::json!({"backendNodeId": 4})
+        ),
         "{\"type\":\"devtools\",\"version\":1,\"window\":\"w7\",\"method\":\"DOM.getBoxModel\",\"params\":{\"backendNodeId\":4}}\n"
+    );
+    // For an agent session, its seat: the page it drives copies to the seat's
+    // clipboard.
+    assert_eq!(
+        devtools_line("w7", Some(3), "Page.reload", &serde_json::json!({})),
+        "{\"type\":\"devtools\",\"version\":1,\"window\":\"w7\",\"agent\":\"agent-3\",\"method\":\"Page.reload\",\"params\":{}}\n"
     );
     assert_eq!(
         reply("{\"type\":\"devtools\",\"result\":{\"nodes\":[]}}").unwrap(),

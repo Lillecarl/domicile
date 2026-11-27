@@ -16,6 +16,7 @@ import type {
 import { WEBVIEW_CLOSE_EVENT } from "@domicile-desktop/sdk/webview-element";
 import { useEffect, useState } from "react";
 import { css } from "../../styled-system/css";
+import { useActionMenu } from "./useActionMenu";
 import { useContentSize } from "./useContentSize";
 import { useShown } from "./useShown";
 
@@ -48,6 +49,9 @@ type Props = {
  * `action.openPopup()`, which `opened` carries. It is withheld until the
  * popup's page has loaded, as Chrome's is.
  *
+ * A right click opens the items the extension adds to its action's menu
+ * (`chrome.contextMenus`), as Chrome's does; see `useActionMenu`.
+ *
  * The panel closes on an outside press, Escape, or the popup's
  * `window.close()`. Escape works only while the shell page has the keyboard,
  * since keys pressed in the popup never reach it.
@@ -64,45 +68,58 @@ export const ExtensionAction = ({
   const [view, setView] = useState<HTMLWebViewElement | null>(null);
   const shown = useShown(view);
   const shownPopup = opened?.id === id ? opened : undefined;
+  const menu = useActionMenu(domicile, extension);
   return (
-    <Popover
-      align="start"
-      flush
-      onOpenChange={(opening) => {
-        if (opening) {
-          onActivate();
-          domicile.extensions.activate(id);
-          if (popup !== undefined) {
-            onOpen({ id, popup, profile });
-          }
-        } else {
-          onOpen(undefined);
-        }
-      }}
-      open={shownPopup !== undefined}
-      side="bottom"
-      trigger={
-        <Button label={extension.title} size="sm" variant="ghost">
-          <Icon extension={extension} />
-        </Button>
-      }
-      withheld={!shown}
-    >
-      {shownPopup !== undefined && (
-        <PopupView
-          // A popup in another profile is another page.
-          key={shownPopup.profile}
-          name={extension.name}
-          onClose={() => {
+    <>
+      <Popover
+        align="start"
+        flush
+        onOpenChange={(opening) => {
+          if (opening) {
+            onActivate();
+            domicile.extensions.activate(id);
+            if (popup !== undefined) {
+              onOpen({ id, popup, profile });
+            }
+          } else {
             onOpen(undefined);
-          }}
-          popup={shownPopup.popup}
-          profile={shownPopup.profile}
-          setView={setView}
-          view={view}
-        />
-      )}
-    </Popover>
+          }
+        }}
+        open={shownPopup !== undefined}
+        side="bottom"
+        trigger={
+          <Button
+            label={extension.title}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              const box = event.currentTarget.getBoundingClientRect();
+              menu.show({ x: box.left, y: box.bottom });
+            }}
+            size="sm"
+            variant="ghost"
+          >
+            <Icon extension={extension} />
+          </Button>
+        }
+        withheld={!shown}
+      >
+        {shownPopup !== undefined && (
+          <PopupView
+            // A popup in another profile is another page.
+            key={shownPopup.profile}
+            name={extension.name}
+            onClose={() => {
+              onOpen(undefined);
+            }}
+            popup={shownPopup.popup}
+            profile={shownPopup.profile}
+            setView={setView}
+            view={view}
+          />
+        )}
+      </Popover>
+      {menu.opened}
+    </>
   );
 };
 

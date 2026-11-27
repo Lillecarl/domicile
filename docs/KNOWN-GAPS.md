@@ -20,8 +20,13 @@ the detail, when there is one. Remove a gap when it's fixed.
 - **A chrome repaint damages the whole output.**
 - **Windows under a fullscreen window keep drawing,** so manganese can animate
   the fullscreen window back to its box.
-- **Browser window context menus have only Chrome's core items.** No page or
-  extension items.
+- **Extensions' media-key commands do nothing,** nor does an action's key when
+  the action opens the extension's side panel.
+- **An extension installed from the Chrome Web Store starts off in every
+  profile, and nothing asks where to turn it on.** Only a folder loaded in
+  Settings asks. Turn it on from the tray's menu, or with **Choose profiles**
+  on Settings' Extensions page, which marks it "Not on in any profile".
+  [EXTENSIONS.md](/docs/architecture/EXTENSIONS.md).
 - **An input method's candidate list does not show over pages or the
   shell:** they compose from it, but only native windows show its list.
   [TEXT-INPUT.md](/docs/architecture/TEXT-INPUT.md#plan).
@@ -63,6 +68,9 @@ the detail, when there is one. Remove a gap when it's fixed.
 - **A page's app link can't open a `Terminal=true` app,** such as a
   terminal mail client for `mailto:`: the engine has no `DOMICILE_TERMINAL`,
   so its `domicile open` skips them (`let_the_engine_open_links`).
+- **Hiding your device's details covers pages, not workers,** nor WebGL,
+  fonts or the screen's size.
+  [AD-BLOCKING.md](/docs/architecture/AD-BLOCKING.md#device-details).
 - **Resize cost is unmeasured.**
   [ENGINE-FORK.md](/docs/architecture/ENGINE-FORK.md#embed-deadlines).
 

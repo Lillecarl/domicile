@@ -33,28 +33,31 @@ use domicile_launch::app_entry::app_entry;
 use domicile_launch::build_progress::{bar, heard, Heard as BuilderHeard, Step};
 use domicile_launch::cli::{invocation, CliError, Invocation, Listing, MonitorMode};
 use domicile_launch::command_socket::{
-    browser_profiles, clear_browsing_data, clear_site_data, config_extensions, configure_extension,
-    delete_history, devtools, disable_while_typing, extensions, history, load_shell, load_unpacked,
-    media_devices, open_app, open_url, pin_browser_site, run_app, set_extension_enabled,
-    set_log_levels as set_engine_log_levels, set_media_device, set_site_permission, site_data,
-    site_permissions, uninstall_extension, visits,
+    browser_profiles, browser_windows, clear_browsing_data, clear_site_data, config_extensions,
+    configure_extension, delete_history, devtools, disable_while_typing, extensions, history,
+    load_shell, load_unpacked, media_devices, open_app, open_url, pin_browser_site, run_app,
+    set_extension_enabled, set_log_levels as set_engine_log_levels, set_media_device,
+    set_site_permission, set_site_privacy, site_data, site_permissions, site_privacy,
+    uninstall_extension, visits,
 };
 use domicile_launch::commands;
+use domicile_launch::completion::{complete, Completion, Sources};
 use domicile_launch::component_log::{self, Sink};
 use domicile_launch::components::{
     builder, components, electron_host, engine as engine_path, our_shell,
     perfetto as perfetto_path, version_file, Components,
 };
 use domicile_launch::compositor_socket::{
-    act_on_window, agents, configure_display, displays, emulate, forget_agent, idle_time, inputs,
-    launch, lock, monitors, open_link, power_displays, screen_record, screenshot, send_shell,
-    set_log_levels, shell_bindings, shell_commands, shoot_desk, status, stop_agent, theme, windows,
+    act_on_window, agents, complete_shell, config_overrides, configure_display, displays, emulate,
+    forget_agent, idle_time, inputs, launch, lock, monitors, open_link, power_displays,
+    screen_record, screenshot, send_shell, set_log_levels, shell_bindings, shell_commands,
+    shoot_desk, status, stop_agent, theme, windows,
 };
 use domicile_launch::config_check::check;
 use domicile_launch::config_path::{config_file, is_module, ConfigFile};
 use domicile_launch::config_watch;
 use domicile_launch::control::{
-    answer, AgentLetIn, Desktop as ControlDesktop, Request, Response, SettingsFiles,
+    answer, focused_window, AgentLetIn, Desktop as ControlDesktop, Request, Response, SettingsFiles,
 };
 use domicile_launch::control_socket::{
     address, advertised, ask, hold, listen, serve_one, take, Control, Lenders,
@@ -302,8 +305,8 @@ fn run() -> Result<ExitCode, String> {
         Invocation::Mcp { http: Some(http) } => agents_served_over_http(http),
         Invocation::McpRelay { relay } => agents_served_through_relay(relay),
         Invocation::Agent { name } => admitted(name),
-        Invocation::Accessibility { window } => {
-            let (pid, title) = native_window(&window)?;
+        Invocation::Accessibility { window, agent } => {
+            let (pid, title) = native_window(window.as_deref(), agent)?;
             let mut bus = AtSpi::connected()?;
             let root = accessibility::window(&mut bus, pid, &title)?;
             print!("{}", accessibility::outline(&mut bus, &root)?);
@@ -311,10 +314,11 @@ fn run() -> Result<ExitCode, String> {
         }
         Invocation::AccessibilityAct {
             window,
+            agent,
             element,
             act,
         } => {
-            let (pid, _) = native_window(&window)?;
+            let (pid, _) = native_window(window.as_deref(), agent)?;
             let element = Element::named(&element).ok_or_else(|| {
                 format!("{element} is not an element's ref, as accessibility prints them")
             })?;
@@ -343,6 +347,14 @@ fn run() -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         Invocation::Version => versioned(),
+        Invocation::Completions { shell } => {
+            print!("{}", shell.script());
+            Ok(ExitCode::SUCCESS)
+        }
+        Invocation::Complete { words, current } => {
+            print!("{}", completed(&words, &current).printed());
+            Ok(ExitCode::SUCCESS)
+        }
         Invocation::Trace { file, seconds } => {
             // Absolute here, since the recorder may not share this working
             // directory.
@@ -510,7 +522,8 @@ fn versioned() -> Result<ExitCode, String> {
 /// Opens `target` with what opens its type, started by the running desktop's
 /// compositor, or in a browser window of the running desktop, in browser profile `profile` when
 /// given; see `domicile_launch::open`. Only a web address takes a profile.
-/// What opens a file starts held by agent session `agent`'s seat, if given.
+/// What opens it, a browser window or a program's windows, starts held by
+/// agent session `agent`'s seat, if given.
 fn opened(target: &str, profile: Option<String>, agent: Option<u32>) -> Result<ExitCode, String> {
     // A shell page that claims the link's scheme, such as manganese's inbox
     // picker for `mailto:`, opens it instead of an application.
@@ -518,7 +531,11 @@ fn opened(target: &str, profile: Option<String>, agent: Option<u32>) -> Result<E
         return Ok(ExitCode::SUCCESS);
     }
     match opening(target, &typed_in()?, &places()).map_err(|why| why.to_string())? {
-        Opening::Browse(url) => asked(&Request::OpenUrl { url, profile }),
+        Opening::Browse(url) => asked(&Request::OpenUrl {
+            url,
+            profile,
+            agent,
+        }),
         Opening::Run(_) if profile.is_some() => Err(CliError::ProfileForAFile {
             target: target.to_string(),
         }
@@ -687,7 +704,7 @@ fn ran_app(entry: &str, here: &Path) -> Result<ExitCode, String> {
 fn powered(power: Power) -> Result<ExitCode, String> {
     let session = std::env::var("XDG_SESSION_ID").ok();
     let (program, args) = power.command(session.as_deref())?;
-    let bus = zbus::blocking::Connection::session()
+    let bus = zbus::block_on(zbus::Connection::session())
         .map_err(|why| format!("cannot reach the session bus: {why}"))?;
     match confirmed(&bus, power)? {
         true => Err(format!(
@@ -1254,6 +1271,7 @@ fn asked(request: &Request) -> Result<ExitCode, String> {
         // Only `domicile-app-host` asks for these.
         | Response::SettingsFiles { .. }
         | Response::SitePermissions(_)
+        | Response::SitePrivacy { .. }
         | Response::Stored
         | Response::Uninstalled
         | Response::ConfigExtensions { .. }
@@ -1266,11 +1284,13 @@ fn asked(request: &Request) -> Result<ExitCode, String> {
         | Response::Cleared
         | Response::SiteData { .. }
         | Response::Monitors { .. }
+        | Response::ConfigOverrides { .. }
         // `listed` asks for these.
         | Response::Displays { .. }
         | Response::Windows { .. }
         | Response::Status { .. }
         | Response::ShellCommands { .. }
+        | Response::ShellValues { .. }
         | Response::ShellBindings { .. }
         | Response::Inputs { .. }
         | Response::IdleTime { .. }
@@ -1288,7 +1308,7 @@ fn asked(request: &Request) -> Result<ExitCode, String> {
 /// binary.
 /// The process and title of native window `id`, as `list-windows` lists it,
 /// while the desktop is unlocked.
-fn native_window(id: &str) -> Result<(u32, String), String> {
+fn native_window(id: Option<&str>, agent: Option<u32>) -> Result<(u32, String), String> {
     let socket =
         advertised(std::env::var(VARIABLE).ok().as_deref()).map_err(|why| why.to_string())?;
     let asked =
@@ -1303,10 +1323,14 @@ fn native_window(id: &str) -> Result<(u32, String), String> {
     let Response::Windows { windows } = asked(Request::Windows)? else {
         return Err("the desktop did not answer with its windows".to_string());
     };
-    let window = windows
-        .into_iter()
-        .find(|window| window.id == id)
-        .ok_or_else(|| format!("there is no window {id}; list-windows lists them"))?;
+    let window = match id {
+        Some(id) => windows
+            .into_iter()
+            .find(|window| window.id == id)
+            .ok_or_else(|| format!("there is no window {id}; list-windows lists them"))?,
+        None => focused_window(&windows, agent)?.clone(),
+    };
+    let id = window.id.clone();
     match (window.kind, window.pid) {
         (WindowKind::Native, Some(pid)) => Ok((
             u32::try_from(pid).map_err(|_| format!("window {id} has process id {pid}"))?,
@@ -1485,15 +1509,17 @@ fn sign_in_dialog(
     matching: &str,
     handle: &str,
 ) -> Result<u32, zbus::Error> {
-    use zbus::zvariant::{ObjectPath, Value};
-    let bus = zbus::blocking::connection::Builder::session()?
-        .method_timeout(std::time::Duration::from_millis(mcp::ASK_MS))
-        .build()?;
+    use zbus::{ObjectPath, Variant};
+    let bus = zbus::block_on(
+        zbus::connection::Builder::session()
+            .method_timeout(std::time::Duration::from_millis(mcp::ASK_MS))
+            .build(),
+    )?;
     let options = std::collections::HashMap::from([
-        ("grant_label", Value::from("Allow")),
-        ("deny_label", Value::from("Cancel")),
+        ("grant_label", Variant::from("Allow")),
+        ("deny_label", Variant::from("Cancel")),
     ]);
-    let called = bus.call_method(
+    let called = zbus::block_on(bus.call_method(
         Some("org.freedesktop.impl.portal.desktop.domicile"),
         "/org/freedesktop/portal/desktop",
         Some("org.freedesktop.impl.portal.Access"),
@@ -1510,25 +1536,23 @@ fn sign_in_dialog(
             ),
             options,
         ),
-    );
+    ));
     match called {
         Ok(reply) => {
-            let (response, _): (
-                u32,
-                std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
-            ) = reply.body().deserialize()?;
+            let (response, _): (u32, std::collections::HashMap<String, zbus::OwnedVariant>) =
+                reply.body().deserialize()?;
             Ok(response)
         }
         Err(why) => {
             // Unanswered in time, or the call failed: the sign-in no longer
             // waits, so the dialog goes too.
-            let closed = bus.call_method(
+            let closed = zbus::block_on(bus.call_method(
                 Some("org.freedesktop.impl.portal.desktop.domicile"),
                 handle,
                 Some("org.freedesktop.impl.portal.Request"),
                 "Close",
                 &(),
-            );
+            ));
             if let Err(closing) = closed {
                 agents_error(&format!("could not close the sign-in dialog: {closing}"));
             }
@@ -1639,6 +1663,79 @@ fn listed(listing: Listing, json: bool) -> Result<ExitCode, String> {
     };
     print!("{printed}");
     Ok(ExitCode::SUCCESS)
+}
+
+/// How long completion waits for the desktop: a tab press that hangs is
+/// worse than one that offers less.
+const COMPLETE_WITHIN: Duration = Duration::from_millis(750);
+
+/// What can go in place of `current` after `words`, with values from the
+/// running desktop. Outside a desktop, or when it does not answer, those
+/// values are left out: completion prints nothing to the terminal it runs in.
+fn completed(words: &[String], current: &str) -> Completion {
+    let socket = advertised(std::env::var(VARIABLE).ok().as_deref()).ok();
+    let asked = |request: Request| {
+        socket
+            .as_deref()
+            .and_then(|socket| ask(socket, &request, Some(COMPLETE_WITHIN)).ok())
+    };
+    complete(
+        words,
+        current,
+        &Sources {
+            windows: &|| match asked(Request::Windows) {
+                Some(Response::Windows { windows }) => windows,
+                _ => Vec::new(),
+            },
+            displays: &|| match asked(Request::Displays) {
+                Some(Response::Displays { displays }) => displays,
+                _ => Vec::new(),
+            },
+            agents: &|| match asked(Request::Agents) {
+                Some(Response::Agents { agents }) => agents,
+                _ => Default::default(),
+            },
+            profiles: &|| match asked(Request::BrowserProfiles) {
+                Some(Response::BrowserProfiles(list)) => list
+                    .profiles
+                    .into_iter()
+                    .map(|profile| (profile.id, profile.name))
+                    .collect(),
+                _ => Vec::new(),
+            },
+            shell_commands: &|| match asked(Request::ShellCommands) {
+                Some(Response::ShellCommands { commands }) => commands,
+                _ => Vec::new(),
+            },
+            shell_values: &|typed| match asked(Request::CompleteShell {
+                command: typed.to_vec(),
+            }) {
+                Some(Response::ShellValues { values }) => values,
+                _ => Vec::new(),
+            },
+            programs: &programs_on_path,
+        },
+    )
+}
+
+/// The programs on `PATH` whose names start with `start`, each once.
+fn programs_on_path(start: &str) -> Vec<String> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let mut programs: Vec<String> = std::env::split_paths(&path)
+        .filter_map(|dir| std::fs::read_dir(dir).ok())
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let executable = std::fs::metadata(entry.path())
+                .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0);
+            (name.starts_with(start) && executable).then_some(name)
+        })
+        .collect();
+    programs.sort();
+    programs.dedup();
+    programs
 }
 
 /// `listed` as pretty JSON, one line per field.
@@ -2531,8 +2628,9 @@ fn answer_a_command(
                     // plus `ANSWER_WITHIN`, so a retry could load a shell after
                     // it reported a failure.
                     load: &|page| load_the_shell(engine, page, serving, &|| true),
-                    open: &|url, profile| {
-                        open_url(engine, url, profile, ANSWER_WITHIN).map_err(|why| why.to_string())
+                    open: &|url, profile, agent| {
+                        open_url(engine, url, profile, agent, ANSWER_WITHIN)
+                            .map_err(|why| why.to_string())
                     },
                     open_app: &|url, id, reuse, profile| {
                         open_app(engine, url, id, reuse, profile, ANSWER_WITHIN)
@@ -2563,8 +2661,17 @@ fn answer_a_command(
                         set_site_permission(engine, site, ANSWER_WITHIN)
                             .map_err(|why| why.to_string())
                     },
-                    send: &|command| {
-                        send_shell(chrome, command, Some(SEND_WITHIN))
+                    // Waits for every profile to load, as `browser_profiles`
+                    // does.
+                    site_privacy: &|| {
+                        site_privacy(engine, ANSWER_WITHIN).map_err(|why| why.to_string())
+                    },
+                    set_site_privacy: &|change| {
+                        set_site_privacy(engine, change, ANSWER_WITHIN)
+                            .map_err(|why| why.to_string())
+                    },
+                    send: &|command, window, agent| {
+                        send_shell(chrome, command, window, agent, Some(SEND_WITHIN))
                             .map_err(|why| why.to_string())
                     },
                     load_unpacked: &|directory| {
@@ -2645,8 +2752,8 @@ fn answer_a_command(
                         emulate(chrome, input, agent, Some(ANSWER_WITHIN))
                             .map_err(|why| why.to_string())?
                     },
-                    devtools: &|window, method, params| {
-                        devtools(engine, window, method, params, DEVTOOLS_WITHIN)
+                    devtools: &|window, agent, method, params| {
+                        devtools(engine, window, agent, method, params, DEVTOOLS_WITHIN)
                             .map_err(|why| why.to_string())
                     },
                     // The compositor waits up to 5s for the desktop to be laid
@@ -2687,15 +2794,26 @@ fn answer_a_command(
                     monitors: &|| {
                         monitors(chrome, Some(ANSWER_WITHIN)).map_err(|why| why.to_string())
                     },
+                    config_overrides: &|request| {
+                        config_overrides(chrome, request, Some(ANSWER_WITHIN))
+                            .map_err(|why| why.to_string())
+                    },
                     displays: &|| {
                         displays(chrome, Some(ANSWER_WITHIN)).map_err(|why| why.to_string())
                     },
                     windows: &|| {
                         windows(chrome, Some(ANSWER_WITHIN)).map_err(|why| why.to_string())
                     },
+                    browser_layouts: &|| {
+                        browser_windows(engine, ANSWER_WITHIN).map_err(|why| why.to_string())
+                    },
                     status: &|| status(chrome, Some(ANSWER_WITHIN)).map_err(|why| why.to_string()),
                     shell_commands: &|| {
                         shell_commands(chrome, Some(ANSWER_WITHIN)).map_err(|why| why.to_string())
+                    },
+                    complete_shell: &|typed| {
+                        complete_shell(chrome, typed, Some(ANSWER_WITHIN))
+                            .map_err(|why| why.to_string())
                     },
                     shell_bindings: &|| {
                         shell_bindings(chrome, Some(ANSWER_WITHIN)).map_err(|why| why.to_string())
@@ -2993,7 +3111,9 @@ fn session(session: &Path) -> Milestone {
 struct SaidSession {
     is_the_session: bool,
     scope_clients: bool,
-    manager: Mutex<Option<zbus::blocking::Connection>>,
+    manager: Mutex<Option<zbus::Connection>>,
+    /// The session's variables that naming this desktop replaced.
+    before: Vec<String>,
     /// This run's control socket and the session it took over, once said.
     took_over: Mutex<Option<(PathBuf, Vec<String>)>>,
 }
@@ -3003,22 +3123,28 @@ impl SaidSession {
     /// any component starts; see `graphical_session::name`.
     fn new(platform: &str) -> Self {
         let is_the_session = platform == "drm";
+        let (manager, before) = match is_the_session.then(Self::named).flatten() {
+            Some((manager, before)) => (Some(manager), before),
+            None => (None, Vec::new()),
+        };
         SaidSession {
             is_the_session,
             scope_clients: is_the_session && Self::a_user_manager_answers(),
-            manager: Mutex::new(is_the_session.then(Self::named).flatten()),
+            manager: Mutex::new(manager),
+            before,
             took_over: Mutex::new(None),
         }
     }
 
-    /// Exports the desktop's name. Says why on stderr when it cannot.
-    fn named() -> Option<zbus::blocking::Connection> {
+    /// Exports the desktop's name, and returns the variables it replaced. Says
+    /// why on stderr when it cannot.
+    fn named() -> Option<(zbus::Connection, Vec<String>)> {
         let named = notification::session_bus().and_then(|manager| {
-            graphical_session::name(&manager)?;
-            Ok(manager)
+            let before = graphical_session::name(&manager)?;
+            Ok((manager, before))
         });
         match named {
-            Ok(manager) => Some(manager),
+            Ok(named) => Some(named),
             Err(why) => {
                 launcher_log::error(&format!(
                     "the user manager was not told this desktop's name before the \
@@ -3033,9 +3159,11 @@ impl SaidSession {
     /// stderr when not.
     fn a_user_manager_answers() -> bool {
         let answered = notification::session_bus().and_then(|bus| {
-            zbus::blocking::fdo::DBusProxy::new(&bus)?
-                .name_has_owner("org.freedesktop.systemd1".try_into()?)
-                .map_err(zbus::Error::from)
+            zbus::block_on(
+                zbus::block_on(zbus::fdo::DBusProxy::new(&bus))?
+                    .name_has_owner("org.freedesktop.systemd1".try_into()?),
+            )
+            .map_err(zbus::Error::from)
         });
         match answered {
             Ok(true) => true,
@@ -3059,7 +3187,7 @@ impl SaidSession {
     /// Registers the desktop that just came up.
     fn say(&self, places: &Runtime) {
         if self.is_the_session {
-            match Self::said(places) {
+            match Self::said(places, &self.before) {
                 Ok((manager, earlier)) => {
                     *self.manager.lock().expect("nothing panics holding it") = Some(manager);
                     self.took_over
@@ -3075,11 +3203,15 @@ impl SaidSession {
         }
     }
 
-    fn said(places: &Runtime) -> Result<(zbus::blocking::Connection, Vec<String>), String> {
+    fn said(
+        places: &Runtime,
+        before: &[String],
+    ) -> Result<(zbus::Connection, Vec<String>), String> {
         let session = published(places)?;
         let manager = notification::session_bus().map_err(|why| why.to_string())?;
-        let earlier = graphical_session::begin(&manager, &session.wayland_display, &places.control)
-            .map_err(|why| why.to_string())?;
+        let earlier =
+            graphical_session::begin(&manager, &session.wayland_display, &places.control, before)
+                .map_err(|why| why.to_string())?;
         Ok((manager, earlier))
     }
 }

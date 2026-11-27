@@ -14,6 +14,7 @@ const sample = (busyTicks: number, totalTicks: number, usedKib: number) => ({
 const run = (desktop: string, workload: string, usedKib: number) => ({
   cores: 4,
   desktop,
+  measures: {},
   run: 1,
   samples: [sample(0, 1000, usedKib), sample(250, 2000, usedKib)],
   top: [{ name: "sway", pssKib: 10_240 }],
@@ -136,5 +137,83 @@ describe("markdown", () => {
     );
     expect(table).toContain("| Desktop | rest | apps |");
     expect(table).toContain("| sway | 4 MiB (4–4) | 8 MiB (8–8) |");
+  });
+});
+
+describe("busiest threads", () => {
+  const busy = (threads: { cpuPercent: number; name: string }[]) => ({
+    ...run("domicile", "rest", 4096),
+    threads,
+  });
+
+  test("tables each group's threads by their median run", () => {
+    const table = markdown(
+      summarize([
+        busy([{ cpuPercent: 3, name: "bun/bun" }]),
+        busy([{ cpuPercent: 1, name: "bun/bun" }]),
+        // A run where the thread spent nothing counts as nothing.
+        busy([]),
+      ]),
+    );
+    expect(table).toContain("#### domicile, rest");
+    expect(table).toContain("| bun/bun | 1% |");
+  });
+
+  test("leaves them out when no run read them", () => {
+    expect(markdown(summarize([run("sway", "rest", 4096)]))).not.toContain(
+      "Busiest threads",
+    );
+  });
+});
+
+describe("memory over the window", () => {
+  test("takes the peak and the drift from first to last sample", () => {
+    const growing = {
+      ...run("sway", "rest", 4096),
+      samples: [
+        sample(0, 1000, 4096),
+        sample(100, 2000, 10_240),
+        sample(250, 3000, 6144),
+      ],
+    };
+    const [row] = summarize([growing]);
+    expect(row?.peakMib.median).toBe(10);
+    expect(row?.driftMib.median).toBe(2);
+  });
+});
+
+describe("measures", () => {
+  const measured = (measures: Record<string, number>) => ({
+    ...run("sway", "chat-and-web", 4096),
+    measures,
+  });
+
+  test("takes each one's median and range across runs", () => {
+    const [row] = summarize([
+      measured({ frameRate: 50 }),
+      measured({ frameRate: 60 }),
+      measured({ frameRate: 40 }),
+    ]);
+    expect(row?.measures.frameRate).toEqual({
+      max: 60,
+      median: 50,
+      min: 40,
+    });
+  });
+
+  test("throws on a group where some runs lack one", () => {
+    expect(() =>
+      summarize([measured({ frameRate: 50 }), measured({})]),
+    ).toThrow();
+  });
+
+  test("throws on a measure it has no title for", () => {
+    expect(() => markdown(summarize([measured({ bogus: 1 })]))).toThrow();
+  });
+
+  test("tables each one under its title", () => {
+    expect(markdown(summarize([measured({ frameRate: 58 })]))).toContain(
+      "| sway | 58 fps (58–58) |",
+    );
   });
 });

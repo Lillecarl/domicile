@@ -17,6 +17,7 @@
 #include "base/time/time.h"
 #include "base/types/expected.h"
 #include "base/values.h"
+#include "components/domicile/browser/browser_profiles.h"
 #include "components/domicile/browser/extension_settings.h"
 #include "components/domicile/browser/shell_source.h"
 #include "components/domicile/mojom/browser_windows.mojom-shared.h"
@@ -50,8 +51,15 @@ namespace domicile {
 //    "profile":"work"}
 //   {"type":"open_url","version":1,"url":"https://example.com/","app":true,
 //    "app_id":"mail","reuse":"focus","profile":"work"}
-//   -> {"type":"opened"}
+//   {"type":"open_url","version":1,"url":"https://example.com/",
+//    "agent":"agent-3"}
+//   -> {"type":"opened","window":"7"}
 //   -> {"type":"refused","why":"..."}
+//
+//   {"type":"browser_windows","version":1}
+//   -> {"type":"browser_windows","windows":[{"id":"7","focused":true,
+//       "width":1280,"height":720}]}      (no width or height while the
+//                                          shell doesn't draw it)
 //
 //   {"type":"site_permissions","version":1}
 //   -> {"type":"site_permissions","defaults":{"camera":"ask",...},
@@ -61,6 +69,17 @@ namespace domicile {
 //
 //   {"type":"set_site_permission","version":1,
 //    "origin":"https://meet.example","permission":"camera","setting":"block"}
+//   -> {"type":"set"}
+//   -> {"type":"refused","why":"..."}
+//
+//   {"type":"site_privacy","version":1}
+//   -> {"type":"site_privacy","sites":[{"profile":"work",
+//       "site":"nytimes.com","block_ads_and_trackers":"off"}]}
+//   -> {"type":"refused","why":"..."}
+//
+//   {"type":"set_site_privacy","version":1,"profile":"work",
+//    "site":"nytimes.com","block_ads_and_trackers":"strict"}
+//   (`null` for "block_ads_and_trackers" goes back to the profile's)
 //   -> {"type":"set"}
 //   -> {"type":"refused","why":"..."}
 //
@@ -160,6 +179,8 @@ namespace domicile {
 //
 //   {"type":"devtools","version":1,"window":"<browser window id>",
 //    "method":"Accessibility.getFullAXTree","params":{"depth":4}}
+//   {"type":"devtools","version":1,"window":"<browser window id>",
+//    "agent":"agent-3","method":"Input.dispatchKeyEvent","params":{...}}
 //   -> {"type":"devtools","result":{"nodes":[...]}}
 //   -> {"type":"refused","why":"..."}
 //
@@ -167,8 +188,11 @@ namespace domicile {
 // Chrome DevTools Protocol method sent to the window's page, answered with
 // the method's result. Only the methods kDevToolsMethods names go through:
 // enough to read the page's accessibility tree, click, type, scroll and
-// navigate, and nothing that reads cookies or storage or runs script. A
-// private window is never driven. `params` defaults to {}.
+// navigate, and nothing that reads cookies or storage or runs script, plus
+// Domicile's own methods for the file choosers an agent opens. A private
+// window is never driven. `params` defaults to {}. `agent` names the agent
+// seat it is sent for: a page it presses or keys in copies to and pastes from
+// that seat's own clipboard.
 // `set_log_levels` is `domicile set-log-level`: `min_level` is Chromium's
 // minimum severity (0 INFO to 3 FATAL) and `vmodule` its `--vmodule`, in every
 // engine process until the engine exits.
@@ -212,8 +236,8 @@ using LoadShell = base::FunctionRef<void(const base::FilePath& root,
                                          ShellFiles files,
                                          ShellLoaded loaded)>;
 
-// Runs once with whether `run_app` or `open_url` opened its window: false if
-// there is no shell to own it.
+// Runs once with whether `run_app` opened its window: false if there is no
+// shell to own it.
 using WindowOpened = base::OnceCallback<void(bool opened)>;
 
 // Carries out `run_app`: serves the app module `module` under `root` and opens
@@ -234,15 +258,22 @@ struct AppLaunch {
   friend bool operator==(const AppLaunch&, const AppLaunch&) = default;
 };
 
+// Runs once with the id of the window `open_url` opened or reused, or with
+// nothing when there is no shell to own it.
+using UrlOpened =
+    base::OnceCallback<void(std::optional<std::string> window)>;
+
 // Carries out `open_url`: opens a browser window at `url`, or with `app` an app
 // window, which the shell draws without an address bar. A new window is in
 // browser profile `profile`, one the desk has, or for an empty one the
-// profile `url`'s site opens in. Runs `opened` once, possibly after
-// returning, as for `run_app`.
+// profile `url`'s site opens in. A browser window opened for `agent`, an agent
+// seat's id when not empty, is listed as that agent's. Runs `opened` once,
+// possibly after returning, as for `run_app`.
 using OpenUrl = base::FunctionRef<void(const GURL& url,
                                        std::optional<AppLaunch> app,
                                        const std::string& profile,
-                                       WindowOpened opened)>;
+                                       const std::string& agent,
+                                       UrlOpened opened)>;
 
 // Whether the desk has browser profile `id`, so `open_url` can refuse one it
 // does not instead of opening the window elsewhere.
@@ -279,6 +310,29 @@ using SetSitePermission =
     base::FunctionRef<bool(const url::Origin& origin,
                            mojom::WebViewPermission permission,
                            mojom::WebViewPermissionSetting setting)>;
+
+// One site's own ad-blocking mode in one profile (site_privacy.h).
+struct StoredSitePrivacy {
+  std::string profile;
+  std::string site;
+  AdBlockingMode block_ads_and_trackers;
+};
+
+// Runs once with every profile's sites with their own mode, or nothing if
+// there is no shell, and so no profiles to read.
+using SitePrivacyFound =
+    base::OnceCallback<void(std::optional<std::vector<StoredSitePrivacy>>)>;
+
+// Carries out `site_privacy`: runs `found` once every profile has loaded,
+// possibly after returning.
+using ListSitePrivacy = base::FunctionRef<void(SitePrivacyFound found)>;
+
+// Carries out `set_site_privacy`: sets `site`'s mode in `profile`, or with
+// none goes back to the profile's, or says why not.
+using SetSitePrivacy = base::FunctionRef<base::expected<void, std::string>(
+    const std::string& profile,
+    const std::string& site,
+    std::optional<AdBlockingMode> mode)>;
 
 // Runs once with the id of the extension `load_unpacked` loaded, or the
 // reason it did not load.
@@ -560,9 +614,24 @@ using DisableWhileTyping =
     base::FunctionRef<base::expected<bool, std::string>(
         std::optional<bool> enabled)>;
 
-// The Chrome DevTools Protocol methods `devtools` sends. Page.navigate goes
-// only to http and https addresses.
+// Domicile's own `devtools` methods, which the engine answers itself: a file
+// request an agent's press or key set off waits for the agent, not the shell.
+//
+//   Domicile.fileChooser -> {"chooser":{"mode":"open-multiple",
+//                            "accept":["mp4"],"suggestedName":"",
+//                            "folder":""}}, or {} when none waits
+//   Domicile.chooseFiles {"files":["/abs/path"]} or {"cancel":true} -> {}
+//
+// `mode` and the rest are the `domicile-file-chooser` event's. See
+// docs/architecture/AGENT-SEATS.md.
+inline constexpr char kFileChooserMethod[] = "Domicile.fileChooser";
+inline constexpr char kChooseFilesMethod[] = "Domicile.chooseFiles";
+
+// The methods `devtools` sends: Chrome DevTools Protocol methods and
+// Domicile's own. Page.navigate goes only to http and https addresses.
 inline constexpr std::string_view kDevToolsMethods[] = {
+    kChooseFilesMethod,
+    kFileChooserMethod,
     "Accessibility.getFullAXTree",
     "Accessibility.getPartialAXTree",
     "Accessibility.queryAXTree",
@@ -587,11 +656,29 @@ using DevToolsAnswered =
     base::OnceCallback<void(base::expected<base::DictValue, std::string>)>;
 
 // Carries out `devtools`: sends `method` with `params` to browser window
-// `window`'s page. Runs `answered` once, possibly after returning.
-using SendDevTools = base::FunctionRef<void(const std::string& window,
-                                            const std::string& method,
-                                            base::DictValue params,
-                                            DevToolsAnswered answered)>;
+// `window`'s page, for agent seat `agent` when one is named. Runs `answered`
+// once, possibly after returning.
+using SendDevTools =
+    base::FunctionRef<void(const std::string& window,
+                           const std::optional<std::string>& agent,
+                           const std::string& method,
+                           base::DictValue params,
+                           DevToolsAnswered answered)>;
+
+// A browser window as the user has it now, for `browser_windows`.
+struct BrowserWindowLayout {
+  std::string id;
+  // Whether the shell's focused page is this window's.
+  bool focused = false;
+  // Its page's size in CSS pixels as the shell lays it out; 0 by 0 while the
+  // shell doesn't draw it.
+  int width = 0;
+  int height = 0;
+};
+
+// Carries out `browser_windows`: every browser window, in open order.
+using ListBrowserWindowLayouts =
+    base::FunctionRef<std::vector<BrowserWindowLayout>()>;
 
 // Carries out `set_log_levels`: logs at `min_level` and VLOGs at `vmodule` in
 // every engine process, and in those started later.
@@ -606,6 +693,8 @@ struct CommandActions {
   HasBrowserProfile has_browser_profile;
   ListSitePermissions list_site_permissions;
   SetSitePermission set_site_permission;
+  ListSitePrivacy list_site_privacy;
+  SetSitePrivacy set_site_privacy;
   LoadUnpacked load_unpacked;
   UninstallExtension uninstall_extension;
   ListConfigExtensions list_config_extensions;
@@ -625,6 +714,7 @@ struct CommandActions {
   DisableWhileTyping disable_while_typing;
   SendDevTools send_devtools;
   SetLogLevels set_log_levels;
+  ListBrowserWindowLayouts list_browser_windows;
 };
 
 // Receives the reply line, including its trailing newline.
@@ -632,7 +722,7 @@ using CommandReply = base::OnceCallback<void(std::string)>;
 
 // Answers one request line (without its newline). `reply` runs once: before
 // this returns, except for `load_shell`, `run_app`, `open_url`,
-// `load_unpacked`, `browser_profiles`, `history`, `visits`, `delete_history`,
+// `load_unpacked`, `browser_profiles`, `site_privacy`, `history`, `visits`, `delete_history`,
 // `clear_browsing_data`, `site_data`, `clear_site_data` and `devtools`, which
 // answer once their action is done.
 void AnswerCommand(std::string_view line,

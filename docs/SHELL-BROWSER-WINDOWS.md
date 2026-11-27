@@ -234,6 +234,18 @@ user's and every other partition, like a separate browser profile:
   `document.visibilityState` is `hidden`, timers slow and nothing paints.
   Showing the view shows the page. The page hears a hide 100ms late, so a
   view that is shown again within that time never reads `hidden`.
+- **Hidden pages are unloaded while memory is short**, much as Chrome unloads
+  tabs: a window no `<webview>` shows, or whose view is not rendered
+  (`display: none`). The engine unloads one every five seconds, the one hidden
+  longest first. A page stays for ten minutes after it is hidden, while it
+  plays audio, records, is captured or holds what the user typed, and in an app
+  window. An unloaded window `isDiscarded`, and keeps its history and scroll;
+  its page loads when a `<webview>` shows it. To extensions the unloaded page's
+  tab closes and a new one opens.
+  - `browser.discard(id)` unloads a hidden one now.
+  - `browser.on("memoryShort", (ids) => …)` hands the choice to your shell:
+    while it listens, the engine unloads nothing. `ids` are the windows it
+    would unload, hidden longest first.
 - **Lay out a hidden window while it `isCaptured`.** A screenshot, a picker's
   preview or a screen cast of the page alone sets it, and `browser.on("change")`
   fires. A page with no layout box draws nothing, so the capture would get no
@@ -395,7 +407,8 @@ The guest has no built-in browser behavior:
 Bind browser keys yourself:
 
 - `domicile-guest-keydown`: a `KeyboardEvent` for each chord (Ctrl, Alt or
-  Meta held) the page did not `preventDefault`. Plain keys never arrive.
+  Meta held) the page did not `preventDefault`. Plain keys never arrive, nor do
+  the keys of an [extension's command](SHELL-EXTENSIONS.md#commands).
 - `domicile-guest-keyup`: a `KeyboardEvent` for each modifier (Alt, Control,
   Meta or Shift) let go of that the page did not `preventDefault`. With
   `domicile-guest-keydown`, it tells a lone Alt tap from Alt held for a chord.
@@ -435,6 +448,8 @@ Draw the context menu yourself:
   `save-link-as`, `copy-image`, `copy-media-address`, `save-media-as`,
   `picture-in-picture` (enters, or leaves when in), the edit commands (`cut`,
   `paste`, …), `add-to-dictionary` and `inspect`. A save asks `domicile-file-chooser` where. See `WEBVIEW_CONTEXT_MENU_ACTIONS`.
+- `event.extensionItems` is the items extensions add, as JSON for `appMenu`,
+  and `event.runExtensionItem(id)` runs one ([Menus](SHELL-EXTENSIONS.md#menus)).
 - Back, reload and "open in new window" (`browser.open`) need no menu
   action.
 - `view.inspect()` opens DevTools for the page in a new browser window. It
@@ -472,6 +487,11 @@ no opener, as in Chrome.
 The new window's `opener` is the `id` of the browser window whose page opened
 it, so you can open it from there, or `undefined` for a window nothing opened
 and one a plain `<webview>`'s page opened.
+
+A window an agent opened (`domicile open --agent`) lists its seat as `agent`,
+such as `agent-3`. Open it without taking the user's focus: the agent's own
+keyboard goes in it, and the desk's seats say it holds it
+([AGENT-SEATS.md](architecture/AGENT-SEATS.md)).
 
 ## Views
 
@@ -835,7 +855,9 @@ save all fire `domicile-file-chooser`. The browser shows no dialog; you draw
 the picker. A dialog from the shell's own page asks the desktop's
 FileChooser portal instead, as an application's does
 ([PORTALS.md](PORTALS.md)). A folder dropped on a page's `webkitdirectory`
-input uploads its files, with no picker.
+input uploads its files, with no picker. A chooser an agent's press or key
+opened never reaches the shell: the agent answers it
+([AGENT-SEATS.md](/docs/architecture/AGENT-SEATS.md#file-choosers)).
 
 <!-- tab: React -->
 
@@ -1000,6 +1022,30 @@ frame.addEventListener(WEBVIEW_PERMISSION_REQUEST_EVENT, (event) => {
 
 Manganese draws both in the address bar's site permissions panel
 (`window-management/browser/SitePermissions.tsx`).
+
+## Ads and trackers
+
+The engine blocks ads and trackers in every website's page, in its profile's
+mode ([AD-BLOCKING.md](architecture/AD-BLOCKING.md)). A view tells the shell
+enough to draw a shield like Brave's, and turns blocking off for a page's site
+or its window:
+
+- `view.privacySite`: the site a setting is kept for, the page's registrable
+  domain such as `nytimes.com`, or its host when it has none. `""` for a page
+  that isn't `http` or `https`, which is never blocked.
+- `view.blockAdsAndTrackers`: `standard`, `strict` or `off`
+  (`WEBVIEW_AD_BLOCKING_MODES`).
+- `view.blockAdsAndTrackersSetFor`: `profile` (the config's), `site` or
+  `window`.
+- `view.blockedCount`: requests blocked since the page loaded.
+- `view.setBlockAdsAndTrackers(mode, scope)` sets the mode for the site, kept
+  in the profile (`"site"`), or for this window until it closes
+  (`"window"`), over the site's. `null` goes back to the site's or the
+  profile's. It applies from the next request, so reload the page to see it.
+  A private profile's sites are kept until its last page closes.
+
+`domicile-site-privacy-change` signals a change to any of them, the count at
+most every quarter second.
 
 ## Devices
 

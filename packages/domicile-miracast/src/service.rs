@@ -1,5 +1,5 @@
-//! `net.domicile.Miracast1` at `/net/domicile/Miracast`: the TVs found, and
-//! casts to them. The shell reaches it through `domicile.dbus`; see
+//! `com.domicile_desktop.Miracast1` at `/com/domicile_desktop/Miracast`: the
+//! TVs found, and casts to them. The shell reaches it through `domicile.dbus`; see
 //! `miracastCast` in `@domicile-desktop/sdk/cast`.
 //!
 //! - `Sinks() -> a(ss)`: each TV's id and name. `SinksChanged` says to ask
@@ -14,15 +14,15 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use zbus::blocking::Connection;
+use zbus::Connection;
 
 use crate::cast::{self, Buses, Tv};
 use crate::mice::Display;
 use crate::p2p::Peer;
 
-pub const NAME: &str = "net.domicile.Miracast";
-pub const PATH: &str = "/net/domicile/Miracast";
-pub const INTERFACE: &str = "net.domicile.Miracast1";
+pub const NAME: &str = "com.domicile_desktop.Miracast";
+pub const PATH: &str = "/com/domicile_desktop/Miracast";
+pub const INTERFACE: &str = "com.domicile_desktop.Miracast1";
 
 /// What the finders saw, and the casts running.
 #[derive(Default)]
@@ -77,7 +77,8 @@ impl State {
 
 /// Says the TVs changed.
 fn sinks_changed(connection: &Connection) {
-    let _ = connection.emit_signal(None::<()>, PATH, INTERFACE, "SinksChanged", &());
+    let _ =
+        zbus::block_on(connection.emit_signal(None::<()>, PATH, INTERFACE, "SinksChanged", &()));
 }
 
 /// Records what the Wi-Fi Direct finder saw.
@@ -96,7 +97,7 @@ pub fn displays_found(state: &Mutex<State>, connection: &Connection, displays: V
     sinks_changed(connection);
 }
 
-#[zbus::interface(name = "net.domicile.Miracast1")]
+#[zbus::interface(name = "com.domicile_desktop.Miracast1")]
 impl Miracast {
     fn sinks(&self) -> Vec<(String, String)> {
         self.state
@@ -124,7 +125,7 @@ impl Miracast {
             state.casts.insert(cast.clone(), stop.clone());
             tv
         };
-        let connection = Connection::from(connection.clone());
+        let connection = connection.clone();
         let (state, buses, name, id) = (
             self.state.clone(),
             self.buses.clone(),
@@ -133,8 +134,13 @@ impl Miracast {
         );
         thread::spawn(move || {
             let started = || {
-                let _ =
-                    connection.emit_signal(None::<()>, PATH, INTERFACE, "Started", &(id.as_str(),));
+                let _ = zbus::block_on(connection.emit_signal(
+                    None::<()>,
+                    PATH,
+                    INTERFACE,
+                    "Started",
+                    &(id.as_str(),),
+                ));
             };
             let ended = cast::run(&buses, &tv, &name, &stop, started);
             let reason = ended
@@ -144,13 +150,13 @@ impl Miracast {
             if let Ok(mut state) = state.lock() {
                 state.casts.remove(&id);
             }
-            let _ = connection.emit_signal(
+            let _ = zbus::block_on(connection.emit_signal(
                 None::<()>,
                 PATH,
                 INTERFACE,
                 "Ended",
                 &(id.as_str(), reason.as_str()),
-            );
+            ));
         });
         Ok(cast)
     }

@@ -14,13 +14,15 @@ use std::path::{Path, PathBuf};
 
 use domicile_host::system::DisplayPower;
 use domicile_protocol::{
-    AgentReach, DeskRect, DeskShot, DesktopStatus, DisplayChange, EmulatedInput, HostMessage,
-    KnownAgents, ListedDisplay, ListedInput, ListedWindow, LogLevel, LogLevels, MonitorInfo, Scale,
-    ShellBinding, ShellCommandHelp, Subsystem, Theme, WatchTopic, WindowAct, WindowKind,
+    AgentReach, ChromeMessage, ConfigKey, ConfigOverride, DeskRect, DeskShot, DesktopStatus,
+    DisplayChange, EmulatedInput, HostMessage, KnownAgents, ListedDisplay, ListedInput,
+    ListedWindow, LogLevel, LogLevels, MonitorInfo, Scale, ShellBinding, ShellCommandHelp,
+    Subsystem, Theme, WatchTopic, WindowAct, WindowKind,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::browser_profiles::BrowserProfileList;
+use crate::command::BrowserWindowLayout;
 use crate::extensions::{ExtensionSettings, InstalledExtension};
 use crate::history::{BrowsingData, HistoryItem, HistoryQuery};
 use crate::log_export::{report, Report};
@@ -31,6 +33,7 @@ use crate::recent_log::{local_offset, Said};
 use crate::shell_path::{Shell, ShellFiles};
 use crate::site_data::SiteData;
 use crate::site_permissions::{SitePermission, SiteSettings};
+use crate::site_privacy::{SitePrivacy, SitePrivacyChange};
 
 /// The file a built shell's declared options are written to, beside its
 /// module. See `docs/WRITING-A-SHELL.md#options`.
@@ -58,10 +61,16 @@ pub enum Request {
     /// Open this URL in a browser window: in browser profile `profile`, or
     /// with none in the one its site opens in. The client converts paths
     /// with [`crate::address`].
+    ///
+    /// With `agent`, it opens for that agent session: the shell opens it
+    /// without the user's focus, and the agent's seat holds it (`domicile
+    /// open --agent`).
     OpenUrl {
         url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         profile: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<u32>,
     },
     /// Open this URL in an app window: a browser window the shell draws
     /// without an address bar. See `docs/architecture/WEB-APPS.md`.
@@ -109,7 +118,16 @@ pub enum Request {
     /// recording. See `SystemRequest::ScreenRecord`.
     ScreenRecord,
     /// Send this command to the shell, as a `send-shell` keybinding would.
-    SendShell { command: Vec<String> },
+    /// With `window`, it acts on that window, not the user's focus; with
+    /// `agent` too, only if that agent session's seat holds it. See
+    /// `SystemRequest::SendShell`.
+    SendShell {
+        command: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<u32>,
+    },
     /// Report the files the Settings app edits. Asked by
     /// `domicile-app-host`, which reads and writes them itself.
     SettingsFiles,
@@ -118,6 +136,12 @@ pub enum Request {
     SitePermissions,
     /// Store one site's setting in the engine.
     SetSitePermission { site: SitePermission },
+    /// Report every browser profile's sites with their own ad blocking. The
+    /// engine keeps them.
+    SitePrivacy,
+    /// Set one site's ad blocking in a browser profile, or go back to the
+    /// profile's.
+    SetSitePrivacy { change: SitePrivacyChange },
     /// Load the unpacked extension in this absolute directory into every
     /// browser profile. It stays until uninstalled.
     LoadUnpacked { directory: PathBuf },
@@ -179,6 +203,14 @@ pub enum Request {
     /// by. Asked by `domicile-app-host`, so Settings offers HDR only where a
     /// monitor takes it.
     Monitors,
+    /// Lay `value`, JSON text, over the config at `path` until the desktop
+    /// stops. Answered with the temporary changes. Asked by
+    /// `domicile-app-host` for Settings. See `docs/SETTINGS.md`.
+    SetConfigOverride { path: Vec<ConfigKey>, value: String },
+    /// End the temporary changes at or under each of `paths`.
+    ResetConfigOverrides { paths: Vec<Vec<ConfigKey>> },
+    /// Report the temporary changes to the config.
+    ConfigOverrides,
     /// Report every display: its names, mode, layout and whether it is lit.
     /// The compositor owns the displays, so this works with any shell.
     Displays,
@@ -190,6 +222,9 @@ pub enum Request {
     /// Report the commands the shell runs for [`Request::SendShell`], as its
     /// pages described them.
     ShellCommands,
+    /// Report what the shell says can follow `command`, the `send-shell`
+    /// words typed so far. See `SystemRequest::CompleteShell`.
+    CompleteShell { command: Vec<String> },
     /// Report the keys and gestures the shell binds, in each binding mode.
     ShellBindings,
     /// Report the keyboards, pointers and touch devices the engine reads.
@@ -232,9 +267,17 @@ pub enum Request {
     /// Lock the desktop. The compositor owns the lock, so this works with
     /// any shell that draws a lock screen.
     Lock,
-    /// Focus, close or kill the native window `id`, as `domicile
-    /// list-windows` prints it.
-    ActOnWindow { id: String, act: WindowAct },
+    /// Focus, close or kill the window `id`, as `domicile list-windows`
+    /// prints it, or the window agent session `agent`'s keyboard is in, or
+    /// the user's when neither is given. With `agent`, only a window its seat
+    /// holds.
+    ActOnWindow {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        act: WindowAct,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<u32>,
+    },
     /// Write a PNG of the desk, or of its `area`, to `file`, its longer
     /// side at most `fit` pixels. See `domicile screenshot --fit`.
     ShootDesk {
@@ -243,19 +286,27 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         area: Option<DeskRect>,
     },
-    /// Send `input` to the desk, or to agent session `agent`'s own seat.
-    /// See `domicile pointer`, `key` and `type`.
+    /// Send `input` to the desk, or to agent session `agent`'s own seat,
+    /// focusing `window` with that keyboard first when given. See `domicile
+    /// pointer`, `key` and `type`.
     Emulate {
         input: Vec<EmulatedInput>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         agent: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window: Option<String>,
     },
     /// Send DevTools Protocol `method` with `params` to browser window
     /// `window`, as `domicile list-windows` prints it, or to its view
-    /// `view`. See `domicile devtools`.
+    /// `view`, for agent session `agent` when given. Without `window`, to
+    /// the window `agent`'s keyboard is in, or the user's. See `domicile
+    /// devtools`.
     #[serde(rename = "devtools")]
     DevTools {
-        window: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         view: Option<String>,
         method: String,
@@ -411,6 +462,9 @@ pub enum Response {
     /// Answers `site_permissions`.
     SitePermissions(SiteSettings),
 
+    /// Answers `site_privacy`.
+    SitePrivacy { sites: Vec<SitePrivacy> },
+
     /// The engine stored the site's setting, the preferred media device or
     /// whether the extension is enabled.
     Stored,
@@ -469,6 +523,10 @@ pub enum Response {
     /// Answers `monitors`.
     Monitors { monitors: Vec<MonitorInfo> },
 
+    /// Answers `set_config_override`, `reset_config_overrides` and
+    /// `config_overrides`: the temporary changes after the request.
+    ConfigOverrides { overrides: Vec<ConfigOverride> },
+
     /// Answers `displays`.
     Displays { displays: Vec<ListedDisplay> },
 
@@ -484,6 +542,9 @@ pub enum Response {
 
     /// Answers `shell_commands`.
     ShellCommands { commands: Vec<ShellCommandHelp> },
+
+    /// Answers `complete_shell`.
+    ShellValues { values: Vec<String> },
 
     /// Answers `shell_bindings`.
     ShellBindings { bindings: Vec<ShellBinding> },
@@ -541,10 +602,13 @@ pub fn parse_response(line: &str) -> Result<Response, serde_json::Error> {
 pub type LoadShell<'a> = &'a dyn Fn(&Shell) -> Result<(), String>;
 
 /// Tells the engine to open an address in the shell, in a browser profile or
-/// with none in the one its site opens in.
+/// with none in the one its site opens in, for an agent session if one is
+/// named. Returns the window it opened, which an engine that predates agents'
+/// browser windows doesn't name.
 ///
 /// [`crate::command_socket::open_url`] in a desktop; a closure in tests.
-pub type OpenUrl<'a> = &'a dyn Fn(&str, Option<&str>) -> Result<(), String>;
+pub type OpenUrl<'a> =
+    &'a dyn Fn(&str, Option<&str>, Option<u32>) -> Result<Option<String>, String>;
 
 /// Tells the engine to open an address in an app window with an id, or to
 /// reuse the open one as [`AppReuse`] says, a new one in a browser profile or
@@ -582,10 +646,12 @@ pub type Screenshot<'a> = &'a dyn Fn(Option<&Path>) -> Result<Shot, String>;
 /// tests.
 pub type ScreenRecord<'a> = &'a dyn Fn() -> Result<Option<PathBuf>, String>;
 
-/// Tells the compositor to send the shell a command.
+/// Tells the compositor to send the shell a command, on a window and for an
+/// agent session if given.
 ///
 /// [`crate::compositor_socket::send_shell`] in a desktop; a closure in tests.
-pub type SendShell<'a> = &'a dyn Fn(&[String]) -> Result<Option<String>, String>;
+pub type SendShell<'a> =
+    &'a dyn Fn(&[String], Option<&str>, Option<u32>) -> Result<Option<String>, String>;
 
 /// Asks the engine for every permission's default and every site's own
 /// setting.
@@ -599,6 +665,18 @@ pub type SitePermissions<'a> = &'a dyn Fn() -> Result<SiteSettings, String>;
 /// [`crate::command_socket::set_site_permission`] in a desktop; a closure in
 /// tests.
 pub type SetSitePermission<'a> = &'a dyn Fn(&SitePermission) -> Result<(), String>;
+
+/// Asks the engine for every browser profile's sites with their own ad
+/// blocking.
+///
+/// [`crate::command_socket::site_privacy`] in a desktop; a closure in tests.
+pub type ListSitePrivacy<'a> = &'a dyn Fn() -> Result<Vec<SitePrivacy>, String>;
+
+/// Tells the engine to set a site's ad blocking in a browser profile.
+///
+/// [`crate::command_socket::set_site_privacy`] in a desktop; a closure in
+/// tests.
+pub type SetSitePrivacy<'a> = &'a dyn Fn(&SitePrivacyChange) -> Result<(), String>;
 
 /// Tells the engine to load an unpacked extension, returning its id.
 ///
@@ -742,11 +820,12 @@ pub struct AgentLetIn {
 pub type Emulating<'a> = &'a dyn Fn(&[EmulatedInput], Option<u32>) -> Result<(), String>;
 
 /// Sends a DevTools Protocol method to a browser window, by its id in the
-/// engine, and returns its result.
+/// engine, and returns its result. The second argument is the agent session
+/// it is sent for, if any: a page it drives copies to that seat's clipboard.
 ///
 /// [`crate::command_socket::devtools`] in a desktop; a closure in tests.
 pub type SendDevTools<'a> =
-    &'a dyn Fn(&str, &str, &serde_json::Value) -> Result<serde_json::Value, String>;
+    &'a dyn Fn(&str, Option<u32>, &str, &serde_json::Value) -> Result<serde_json::Value, String>;
 
 /// Asks the compositor to change how a monitor is set up.
 ///
@@ -769,6 +848,13 @@ pub type ReadingLogs<'a> = &'a dyn Fn() -> Result<Vec<Said>, String>;
 /// [`crate::compositor_socket::monitors`] in a desktop; a closure in tests.
 pub type ListMonitors<'a> = &'a dyn Fn() -> Result<Vec<MonitorInfo>, String>;
 
+/// Sends the compositor a request of the temporary changes to the config, and
+/// returns them after it.
+///
+/// [`crate::compositor_socket::config_overrides`] in a desktop; a closure in
+/// tests.
+pub type ChangingTheConfig<'a> = &'a dyn Fn(ChromeMessage) -> Result<Vec<ConfigOverride>, String>;
+
 /// Asks the compositor for every display.
 ///
 /// [`crate::compositor_socket::displays`] in a desktop; a closure in tests.
@@ -778,6 +864,13 @@ pub type ListDisplays<'a> = &'a dyn Fn() -> Result<Vec<ListedDisplay>, String>;
 ///
 /// [`crate::compositor_socket::windows`] in a desktop; a closure in tests.
 pub type ListWindows<'a> = &'a dyn Fn() -> Result<Vec<ListedWindow>, String>;
+
+/// Asks the engine for each browser window's focus and size, which the
+/// compositor's list lacks.
+///
+/// [`crate::command_socket::browser_windows`] in a desktop; a closure in
+/// tests.
+pub type ListBrowserLayouts<'a> = &'a dyn Fn() -> Result<Vec<BrowserWindowLayout>, String>;
 
 /// Asks the compositor how the desktop is.
 ///
@@ -789,6 +882,12 @@ pub type AskStatus<'a> = &'a dyn Fn() -> Result<DesktopStatus, String>;
 /// [`crate::compositor_socket::shell_commands`] in a desktop; a closure in
 /// tests.
 pub type ListShellCommands<'a> = &'a dyn Fn() -> Result<Vec<ShellCommandHelp>, String>;
+
+/// Asks the shell what can follow the `send-shell` words typed.
+///
+/// [`crate::compositor_socket::complete_shell`] in a desktop; a closure in
+/// tests.
+pub type CompleteShell<'a> = &'a dyn Fn(&[String]) -> Result<Vec<String>, String>;
 
 /// Asks the compositor which keys and gestures the shell binds.
 ///
@@ -849,6 +948,8 @@ pub struct Desktop<'a> {
     pub send: SendShell<'a>,
     pub permissions: SitePermissions<'a>,
     pub set_permission: SetSitePermission<'a>,
+    pub site_privacy: ListSitePrivacy<'a>,
+    pub set_site_privacy: SetSitePrivacy<'a>,
     pub load_unpacked: LoadUnpacked<'a>,
     pub uninstall_extension: UninstallExtension<'a>,
     pub config_extensions: ConfigExtensions<'a>,
@@ -882,10 +983,13 @@ pub struct Desktop<'a> {
     pub logs_in_the_journal: bool,
     pub logs: ReadingLogs<'a>,
     pub monitors: ListMonitors<'a>,
+    pub config_overrides: ChangingTheConfig<'a>,
     pub displays: ListDisplays<'a>,
     pub windows: ListWindows<'a>,
+    pub browser_layouts: ListBrowserLayouts<'a>,
     pub status: AskStatus<'a>,
     pub shell_commands: ListShellCommands<'a>,
+    pub complete_shell: CompleteShell<'a>,
     pub shell_bindings: ListShellBindings<'a>,
     pub inputs: ListInputs<'a>,
     pub idle_time: AskIdleTime<'a>,
@@ -971,12 +1075,14 @@ pub fn answer(line: &str, desktop: &Desktop) -> String {
                 Err(why) => Response::Refused { why },
             })
         }
-        Ok(Request::OpenUrl { url, profile }) => {
-            to_line(&match (desktop.open)(&url, profile.as_deref()) {
-                Ok(()) => Response::Opened,
-                Err(why) => Response::Refused { why },
-            })
-        }
+        Ok(Request::OpenUrl {
+            url,
+            profile,
+            agent,
+        }) => to_line(&match opened(desktop, &url, profile.as_deref(), agent) {
+            Ok(()) => Response::Opened,
+            Err(why) => Response::Refused { why },
+        }),
         Ok(Request::OpenApp {
             url,
             id,
@@ -1014,7 +1120,11 @@ pub fn answer(line: &str, desktop: &Desktop) -> String {
             Ok(None) => Response::Canceled,
             Err(why) => Response::Refused { why },
         }),
-        Ok(Request::SendShell { command }) => to_line(&match (desktop.send)(&command) {
+        Ok(Request::SendShell {
+            command,
+            window,
+            agent,
+        }) => to_line(&match (desktop.send)(&command, window.as_deref(), agent) {
             Ok(output) => Response::Sent { output },
             Err(why) => Response::Refused { why },
         }),
@@ -1036,6 +1146,16 @@ pub fn answer(line: &str, desktop: &Desktop) -> String {
         }),
         Ok(Request::SetSitePermission { site }) => {
             to_line(&match (desktop.set_permission)(&site) {
+                Ok(()) => Response::Stored,
+                Err(why) => Response::Refused { why },
+            })
+        }
+        Ok(Request::SitePrivacy) => to_line(&match (desktop.site_privacy)() {
+            Ok(sites) => Response::SitePrivacy { sites },
+            Err(why) => Response::Refused { why },
+        }),
+        Ok(Request::SetSitePrivacy { change }) => {
+            to_line(&match (desktop.set_site_privacy)(&change) {
                 Ok(()) => Response::Stored,
                 Err(why) => Response::Refused { why },
             })
@@ -1138,11 +1258,22 @@ pub fn answer(line: &str, desktop: &Desktop) -> String {
             Ok(monitors) => Response::Monitors { monitors },
             Err(why) => Response::Refused { why },
         }),
+        Ok(Request::SetConfigOverride { path, value }) => to_line(&overridden(
+            desktop,
+            ChromeMessage::SetConfigOverride { path, value },
+        )),
+        Ok(Request::ResetConfigOverrides { paths }) => to_line(&overridden(
+            desktop,
+            ChromeMessage::ResetConfigOverrides { paths },
+        )),
+        Ok(Request::ConfigOverrides) => {
+            to_line(&overridden(desktop, ChromeMessage::WhichConfigOverrides))
+        }
         Ok(Request::Displays) => to_line(&match (desktop.displays)() {
             Ok(displays) => Response::Displays { displays },
             Err(why) => Response::Refused { why },
         }),
-        Ok(Request::Windows) => to_line(&match (desktop.windows)() {
+        Ok(Request::Windows) => to_line(&match laid_out_windows(desktop) {
             Ok(windows) => Response::Windows { windows },
             Err(why) => Response::Refused { why },
         }),
@@ -1157,6 +1288,12 @@ pub fn answer(line: &str, desktop: &Desktop) -> String {
             Ok(commands) => Response::ShellCommands { commands },
             Err(why) => Response::Refused { why },
         }),
+        Ok(Request::CompleteShell { command }) => {
+            to_line(&match (desktop.complete_shell)(&command) {
+                Ok(values) => Response::ShellValues { values },
+                Err(why) => Response::Refused { why },
+            })
+        }
         Ok(Request::ShellBindings) => to_line(&match (desktop.shell_bindings)() {
             Ok(bindings) => Response::ShellBindings { bindings },
             Err(why) => Response::Refused { why },
@@ -1191,31 +1328,45 @@ pub fn answer(line: &str, desktop: &Desktop) -> String {
             Ok(()) => Response::Done,
             Err(why) => Response::Refused { why },
         }),
-        Ok(Request::ActOnWindow { id, act }) => to_line(&match (desktop.act_on_window)(&id, act) {
-            Ok(()) => Response::Done,
-            Err(why) => Response::Refused { why },
-        }),
+        Ok(Request::ActOnWindow { id, act, agent }) => {
+            to_line(&match aimed_window(desktop, id.as_deref(), agent)
+                .and_then(|window| (desktop.act_on_window)(&window, act))
+            {
+                Ok(()) => Response::Done,
+                Err(why) => Response::Refused { why },
+            })
+        }
         Ok(Request::ShootDesk { file, fit, area }) => {
             to_line(&match (desktop.shoot_desk)(&file, fit, area) {
                 Ok(shot) => Response::DeskShot { shot },
                 Err(why) => Response::Refused { why },
             })
         }
-        Ok(Request::Emulate { input, agent }) => to_line(&match (desktop.emulate)(&input, agent) {
+        Ok(Request::Emulate {
+            input,
+            agent,
+            window,
+        }) => to_line(&match emulated_in(desktop, input, agent, window) {
             Ok(()) => Response::Done,
             Err(why) => Response::Refused { why },
         }),
         Ok(Request::DevTools {
             window,
+            agent,
             view,
             method,
             params,
-        }) => to_line(
-            &match driven(desktop, &window, view.as_deref(), &method, &params) {
-                Ok(result) => Response::DevTools { result },
-                Err(why) => Response::Refused { why },
-            },
-        ),
+        }) => to_line(&match driven(
+            desktop,
+            window.as_deref(),
+            agent,
+            view.as_deref(),
+            &method,
+            &params,
+        ) {
+            Ok(result) => Response::DevTools { result },
+            Err(why) => Response::Refused { why },
+        }),
         Ok(Request::ConfigureDisplay { display, change }) => {
             to_line(&match (desktop.configure_display)(&display, &change) {
                 Ok(()) => Response::Done,
@@ -1292,6 +1443,148 @@ pub fn answer(line: &str, desktop: &Desktop) -> String {
     }
 }
 
+/// Opens `url` as [`Request::OpenUrl`] asks. For agent session `agent`, its
+/// seat's keyboard then goes in the window, so the seat holds it from the
+/// start.
+///
+/// A seat that can't take the window is refused, saying the window is open
+/// all the same, so the agent doesn't open the address again.
+fn opened(
+    desktop: &Desktop,
+    url: &str,
+    profile: Option<&str>,
+    agent: Option<u32>,
+) -> Result<(), String> {
+    let window = (desktop.open)(url, profile, agent)?;
+    let Some(session) = agent else {
+        return Ok(());
+    };
+    let window = window.ok_or(
+        "the address opened, but the engine didn't name its window, so your seat can't \
+         hold it. Don't open it again",
+    )?;
+    (desktop.emulate)(
+        &[EmulatedInput::Focus {
+            window: window.clone(),
+        }],
+        Some(session),
+    )
+    .map_err(|why| {
+        format!(
+            "the address opened in browser window {window}, but your seat can't hold it \
+                 yet: {why}. Don't open it again; act in window {window} once you can"
+        )
+    })
+}
+
+/// The window agent session `agent`'s keyboard is in, or the user's
+/// keyboard when `agent` is `None`: the window a command that names none acts
+/// on. Browser windows' focus is the engine's, as [`Request::Windows`] answers
+/// it.
+pub fn focused_window(
+    windows: &[ListedWindow],
+    agent: Option<u32>,
+) -> Result<&ListedWindow, String> {
+    match agent {
+        None => windows
+            .iter()
+            .find(|window| window.focused)
+            .ok_or_else(|| "no window has the keyboard: name one".to_string()),
+        Some(session) => {
+            let seat = format!("agent-{session}");
+            windows
+                .iter()
+                .find(|window| window.focused_by.as_deref() == Some(seat.as_str()))
+                .ok_or_else(|| {
+                    "your seat's keyboard is in no window: name one, or focus one first".to_string()
+                })
+        }
+    }
+}
+
+/// The window `said` names, or the focused one as [`focused_window`] finds
+/// it. With `agent`, only a window that agent's seat holds, so an agent acts
+/// on its own windows.
+fn aimed_window(
+    desktop: &Desktop,
+    said: Option<&str>,
+    agent: Option<u32>,
+) -> Result<String, String> {
+    // The compositor says when there is no such window.
+    if let (Some(said), None) = (said, agent) {
+        return Ok(said.to_string());
+    }
+    let windows = laid_out_windows(desktop)?;
+    let window = match said {
+        None => focused_window(&windows, agent)?,
+        Some(said) => windows
+            .iter()
+            .find(|window| window.id == said)
+            .ok_or_else(|| format!("there is no window {said}; list-windows lists them"))?,
+    };
+    if let Some(session) = agent {
+        if window.held_by.as_deref() != Some(format!("agent-{session}").as_str()) {
+            return Err(format!(
+                "your seat doesn't hold window {}: focus it first",
+                window.id
+            ));
+        }
+    }
+    Ok(window.id.clone())
+}
+
+/// Sends `input` as [`Request::Emulate`] asks: into `window` when given,
+/// which agent session `agent`'s keyboard focuses first, or the user's.
+fn emulated_in(
+    desktop: &Desktop,
+    input: Vec<EmulatedInput>,
+    agent: Option<u32>,
+    window: Option<String>,
+) -> Result<(), String> {
+    match (window, agent) {
+        (None, agent) => (desktop.emulate)(&input, agent),
+        (Some(window), Some(session)) => (desktop.emulate)(
+            &[vec![EmulatedInput::Focus { window }], input].concat(),
+            Some(session),
+        ),
+        (Some(window), None) => {
+            (desktop.act_on_window)(&window, WindowAct::Focus)?;
+            (desktop.emulate)(&input, None)
+        }
+    }
+}
+
+/// The compositor's windows, each browser window with the engine's focus
+/// and size for it. The shell's focused page has the user's keyboard only
+/// while no native window has it.
+fn laid_out_windows(desktop: &Desktop) -> Result<Vec<ListedWindow>, String> {
+    let windows = (desktop.windows)()?;
+    let layouts = (desktop.browser_layouts)()?;
+    let native_focused = windows
+        .iter()
+        .any(|window| window.kind == WindowKind::Native && window.focused);
+    Ok(windows
+        .into_iter()
+        .map(|window| {
+            let Some(layout) = window
+                .engine_id
+                .as_ref()
+                .and_then(|id| layouts.iter().find(|layout| layout.id == *id))
+            else {
+                return window;
+            };
+            ListedWindow {
+                focused: layout.focused && !native_focused,
+                size: layout
+                    .width
+                    .zip(layout.height)
+                    .map(|(width, height)| [f64::from(width), f64::from(height)]),
+                ..window
+            }
+        })
+        .collect())
+}
+
 /// Writes the desktop's logs to `file` for `Request::ExportLogs`, answering
 /// what redaction could not hide. Read failures besides the logs' own are
 /// said in the file: the logs matter most when part of the desktop is down.
@@ -1362,7 +1655,8 @@ pub const SHELL_WINDOW: &str = "shell";
 /// neither native nor private.
 fn driven(
     desktop: &Desktop,
-    window: &str,
+    window: Option<&str>,
+    agent: Option<u32>,
     view: Option<&str>,
     method: &str,
     params: &serde_json::Value,
@@ -1370,11 +1664,18 @@ fn driven(
     if (desktop.status)()?.locked {
         return Err("the desktop is locked".to_string());
     }
+    let window = match window {
+        Some(window) => window.to_string(),
+        None => focused_window(&laid_out_windows(desktop)?, agent)?
+            .id
+            .clone(),
+    };
+    let window = window.as_str();
     // Not a window list-windows lists: the engine answers it with the shell's
     // own page.
     if window == SHELL_WINDOW {
         return match view {
-            None => (desktop.devtools)(SHELL_WINDOW, method, params),
+            None => (desktop.devtools)(SHELL_WINDOW, agent, method, params),
             Some(_) => Err(
                 "the shell holds no views; list-windows lists browser windows' views".to_string(),
             ),
@@ -1392,9 +1693,9 @@ fn driven(
     }
     match (&listed.kind, &listed.engine_id) {
         (WindowKind::Browser, Some(engine_id)) => match view {
-            None => (desktop.devtools)(engine_id, method, params),
+            None => (desktop.devtools)(engine_id, agent, method, params),
             Some(view) if listed.views.iter().any(|held| held.id == view) => {
-                (desktop.devtools)(view, method, params)
+                (desktop.devtools)(view, agent, method, params)
             }
             Some(view) => Err(format!(
                 "window {window} holds no view {view}; list-windows lists its views"
@@ -1417,6 +1718,14 @@ fn switched(to: Option<Switch>, set: DisableWhileTyping) -> Result<bool, String>
         Some(Switch::On) => set(Some(true)),
         Some(Switch::Off) => set(Some(false)),
         Some(Switch::Toggle) => set(Some(!set(None)?)),
+    }
+}
+
+/// The answer to a request of the temporary changes to the config.
+fn overridden(desktop: &Desktop, request: ChromeMessage) -> Response {
+    match (desktop.config_overrides)(request) {
+        Ok(overrides) => Response::ConfigOverrides { overrides },
+        Err(why) => Response::Refused { why },
     }
 }
 

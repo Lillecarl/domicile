@@ -42,6 +42,7 @@ const CHANGED: Readonly<
   ctrlKey: "modifierschanged",
   displays: "displayschanged",
   downloads: "downloadschanged",
+  extensionCommands: "extensioncommandschanged",
   extensions: "extensionschanged",
   focusedWindow: "focusedwindowchanged",
   highContrast: "appearancechanged",
@@ -72,6 +73,7 @@ const UNDESCRIBED: DomicileState = {
   ctrlKey: null,
   displays: null,
   downloads: null,
+  extensionCommands: null,
   extensions: null,
   focusedWindow: null,
   highContrast: null,
@@ -170,6 +172,9 @@ export class FakeDomicileHost {
   /** Every call the shell made, in order: the method's name, then its arguments. */
   readonly calls: (readonly [method: string, ...args: unknown[]])[] = [];
 
+  /** Each extension's action menu, as JSON, by its id. Empty for the rest. */
+  readonly extensionMenus = new Map<string, string>();
+
   /** The raw host the engine draws the desktop from. */
   readonly host: DomicileHost;
 
@@ -227,6 +232,11 @@ export class FakeDomicileHost {
             calls.push([name, profile, id, enabled]);
             return this.switchExtension(profile, id, enabled);
           };
+        } else if (name === "extensionMenu") {
+          return (id: string) => {
+            calls.push([name, id]);
+            return Promise.resolve(this.extensionMenus.get(id) ?? "[]");
+          };
         } else if (name === "reopenBrowserWindow") {
           return (id: string, profile: string) => {
             calls.push([name, id, profile]);
@@ -236,6 +246,20 @@ export class FakeDomicileHost {
           return (id: string) => {
             calls.push([name, id]);
             this.closeBrowser(id);
+          };
+        } else if (name === "discardBrowserWindow") {
+          return (id: string) => {
+            calls.push([name, id]);
+            this.discardBrowser(id);
+          };
+        } else if (name === "clearDownloads") {
+          return () => {
+            calls.push([name]);
+            this.set({
+              downloads: (state.downloads ?? []).filter(
+                (download) => download.state === "in-progress",
+              ),
+            });
           };
         } else if (
           name === "addEventListener" ||
@@ -298,7 +322,7 @@ export class FakeDomicileHost {
    * and `appId`. Ids count up from `"1"`; the asked-for size is 0 unless
    * `width` and `height` give one. With a `parent`, it is an Electron app's
    * view in that window, at `x` and `y`. An `opener` names the window whose
-   * page opened it. It is in `profile`, or as the
+   * page opened it, and an `agent` the seat that did. It is in `profile`, or as the
    * engine picks: none for an app window (an app module's or Electron
    * app's; `openApp` names one), else the default private profile
    * when `isPrivate` and the default one otherwise, from `browserProfiles`
@@ -307,6 +331,7 @@ export class FakeDomicileHost {
   openBrowser(
     url: string,
     {
+      agent = null,
       appId = "",
       isApp = false,
       isHidden = false,
@@ -323,6 +348,7 @@ export class FakeDomicileHost {
     }: Partial<
       Pick<
         DomicileBrowserWindow,
+        | "agent"
         | "appId"
         | "height"
         | "isApp"
@@ -348,12 +374,14 @@ export class FakeDomicileHost {
       browserWindows: [
         ...(this.#state.browserWindows ?? []),
         {
+          agent,
           appId,
           height,
           id: this.#browsersOpened.toString(),
           ignoresPointer: false,
           isApp,
           isCaptured: false,
+          isDiscarded: false,
           isHidden,
           isPrivate,
           menu: null,
@@ -423,6 +451,19 @@ export class FakeDomicileHost {
     this.set({
       browserWindows: (this.#state.browserWindows ?? []).map((window) =>
         window.id === id ? { ...window, isCaptured: captured } : window,
+      ),
+    });
+  }
+
+  /**
+   * The engine unloaded browser window `id`'s page, or with `discarded` false
+   * loaded it again, as when a `<webview>` shows it. `discardBrowserWindow`
+   * calls this too.
+   */
+  discardBrowser(id: string, discarded = true): void {
+    this.set({
+      browserWindows: (this.#state.browserWindows ?? []).map((window) =>
+        window.id === id ? { ...window, isDiscarded: discarded } : window,
       ),
     });
   }

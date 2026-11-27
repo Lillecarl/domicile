@@ -8,17 +8,21 @@ not in the Extensions page or any extension list.
 - **Config pages:** Appearance, Keyboard, Displays, Power & lock, Privacy,
   Launcher, Startup and Shell cover every key of the config
   ([SHELL-CONFIG.md](SHELL-CONFIG.md)). A change is written to the file as soon
-  as it is made, and the desktop reloads it.
-- **Extensions:** switch an extension on or off and open its options through
-  the engine. While one is on, change the settings it can use: site access,
-  local files and user scripts. What runs in private windows is a private
-  profile's extension switches, on the Profiles page. A setting the config sets
-  changes in the config, and is locked when the config is read-only; the rest
-  change through the engine
-  ([EXTENSIONS.md](architecture/EXTENSIONS.md#settings)). Load an unpacked folder, picked in the desktop's file
-  chooser, or uninstall an extension the config did not install, through the
-  engine; this works with a read-only config. The config's own uninstall by
-  editing its `extensions` lists
+  as it is made, and the desktop reloads it. A config Settings cannot write
+  takes [temporary changes](#temporary-changes).
+- **Extensions:** every installed extension, which is installed in every
+  profile, with the profiles it is on in and **Choose profiles**, which opens
+  the Profiles page. An extension is switched on or off only per profile.
+  Change the settings it can use, on or off: site access, local files and user
+  scripts, which apply in every profile. Open its options through the engine. A
+  setting the config sets changes in the config, and is locked when the config
+  is read-only; the rest change through the engine
+  ([EXTENSIONS.md](architecture/EXTENSIONS.md#settings)). Load an unpacked
+  folder, picked in the desktop's file chooser, or uninstall an extension the
+  config did not install, through the engine; this works with a read-only
+  config. A folder that loads a new extension asks which profiles to turn it on
+  in, with none chosen, and **Cancel** uninstalls it. The config's own
+  uninstall by editing its `extensions` lists
   ([EXTENSIONS.md](architecture/EXTENSIONS.md#from-the-settings-app)).
 - **Profiles:** a card per browser profile with its color, whether it is
   private, and its extension switches, and one list of the sites that open
@@ -26,8 +30,10 @@ not in the Extensions page or any extension list.
   ([BROWSER-PROFILES.md](architecture/BROWSER-PROFILES.md)). **Add profile**,
   **Make default**, a color, Private and removing a profile change the config.
   An extension switch and a site added here are saved by the desktop, as the
-  address bar's profile menu saves them; one the config sets changes in the
-  config, and is locked when the config is read-only. Adding a site that is
+  address bar's profile menu saves them. A switch of an extension the profile's
+  `extensions` list sets changes that list in one click, or takes a
+  [temporary change](#temporary-changes) when the config is read-only; a site
+  the config sets changes in the config, and is locked when it is read-only. Adding a site that is
   already listed is refused, pointing at its row.
 - **Agents:** **Connect from the web** (`agents.web`), which shows the
   desktop's address for agents on the web such as claude.ai, with Copy, and
@@ -63,13 +69,14 @@ not in the Extensions page or any extension list.
 | The desktop's | Config pages | Code |
 |---|---|---|
 | JSON config, writable | edit | edit |
-| JSON config, read-only (for example, home-manager's link into the Nix store) | show | show |
-| Module config (`.ts`, `.js`) | show the JSON it evaluated to | edit |
-| No config file | show the defaults | nothing to show |
+| JSON config, read-only (for example, home-manager's link into the Nix store) | temporary changes | show |
+| Module config (`.ts`, `.js`) | temporary changes over the JSON it evaluated to | edit |
+| No config file | temporary changes over the defaults | nothing to show |
 | Shell that is a file | | edit, or show if read-only |
 | Shell that is a package | | nothing to show |
 
-- A read-only page says why above its settings.
+- A read-only page says why above its settings. Startup is read-only but for
+  a writable JSON config: its commands run only as the desktop starts.
 - The host refuses a JSON config the compositor would refuse, with the
   compositor's reason. The file is not written.
 - An edit made elsewhere shows at once: the host watches both files.
@@ -79,12 +86,59 @@ not in the Extensions page or any extension list.
   host refuses a `shell_options` value the declaration refuses, naming it. A
   value already bad in the file does not block other edits.
 
+## Temporary changes
+
+A config Settings cannot write still changes from its pages: the compositor
+lays each change over the config until the desktop restarts.
+
+- A change says "Changed from your config" on its row, with **Reset**. The
+  page's note counts its changes, with **Reset all**.
+- A change ends when the desktop stops, when it is reset, or when the file
+  changes what it has at that setting. The file always wins.
+- A change the config would refuse is refused, with the compositor's reason.
+  If the file's next version and the changes no longer make a valid config,
+  every change ends.
+- Setting the file's own value ends the change.
+- The lock's own settings (`lock`, its PAM service) take no temporary
+  change, and a locked desktop takes only the theme toggle's. Other settings that bear on locking, such as
+  `idle.lock_after_seconds`, change for now like any setting.
+- The shell's theme toggle and `domicile theme` are temporary changes of
+  `theme.mode`, so Settings shows them, as it shows any change a shell makes
+  while it is open (`domicile-app-host` follows the compositor's
+  `config-overrides` watch topic).
+- A config Settings can write shows them too, with **Reset**. A choice made in
+  Settings writes the file and ends the change at that setting.
+- The extension switches of the Profiles page and the tray's menu take them
+  for an extension the config switches, as a change of the profile's
+  `extensions` list. The tray's switch is always temporary. On a config
+  Settings writes, the Profiles page writes the switch into the file's own
+  list, which ends the tray's other switches in that profile rather than
+  writing them in, and its **Reset** puts one switch back without writing.
+  The profiles themselves, extension settings, the lock's PAM service and
+  Startup take no temporary change.
+
+The compositor holds them (`ConfigStore::set_override` in `domicile-config`)
+and takes them up as it takes up an edit of the file. The host asks with
+`config_overrides`, `set_config_override` and `reset_config_overrides` on the
+control socket, which `domicile` relays to the compositor as
+`ChromeMessage::SetConfigOverride`, `ResetConfigOverrides` and
+`WhichConfigOverrides`. A path is keys and list indexes; a value is JSON text,
+and `null` takes the setting back to its default. Each change in an answer
+carries `written` too, what the file has under it.
+
+A shell makes them through the SDK's `domicile.config` (`setOverride`,
+`resetOverrides`, `overrides`), which calls the engine's
+`DomicileHost.changeConfig`. The browser checks only the request's type; the
+compositor answers each, in order, on that shell's channel, which the page
+hears as `configoverrides`.
+
 ## How it works
 
 ```
 Settings page ─ spawn, stdio ─▶ domicile-app-host ─ DOMICILE_SOCK ─▶ domicile ─ command socket ─▶ engine
  (app module)                       reads and writes the files    settings_files,                site_permissions,
                                                                      site_permissions,              set_site_permission,
+                                                                     site_privacy,
                                                                      extensions,                    load_unpacked,
                                                                      media_devices,                 uninstall_extension,
                                                                      site_data,                     config_extensions,
@@ -93,6 +147,8 @@ Settings page ─ spawn, stdio ─▶ domicile-app-host ─ DOMICILE_SOCK ─▶
                                                                                                     set_extension_enabled,
                                                                                                     browser_profiles,
                                                                                                     pin_browser_site,
+                                                                                                    site_privacy,
+                                                                                                    set_site_privacy,
                                                                                                     configure_extension,
                                                                                                     media_devices,
                                                                                                     set_media_device,
@@ -116,6 +172,7 @@ Settings page ─ spawn, stdio ─▶ domicile-app-host ─ DOMICILE_SOCK ─▶
 | Agents | The control socket's `agents`, `stop_agent` and `forget_agent`, which the compositor answers from its agent registry and `agents.json` ([AGENTS.md](AGENTS.md#design)). Agents on the web: the host reads `domicile mcp --relay`'s status from `$XDG_RUNTIME_DIR/domicile/web-agents.json` and signed-in agents from `$XDG_STATE_HOME/domicile/signed-in-agents.json`, and signs one out by dropping its refresh tokens there; a running `domicile mcp` sees the file change and drops its access tokens too. |
 | Picking a folder | The host calls the `FileChooser` portal's `OpenFile` with `directory`, which the shell draws ([PORTALS.md](PORTALS.md)). A page cannot learn the path of a folder from `<input type="file">`. |
 | Site permissions | The engine's `site_permissions` and `set_site_permission` commands ([CONTROL-CHANNEL.md](/packages/domicile-engine/docs/CONTROL-CHANNEL.md#command-socket)). They read and write the shell profile's content settings as the address bar's panel does. |
+| Sites you changed | The engine's `site_privacy` and `set_site_privacy` commands, for the Privacy page. They read and clear each browser profile's sites with their own ad blocking, which the shield in a browser window sets ([AD-BLOCKING.md](architecture/AD-BLOCKING.md)). |
 | Site data | The engine's `site_data` and `clear_site_data` commands. They read and remove the shell profile's data through Chrome's `BrowsingDataModel`, as `chrome://settings/content/all` does. |
 | Camera and microphone | The engine's `media_devices` and `set_media_device` commands. They read and write Chrome's device ranking in the shell profile's prefs, which Chrome uses for a site that names no device. |
 | HDR per monitor | The host's `monitors` asks the compositor `which_monitors`: each lit monitor's names (output name, connector, and its EDID name with either maker spelling) and HDR state. A profile monitor whose `display` names a plugged-in monitor that can't show HDR says "Not supported" in place of its switch. A monitor that isn't plugged in keeps its switch. |

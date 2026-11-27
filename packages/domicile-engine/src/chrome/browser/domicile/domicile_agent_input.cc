@@ -23,12 +23,17 @@
 #include "base/time/time.h"
 #include "chrome/browser/domicile/domicile_browser_windows.h"
 #include "chrome/browser/domicile/domicile_desk_pointer.h"
+#include "components/domicile/browser/agent_clipboards.h"
 #include "components/domicile/browser/agent_input_lines.h"
 #include "components/domicile/browser/control_channel.h"
+#include "components/domicile/browser/keyboard_layout.h"
+#include "components/domicile/browser/web_view_guest.h"
 #include "components/input/native_web_keyboard_event.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/domicile_agent_input.h"
+#include "content/public/browser/domicile_clipboard.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -47,7 +52,6 @@
 #include "ui/events/keycodes/dom/keycode_converter.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/events/ozone/layout/keyboard_layout_engine.h"
-#include "ui/events/ozone/layout/keyboard_layout_engine_manager.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -200,6 +204,24 @@ struct Landed {
   std::string window;
 };
 
+// Notes who last pressed or keyed in browser window `window`'s page: agent
+// seat `agent`, or a person for nullopt. A file request the page makes next
+// goes to the agent only if an agent did, and its copies and pastes use that
+// agent's clipboard. See WebViewGuest::NoteAgentInput.
+void NoteInputIn(const std::string& window, std::optional<std::string> agent) {
+  content::WebContents* page = BrowserWindowContents(window);
+  WebViewGuest* guest =
+      page == nullptr ? nullptr : WebViewGuest::FromWebContents(page);
+  if (guest == nullptr) {
+    return;
+  }
+  if (agent.has_value()) {
+    guest->NoteAgentInput(std::move(agent));
+  } else {
+    guest->NotePersonInput();
+  }
+}
+
 class AgentSeatsInPages : public ui::EventObserver {
  public:
   AgentSeatsInPages() {
@@ -233,6 +255,16 @@ class AgentSeatsInPages : public ui::EventObserver {
       tell.Run(AgentInputReachedMessage(input.serial, reached.window,
                                         reached.refused));
     }
+  }
+
+  // content's clipboard chooser: a frame in a browser window's page that an
+  // agent seat last drove copies to and pastes from that seat's clipboard.
+  ui::Clipboard* ClipboardFor(content::RenderFrameHost& frame) {
+    WebViewGuest* guest = WebViewGuest::FromWebContents(
+        content::WebContents::FromRenderFrameHost(&frame));
+    return guest == nullptr
+               ? nullptr
+               : clipboards_.ForPage(guest->agent_seat_driving());
   }
 
   // content's drag taker: a drag in a widget an agent pressed in is the
@@ -302,6 +334,7 @@ class AgentSeatsInPages : public ui::EventObserver {
         Leave(seat);
         Blur(seat);
         seats_.erase(input.seat);
+        clipboards_.Gone(input.seat);
         return {};
     }
     NOTREACHED();
@@ -369,13 +402,12 @@ class AgentSeatsInPages : public ui::EventObserver {
   // The modifiers the seat holds, as ui::EventFlags.
   int Flags(const Seat& seat) {
     int flags = 0;
-    ui::KeyboardLayoutEngine* layout =
-        ui::KeyboardLayoutEngineManager::GetKeyboardLayoutEngine();
+    const ui::KeyboardLayoutEngine& layout = DeskKeyboardLayout();
     for (uint32_t key : seat.keys) {
       ui::DomKey dom_key;
       ui::KeyboardCode key_code;
-      if (!layout->Lookup(ui::KeycodeConverter::EvdevCodeToDomCode(key), 0,
-                          &dom_key, &key_code)) {
+      if (!layout.Lookup(ui::KeycodeConverter::EvdevCodeToDomCode(key), 0,
+                         &dom_key, &key_code)) {
         continue;
       }
       if (dom_key == ui::DomKey::SHIFT) {
@@ -554,6 +586,7 @@ class AgentSeatsInPages : public ui::EventObserver {
     if (page != nullptr) {
       TypeIn(seat, page, window);
     }
+    NoteInputIn(window, input.seat);
     SendMouse(widget, blink::WebInputEvent::Type::kMouseDown, in_widget,
               button, seat.clicks, Modifiers(seat));
     return Window(window);
@@ -615,6 +648,9 @@ class AgentSeatsInPages : public ui::EventObserver {
     if (page == nullptr) {
       return {};
     }
+    if (input.pressed) {
+      NoteInputIn(seat.typing_window, input.seat);
+    }
     SendKey(page, input.code, input.pressed, Flags(seat));
     return Window(seat.typing_window);
   }
@@ -629,8 +665,8 @@ class AgentSeatsInPages : public ui::EventObserver {
     const ui::DomCode dom_code = ui::KeycodeConverter::EvdevCodeToDomCode(code);
     ui::DomKey dom_key;
     ui::KeyboardCode key_code;
-    if (!ui::KeyboardLayoutEngineManager::GetKeyboardLayoutEngine()->Lookup(
-            dom_code, flags, &dom_key, &key_code)) {
+    // On the desk's keymap, which the compositor chose `code` on.
+    if (!DeskKeyboardLayout().Lookup(dom_code, flags, &dom_key, &key_code)) {
       LOG(WARNING) << "domicile: an agent pressed evdev key " << code
                    << ", which the desk's keyboard has nothing for";
       return;
@@ -639,7 +675,7 @@ class AgentSeatsInPages : public ui::EventObserver {
         pressed ? ui::EventType::kKeyPressed : ui::EventType::kKeyReleased,
         key_code, dom_code, flags, dom_key, ui::EventTimeForNow());
     content::RenderWidgetHost* widget = content::DomicileKeyWidgetOf(page);
-    widget->ForwardKeyboardEvent(input::NativeWebKeyboardEvent(key));
+    widget->ForwardKeyboardEvent(Agents(input::NativeWebKeyboardEvent(key)));
     if (!pressed) {
       return;
     }
@@ -655,7 +691,18 @@ class AgentSeatsInPages : public ui::EventObserver {
       return;
     }
     widget->ForwardKeyboardEvent(
-        input::NativeWebKeyboardEvent(key, character));
+        Agents(input::NativeWebKeyboardEvent(key, character)));
+  }
+
+  // `event`, marked as no user's: the page alone handles it, as DevTools keys
+  // with no native key code are. The browser skips PreHandleKeyboardEvent and
+  // HandleKeyboardEvent for it, so the shell never hears it as the user's key
+  // in that window (`domicile-key-delivered`, which raises and focuses it),
+  // and it runs no desk, browser or extension shortcut.
+  static input::NativeWebKeyboardEvent Agents(
+      input::NativeWebKeyboardEvent event) {
+    event.skip_if_unhandled = true;
+    return event;
   }
 
   Reached Focus(const AgentPageInput& input, Seat& seat) {
@@ -837,6 +884,18 @@ class AgentSeatsInPages : public ui::EventObserver {
     if (event.IsLocatedEvent()) {
       users_pointer_ = ShellPointOf(*event.AsLocatedEvent());
     }
+    const bool pressed = event.type() == ui::EventType::kMousePressed;
+    // The user's own press or key takes the window's file requests back from
+    // any agent, whether or not an agent seat is here now.
+    if (pressed) {
+      NoteInputIn(UsersPointerWindow(), std::nullopt);
+    } else if (event.type() == ui::EventType::kKeyPressed) {
+      content::WebContents* shell = DeskShellContents();
+      content::WebContents* users = content::DomicileUsersFocusedPage(shell);
+      if (users != nullptr && users != shell) {
+        NoteInputIn(BrowserWindowOfPage(users), std::nullopt);
+      }
+    }
     if (seats_.empty() || !tell_) {
       return;
     }
@@ -845,7 +904,6 @@ class AgentSeatsInPages : public ui::EventObserver {
       if (window.empty()) {
         return;
       }
-      const bool pressed = event.type() == ui::EventType::kMousePressed;
       for (auto& [id, seat] : seats_) {
         const bool pointing = seat.pointing == window;
         const bool typing = pressed && seat.typing_window == window;
@@ -889,6 +947,8 @@ class AgentSeatsInPages : public ui::EventObserver {
   }
 
   std::map<std::string, Seat> seats_;
+  // Each agent seat's clipboard, until the seat goes.
+  AgentClipboards clipboards_;
   std::optional<uint64_t> last_serial_;
   // Sends on the channel that last carried an agent's input.
   AgentInputTell tell_;
@@ -912,6 +972,10 @@ void StartAgentInput() {
       [](content::RenderWidgetHost* source, const content::DropData& data,
          blink::DragOperationsMask allowed) {
         return AgentSeatsInPages::Get().TakeDrag(source, data, allowed);
+      }));
+  content::SetDomicileClipboardChooser(
+      base::BindRepeating([](content::RenderFrameHost& frame) {
+        return AgentSeatsInPages::Get().ClipboardFor(frame);
       }));
 }
 

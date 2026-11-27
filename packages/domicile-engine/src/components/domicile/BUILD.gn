@@ -3,10 +3,6 @@
 
 import("//testing/test.gni")
 
-# For `use_xkbcommon`, which decides whether there is an
-# XkbKeyboardLayoutEngine for the keymap's tests to assert against.
-import("//ui/base/ui_features.gni")
-
 # The browser-process half of Domicile's engine fork: brokering viz frame sinks
 # to a compositing producer that is not a renderer. See
 # docs/architecture/ENGINE-FORK.md in the Domicile repository.
@@ -438,6 +434,7 @@ source_set("command_protocol") {
   ]
 
   public_deps = [
+    ":browser_profiles",
     ":common",
     ":extension_settings",
     ":shell_source",
@@ -446,8 +443,12 @@ source_set("command_protocol") {
     "//url",
   ]
 
-  # The names of site permissions and their settings.
-  deps = [ ":site_permissions" ]
+  # The names of site permissions and their settings, and of ad-blocking
+  # modes.
+  deps = [
+    ":site_permissions",
+    ":site_privacy",
+  ]
 }
 
 # Waits for the shell window's first page before `load_shell` loads into it.
@@ -658,7 +659,9 @@ source_set("web_view_guest") {
     ":render_process",
     ":screen_capture",
     ":shortcut_registry",
+    ":page_privacy",
     ":site_permissions",
+    ":site_privacy",
     ":unfocused_web_views",
     ":web_view_partition",
     ":web_view_url",
@@ -684,6 +687,8 @@ source_set("web_view_guest") {
     "//components/security_interstitials/content:security_interstitial_page",
     "//components/security_interstitials/core",
     # Chrome's zoom modes, which chrome.tabs.setZoomSettings sets.
+    # A site's ad blocking, in its profile's prefs.
+    "//components/user_prefs",
     "//components/zoom",
     "//content/public/browser",
     "//mojo/public/cpp/bindings",
@@ -825,6 +830,7 @@ source_set("browser_page_throttle") {
   deps = [
     ":app_navigation_throttle",
     ":browser_pages",
+    ":link_tracking_throttle",
     ":profile_route_throttle",
     ":web_view_guest",
     ":web_view_url",
@@ -849,6 +855,46 @@ source_set("profile_route_throttle") {
     "//base",
     "//ui/base",
   ]
+}
+
+# Takes the tracking out of a link from one site to another.
+# :browser_page_throttle adds it.
+source_set("link_tracking_throttle") {
+  sources = [
+    "browser/link_tracking_throttle.cc",
+    "browser/link_tracking_throttle.h",
+  ]
+
+  public_deps = [
+    "//content/public/browser",
+    "//url",
+  ]
+
+  deps = [
+    ":link_tracking",
+    ":page_privacy",
+    ":site_privacy",
+    ":web_view_guest",
+    "//base",
+    "//components/prefs",
+    "//components/user_prefs",
+    "//content/public/common",
+    "//net",
+    "//ui/base",
+  ]
+}
+
+# What WithoutTracking takes out of an address. Its own target so its test
+# needs no browser: //url only.
+source_set("link_tracking") {
+  sources = [
+    "browser/link_tracking.cc",
+    "browser/link_tracking.h",
+  ]
+
+  public_deps = [ "//url" ]
+
+  deps = [ "//base" ]
 }
 
 # The back and forward lists of a guest's history. Its own target beside
@@ -951,6 +997,74 @@ source_set("electron_preload") {
     "//third_party/blink/public:blink",
     "//url",
   ]
+}
+
+# A frame's cosmetic filters in the renderer: hides what the browser's ad
+# blocker names by its elements. See docs/architecture/AD-BLOCKING.md.
+source_set("cosmetic_filters") {
+  sources = [
+    "renderer/cosmetic_filters.cc",
+    "renderer/cosmetic_filters.h",
+  ]
+
+  public_deps = [
+    "//components/domicile/mojom",
+    "//content/public/renderer",
+    "//mojo/public/cpp/bindings",
+  ]
+
+  deps = [
+    ":cosmetic_stylesheet",
+    ":device_details",
+    "//base",
+    "//third_party/blink/public:blink",
+    "//third_party/blink/public/common",
+  ]
+}
+
+# How a page that hides the device's details sees them: the farbling Blink
+# does where a page reads them. //base only, so Blink and its test can both
+# have it.
+source_set("device_details") {
+  sources = [
+    "common/device_details.cc",
+    "common/device_details.h",
+  ]
+
+  public_deps = [ "//base" ]
+}
+
+# A frame's device details seed in the renderer, which Blink farbles with.
+# See docs/architecture/AD-BLOCKING.md.
+source_set("device_details_agent") {
+  sources = [
+    "renderer/device_details_agent.cc",
+    "renderer/device_details_agent.h",
+  ]
+
+  public_deps = [
+    "//components/domicile/mojom",
+    "//content/public/renderer",
+    "//mojo/public/cpp/bindings",
+  ]
+
+  deps = [
+    "//base",
+    "//third_party/blink/public:blink",
+    "//third_party/blink/public/common",
+  ]
+}
+
+# The stylesheet :cosmetic_filters puts in a page, and how it reads an
+# element's classes. Its own target so its test needs no renderer: //base
+# only.
+source_set("cosmetic_stylesheet") {
+  sources = [
+    "renderer/cosmetic_stylesheet.cc",
+    "renderer/cosmetic_stylesheet.h",
+  ]
+
+  deps = [ "//base" ]
 }
 
 # One running Electron app on the Electron socket: its requests to the desk and
@@ -1102,18 +1216,22 @@ source_set("will_navigate_throttle") {
 # :shortcut_registry is one: it is the piece of this that can be asserted
 # against a real XkbKeyboardLayoutEngine with no socket, no mojo and no
 # browser, which is where the whole of the bug is written down as a test. What
-# it needs is //ui/events/ozone/layout and that is all -- no //content and no
-# //net.
+# it needs is //ui/events/ozone/layout and xkbcommon, and that is all -- no
+# //content and no //net.
 source_set("keyboard_layout") {
   sources = [
     "browser/keyboard_layout.cc",
     "browser/keyboard_layout.h",
   ]
 
+  # The desk's own XkbKeyboardLayoutEngine, whose header includes xkbcommon's.
+  configs += [ "//ui/events/ozone/layout:xkbcommon" ]
+
   public_deps = [
     "//base",
     "//ui/events/ozone/layout",
   ]
+  deps = [ "//ui/events/keycodes:xkb" ]
 }
 
 # How many private pages a profile has open, so its off-the-record profile
@@ -1138,6 +1256,20 @@ source_set("private_pages") {
 #
 # Its own target beside :control_channel for :line_framer's reason: it is the
 # piece of the input method's crossing a test can reach with a string.
+# Agents' own clipboards, which pages an agent drove copy to. Its own target
+# for the reason :file_choice is one: it needs no browser, which is where its
+# tests are.
+source_set("agent_clipboards") {
+  sources = [
+    "browser/agent_clipboards.cc",
+    "browser/agent_clipboards.h",
+  ]
+
+  public_deps = [ "//base" ]
+
+  deps = [ "//ui/base/clipboard" ]
+}
+
 # The control channel's agent seat messages, its own target for
 # :input_method_lines' reason.
 source_set("agent_input_lines") {
@@ -1253,6 +1385,20 @@ source_set("extension_settings") {
   public_deps = [ "//base" ]
 }
 
+# How extensions' menus and commands are spelled for the shell, as JSON.
+#
+# A target of its own for :extension_installer's reason: the spelling is here,
+# where a test reaches it with no profile, and reading them is in
+# //chrome/browser/domicile. //base only.
+source_set("extension_menu") {
+  sources = [
+    "browser/extension_menu.cc",
+    "browser/extension_menu.h",
+  ]
+
+  public_deps = [ "//base" ]
+}
+
 # How an extension's action is spelled for the shell's tray: a badge color as
 # CSS and an icon as a data: URL.
 #
@@ -1286,6 +1432,17 @@ source_set("desk_tabs") {
   public_deps = [ "//base" ]
 }
 
+# How long tasks wait on memory, for when the desk unloads pages. Its own
+# target for :desk_tabs' reason: //chrome/browser/domicile unloads them.
+source_set("memory_stall") {
+  sources = [
+    "browser/memory_stall.cc",
+    "browser/memory_stall.h",
+  ]
+
+  deps = [ "//base" ]
+}
+
 # What Chrome offers a profile's user that a desktop has no place for, off.
 # Only the pref names are wanted of the three components, and a pref name is
 # the contract, so it is theirs rather than a string spelled here.
@@ -1300,6 +1457,66 @@ source_set("desktop_prefs") {
     "//components/password_manager/core/common",
     "//components/prefs",
     "//components/translate/core/browser:translate_pref_names",
+  ]
+}
+
+# What a profile keeps sites from learning: the config's
+# `browser.profiles.<id>.protections`, in Chrome's prefs. Its own target for
+# :desktop_prefs' reason: a test reaches it with no profile.
+source_set("protection_settings") {
+  sources = [
+    "browser/protection_settings.cc",
+    "browser/protection_settings.h",
+  ]
+
+  public_deps = [ ":browser_profiles" ]
+
+  deps = [
+    ":site_privacy",
+    "//components/content_settings/core/browser",
+    "//components/content_settings/core/common",
+    "//components/prefs",
+    "//components/universal_optout",
+  ]
+}
+
+# How a profile and its sites block ads and trackers, in its prefs. Its own
+# target for :protection_settings' reason.
+source_set("site_privacy") {
+  sources = [
+    "browser/site_privacy.cc",
+    "browser/site_privacy.h",
+  ]
+
+  public_deps = [ ":browser_profiles" ]
+
+  deps = [
+    "//base",
+    "//components/prefs",
+    "//net",
+    "//url",
+  ]
+}
+
+# One page's ad blocking: its window's mode over its site's, and its count,
+# for a shell's shield.
+source_set("page_privacy") {
+  sources = [
+    "browser/page_privacy.cc",
+    "browser/page_privacy.h",
+  ]
+
+  public_deps = [
+    ":browser_profiles",
+    "//base",
+    "//components/prefs",
+    "//content/public/browser",
+    "//url",
+  ]
+
+  deps = [
+    ":site_privacy",
+    "//components/user_prefs",
   ]
 }
 
@@ -1616,6 +1833,8 @@ source_set("unit_tests") {
     "browser/desk_geometry_unittest.cc",
     "browser/desk_tabs_unittest.cc",
     "browser/desktop_prefs_unittest.cc",
+    "browser/protection_settings_unittest.cc",
+    "browser/site_privacy_unittest.cc",
     "browser/device_choices_unittest.cc",
     "browser/display_capture_target_unittest.cc",
     "browser/display_capture_unittest.cc",
@@ -1629,8 +1848,12 @@ source_set("unit_tests") {
     "browser/electron_session_events_unittest.cc",
     "common/electron_schemes_unittest.cc",
     "renderer/context_bridge_unittest.cc",
+    "renderer/cosmetic_stylesheet_unittest.cc",
+    "common/device_details_unittest.cc",
+    "browser/link_tracking_unittest.cc",
     "browser/browser_profiles_unittest.cc",
     "browser/extension_installer_unittest.cc",
+    "browser/extension_menu_unittest.cc",
     "browser/extension_settings_unittest.cc",
     "browser/extension_tray_entry_unittest.cc",
     "browser/force_dark_unittest.cc",
@@ -1640,9 +1863,11 @@ source_set("unit_tests") {
     "browser/guest_dialogs_unittest.cc",
     "browser/history_menu_unittest.cc",
     "browser/identity_dialog_unittest.cc",
+    "browser/agent_clipboards_unittest.cc",
     "browser/agent_input_lines_unittest.cc",
     "browser/input_method_lines_unittest.cc",
     "browser/line_framer_unittest.cc",
+    "browser/memory_stall_unittest.cc",
     "browser/notification_window_unittest.cc",
     "browser/page_matches_unittest.cc",
     "browser/placeholder_stage_unittest.cc",
@@ -1689,19 +1914,14 @@ source_set("unit_tests") {
     "spike/window_diff_unittest.cc",
   ]
 
-  # The keymap's own tests need an XkbKeyboardLayoutEngine to assert against,
-  # and that class -- and the xkbcommon headers its own header reaches for
-  # through scoped_xkb.h -- are in //ui/events/ozone/layout only when
-  # xkbcommon is. The function under test takes the abstract
-  # KeyboardLayoutEngine and needs neither, which is why only the test is
-  # conditional. The config is the one //ui/events/ozone/layout:unittests adds
-  # for the same include, by the same name.
-  if (use_xkbcommon) {
-    sources += [ "browser/keyboard_layout_unittest.cc" ]
-    configs += [ "//ui/events/ozone/layout:xkbcommon" ]
-  }
+  # The keymap's own tests assert against an XkbKeyboardLayoutEngine, whose
+  # header reaches for xkbcommon's through scoped_xkb.h. :keyboard_layout
+  # needs xkbcommon too, for the desk's engine.
+  sources += [ "browser/keyboard_layout_unittest.cc" ]
+  configs += [ "//ui/events/ozone/layout:xkbcommon" ]
 
   deps = [
+    "//components/domicile/ad_blocking:unit_tests",
     ":app_channel",
     ":app_roots",
     ":browser",
@@ -1725,6 +1945,8 @@ source_set("unit_tests") {
     ":desk_pointer_hiding",
     ":desk_tabs",
     ":desktop_prefs",
+    ":protection_settings",
+    ":site_privacy",
     ":device_choices",
     ":display_capture_target",
     ":display_transform",
@@ -1734,7 +1956,11 @@ source_set("unit_tests") {
     ":electron_protocol",
     ":electron_schemes",
     ":context_bridge",
+    ":cosmetic_stylesheet",
+    ":device_details",
+    ":link_tracking",
     ":extension_installer",
+    ":extension_menu",
     ":extension_settings",
     ":extension_tray_entry",
     ":file_choice",
@@ -1745,10 +1971,12 @@ source_set("unit_tests") {
     ":held_chords",
     ":history_menu",
     ":identity_dialog",
+    ":agent_clipboards",
     ":agent_input_lines",
     ":input_method_lines",
     ":keyboard_layout",
     ":line_framer",
+    ":memory_stall",
     ":notification_window",
     ":page_matches",
     ":picture_in_picture_videos",
@@ -1797,7 +2025,10 @@ source_set("unit_tests") {
     "//components/password_manager/core/common",
     # A profile's site permissions, in their tests.
     "//components/content_settings/core/browser",
+    "//components/content_settings/core/common",
     "//components/permissions",
+    # Global Privacy Control's pref, in the protections' tests.
+    "//components/universal_optout",
     "//components/sync_preferences:test_support",
     "//components/prefs:test_support",
     "//components/translate/core/browser:translate_pref_names",
@@ -1824,6 +2055,9 @@ source_set("unit_tests") {
     "//skia",
     "//testing/gmock",
     "//testing/gtest",
+    # The agent clipboards' tests copy onto a TestClipboard as the desktop's.
+    "//ui/base/clipboard",
+    "//ui/base/clipboard:clipboard_test_support",
     "//ui/display",
     # The keymap test's four: the engine it asserts against, the DomCode and
     # DomKey it decodes to, the KeyboardCode beside them, and the xkbcommon

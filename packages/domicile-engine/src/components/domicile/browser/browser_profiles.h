@@ -20,6 +20,36 @@ class GURL;
 
 namespace domicile {
 
+// How a profile's pages block ads and trackers: the config's
+// `block_ads_and_trackers`. See components/domicile/ad_blocking/ad_blocker.h.
+enum class AdBlockingMode {
+  // Other sites' ads and trackers; a site's own only for `$important` rules
+  // and the user's own.
+  kStandard,
+  // A site's own too.
+  kStrict,
+  kOff,
+};
+
+// What a browser profile keeps sites from learning: the config's
+// `browser.profiles.<id>.protections`.
+struct BrowserProtections {
+  // Blocks cookies a page's embedded sites set or read.
+  bool block_third_party_cookies = true;
+  // Sends `Sec-GPC: 1` and sets `navigator.globalPrivacyControl`.
+  bool global_privacy_control = true;
+  // Keeps WebRTC from telling sites the local network address.
+  bool hide_local_ip_address = true;
+  // Takes the click ids out of links to other sites.
+  bool remove_tracking_from_links = true;
+  // Farbles what pages read of the device: canvas, audio and CPU count.
+  bool hide_device_details = true;
+  AdBlockingMode block_ads_and_trackers = AdBlockingMode::kStandard;
+
+  friend bool operator==(const BrowserProtections&,
+                         const BrowserProtections&) = default;
+};
+
 // One browser profile: a set of sign-ins, site data and extensions. See
 // docs/architecture/BROWSER-PROFILES.md.
 struct BrowserProfile {
@@ -36,6 +66,7 @@ struct BrowserProfile {
   // The extension ids it turns on; nothing turns on all of them, or none for
   // a private profile.
   std::optional<std::vector<std::string>> extensions;
+  BrowserProtections protections;
 };
 
 // The desk's browser profiles: the config's `browser`, as the compositor's
@@ -58,6 +89,11 @@ struct BrowserProfiles {
   std::string default_private_profile;
   // Profile ids by site: a host, `*.host`, or a host and path.
   std::map<std::string, std::string> sites;
+  // The filter lists ads and trackers are blocked with: `https:` addresses
+  // and absolute paths.
+  std::vector<std::string> block_lists;
+  // The user's own filter rules, on top of the lists'.
+  std::vector<std::string> block_rules;
 };
 
 // The profiles of a desk whose compositor sends none: `default` and
@@ -67,9 +103,17 @@ BrowserProfiles DefaultBrowserProfiles();
 // Reads a `browser_profiles` message:
 //
 //   {"profiles": [{"id": "work", "name": "Work", "color": "#d97706",
-//                  "private": false, "extensions": ["<id>", ...] | null}],
+//                  "private": false, "extensions": ["<id>", ...] | null,
+//                  "protections": {"block_third_party_cookies": true,
+//                                  "global_privacy_control": true,
+//                                  "hide_local_ip_address": true,
+//                                  "remove_tracking_from_links": true,
+//                                  "hide_device_details": true,
+//                                  "block_ads_and_trackers": "standard"}}],
 //    "default_profile": "personal", "default_private_profile": "private",
-//    "sites": {"github.com/acme": "work"}}
+//    "sites": {"github.com/acme": "work"},
+//    "block_lists": ["https://easylist.to/easylist/easylist.txt"],
+//    "block_rules": ["||ads.example^"]}
 //
 // Nothing when malformed, or when it contradicts itself as the config refuses
 // to: a default that is no profile or is private, a default private profile
@@ -169,9 +213,11 @@ std::vector<UserExtension> UserExtensionsMissing(
 std::optional<bool> ConfigSwitch(const BrowserProfile& profile,
                                  std::string_view id);
 
-// Whether an extension the config does not switch starts on in `profile`
-// when it is first installed there: on, except in a private profile, whose
-// pages have always been kept from extensions unless allowed.
+// Whether one of the config's extensions that the config does not switch
+// starts on in `profile` when it is first installed there: on, except in a
+// private profile, whose pages have always been kept from extensions unless
+// allowed. One the user installed starts off everywhere, for the shell to ask
+// which profiles it goes on in.
 bool DefaultSwitch(const BrowserProfile& profile);
 
 }  // namespace domicile

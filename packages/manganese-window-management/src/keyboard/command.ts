@@ -21,7 +21,12 @@ import type { ShellCommandHelp } from "@domicile-desktop/sdk/shell-command";
 import { Axis, Direction } from "../direction";
 import { Layout } from "../tree/node";
 import type { WindowAction as Action } from "../window-state";
-import { WindowAction, WORKSPACES } from "../window-state";
+import {
+  ON_A_WINDOW,
+  WindowAction,
+  WORKSPACES,
+  windowActedOn,
+} from "../window-state";
 import { MediaKey } from "./media-key";
 
 /** Sway's direction words. */
@@ -269,6 +274,19 @@ export const parseCommand = (
   }
 };
 
+/**
+ * The words that can follow `args`, for `domicile completions`: the
+ * workspace names after `workspace` and `move container to workspace`.
+ */
+export const completeCommand = (args: readonly string[]): readonly string[] =>
+  TAKES_A_WORKSPACE.has(args.join(" ")) ? WORKSPACES : [];
+
+/** The commands whose next word is a workspace's name. */
+const TAKES_A_WORKSPACE: ReadonlySet<string> = new Set([
+  "workspace",
+  "move container to workspace",
+]);
+
 /** Parse `keymap next` or `keymap <name>`; a name may hold spaces. */
 const parseKeymap = (words: readonly string[]): Result<Action, string> => {
   const name = words.join(" ");
@@ -313,6 +331,24 @@ const parseVirtualMonitor = (
 const virtualMonitorUsage = (args: readonly string[]): Result<Action, string> =>
   Err(
     `manganese: no command \`${args.join(" ")}\`; write \`virtual-monitor add [<width>x<height>]\` or \`virtual-monitor remove\``,
+  );
+
+/**
+ * Parse the words of a command on window `id`, as `send-shell --window` and
+ * an agent send it, into that command run on `id` rather than the focus. A
+ * command that acts on no window, such as `workspace 2` or `lock`, is
+ * refused: on a window it would act on the user's desk instead.
+ */
+export const parseWindowCommand = (
+  args: readonly string[],
+  id: string,
+): Result<Action, string> =>
+  parseCommand(args).andThen((action) =>
+    ON_A_WINDOW.has(action.kind)
+      ? Ok(windowActedOn(id, action))
+      : Err(
+          `manganese: \`${args.join(" ")}\` acts on no window, so it runs only on the focus`,
+        ),
   );
 
 /** Look up a command in {@link COMMANDS}. */

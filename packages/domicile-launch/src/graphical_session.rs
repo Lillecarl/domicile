@@ -10,15 +10,17 @@
 //! not find a dead socket or display.
 //!
 //! A second login session, on another tty, takes over the user manager's
-//! session from the first. [`begin`] returns the first's variables, and
-//! [`end`] gives them back while the first still runs instead of stopping the
-//! session under it.
+//! session from the first, which may be another compositor such as niri.
+//! [`name`] returns the first's variables, [`begin`] keeps them, and [`end`]
+//! gives them back while the first still runs instead of stopping the session
+//! under it.
 //!
 //! Only a desktop running as the login session does this. A nested desktop
 //! leaves the session to its host.
 
+use std::collections::HashMap;
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::control_socket::VARIABLE;
 
@@ -32,6 +34,9 @@ pub const TARGET: &str = "domicile-session.target";
 /// `graphical-session.target` up. This unit `Conflicts=` the graphical session,
 /// like niri's `niri-shutdown.target`.
 pub const SHUTDOWN: &str = "domicile-session-shutdown.target";
+
+/// The portal frontend's unit.
+const FRONTEND: &str = "xdg-desktop-portal.service";
 
 /// `XDG_CURRENT_DESKTOP` for a desktop. Matches the names of
 /// `domicile-mimeapps.list` and `domicile-portals.conf`.
@@ -49,7 +54,10 @@ const VARIABLES: [&str; 4] = [
 ///
 /// The portal frontend reads `XDG_CURRENT_DESKTOP` once, when it starts, and
 /// routes every interface by it. Neither value waits on the compositor.
-pub fn name(manager: &zbus::blocking::Connection) -> Result<(), zbus::Error> {
+///
+/// Returns the [`VARIABLES`] `manager` held before, for [`begin`].
+pub fn name(manager: &zbus::Connection) -> Result<Vec<String>, zbus::Error> {
+    let before = held(manager)?;
     call(
         manager,
         "SetEnvironment",
@@ -57,22 +65,23 @@ pub fn name(manager: &zbus::blocking::Connection) -> Result<(), zbus::Error> {
             format!("XDG_CURRENT_DESKTOP={CURRENT_DESKTOP}"),
             "XDG_SESSION_TYPE=wayland".to_string(),
         ],),
-    )
+    )?;
+    Ok(before)
 }
 
 /// Exports the desktop's environment to `manager`, then starts [`TARGET`].
 ///
-/// Returns the [`VARIABLES`] `manager` held when they named another desktop's
-/// control socket, for [`end`]. Empty when they named none or this desktop's.
+/// Returns `before`, the variables [`name`] replaced, for [`end`]. Empty when
+/// they name this desktop's control socket.
 pub fn begin(
-    manager: &zbus::blocking::Connection,
+    manager: &zbus::Connection,
     wayland_display: &str,
     control: &Path,
+    before: &[String],
 ) -> Result<Vec<String>, zbus::Error> {
-    let held = held(manager)?;
-    let earlier = match socket(&held) {
-        Some(socket) if Path::new(socket) != control => held,
-        _ => Vec::new(),
+    let earlier = match socket(before) {
+        Some(socket) if Path::new(socket) == control => Vec::new(),
+        _ => before.to_vec(),
     };
     let values = [
         CURRENT_DESKTOP.to_string(),
@@ -95,12 +104,17 @@ pub fn begin(
 ///
 /// - Another desktop's control socket in `manager`: that desktop took the
 ///   session over later, so it is left alone.
-/// - `earlier`'s desktop still answers: its variables are set again.
+/// - `earlier`'s desktop still answers: its variables are set again, and the
+///   [`VARIABLES`] it lacks are unset. When it is another compositor, [`TARGET`]
+///   is stopped too, as no Domicile desktop is the session. That leaves a
+///   `graphical-session.target` the compositor holds up running. The bus
+///   daemon gets the variables and the portal frontend restarts, which a
+///   Domicile desktop does itself when it gets the portal backend's name.
 /// - Otherwise starts [`SHUTDOWN`], then unsets the environment from
 ///   [`begin`]. Uses `replace-irreversibly`, as niri does, so no later job can
 ///   cancel the shutdown.
 pub fn end(
-    manager: &zbus::blocking::Connection,
+    manager: &zbus::Connection,
     control: &Path,
     earlier: &[String],
 ) -> Result<(), zbus::Error> {
@@ -108,52 +122,136 @@ pub fn end(
     if socket(&held).is_some_and(|socket| Path::new(socket) != control) {
         return Ok(());
     }
-    if socket(earlier).is_some_and(|socket| UnixStream::connect(socket).is_ok()) {
-        return call(manager, "SetEnvironment", &(earlier,));
+    match running(earlier, control) {
+        Some(Running::Domicile) => restore(manager, earlier),
+        Some(Running::Other) => {
+            let theirs: Vec<String> = earlier
+                .iter()
+                .filter(|assignment| !is_of(assignment, VARIABLE))
+                .cloned()
+                .collect();
+            restore(manager, &theirs)?;
+            call(manager, "StopUnit", &(TARGET, "replace"))?;
+            activate_in(manager, &theirs)?;
+            restart_portal_frontend(manager)
+        }
+        None => {
+            call(manager, "StartUnit", &(SHUTDOWN, "replace-irreversibly"))?;
+            call(manager, "UnsetEnvironment", &(VARIABLES.to_vec(),))
+        }
     }
-    call(manager, "StartUnit", &(SHUTDOWN, "replace-irreversibly"))?;
-    call(manager, "UnsetEnvironment", &(VARIABLES.to_vec(),))
+}
+
+/// Sets `earlier` in `manager`, and unsets the [`VARIABLES`] it lacks.
+fn restore(manager: &zbus::Connection, earlier: &[String]) -> Result<(), zbus::Error> {
+    let lacking: Vec<&str> = VARIABLES
+        .into_iter()
+        .filter(|name| value(earlier, name).is_none())
+        .collect();
+    call(manager, "UnsetAndSetEnvironment", &(lacking, earlier))
+}
+
+/// Sets `earlier` in the bus daemon's activation environment, for the services
+/// it starts directly. The daemon has no call to unset a variable.
+fn activate_in(bus: &zbus::Connection, earlier: &[String]) -> Result<(), zbus::Error> {
+    let environment: HashMap<&str, &str> = earlier
+        .iter()
+        .filter_map(|assignment| assignment.split_once('='))
+        .collect();
+    zbus::block_on(bus.call_method(
+        Some("org.freedesktop.DBus"),
+        "/org/freedesktop/DBus",
+        Some("org.freedesktop.DBus"),
+        "UpdateActivationEnvironment",
+        &(environment,),
+    ))
+    .map(drop)
+}
+
+/// Restarts the portal frontend if it runs. It reads `XDG_CURRENT_DESKTOP`
+/// once, when it starts. A system without the frontend has none to restart.
+fn restart_portal_frontend(manager: &zbus::Connection) -> Result<(), zbus::Error> {
+    match call(manager, "TryRestartUnit", &(FRONTEND, "replace")) {
+        Err(zbus::Error::MethodError(name, ..))
+            if name == "org.freedesktop.systemd1.NoSuchUnit" =>
+        {
+            Ok(())
+        }
+        restarted => restarted,
+    }
+}
+
+/// The desktop a session was taken over from, while it still runs.
+enum Running {
+    Domicile,
+    Other,
+}
+
+/// What runs of the desktop `earlier` names, if anything.
+///
+/// A Domicile desktop answers on its control socket, another compositor on its
+/// Wayland socket. A relative `WAYLAND_DISPLAY` is in `XDG_RUNTIME_DIR`, which
+/// also holds `control` ([`crate::control_socket::address`]), and an absolute
+/// one replaces the whole path. Another compositor may hold the control socket
+/// of a killed Domicile desktop, which set it before that compositor started.
+fn running(earlier: &[String], control: &Path) -> Option<Running> {
+    let answers = |listening: PathBuf| UnixStream::connect(listening).is_ok();
+    let display = value(earlier, "WAYLAND_DISPLAY");
+    if socket(earlier).is_some_and(|socket| answers(PathBuf::from(socket))) {
+        Some(Running::Domicile)
+    } else if display.is_some_and(|display| answers(control.with_file_name(display))) {
+        Some(Running::Other)
+    } else {
+        None
+    }
 }
 
 /// The assignments of [`VARIABLES`] in `manager`'s environment.
-fn held(manager: &zbus::blocking::Connection) -> Result<Vec<String>, zbus::Error> {
-    let environment: Vec<String> = zbus::blocking::Proxy::new(
-        manager,
-        "org.freedesktop.systemd1",
-        "/org/freedesktop/systemd1",
-        "org.freedesktop.systemd1.Manager",
-    )?
-    .get_property("Environment")?;
+fn held(manager: &zbus::Connection) -> Result<Vec<String>, zbus::Error> {
+    let environment: Vec<String> = zbus::block_on(
+        zbus::block_on(zbus::Proxy::new(
+            manager,
+            "org.freedesktop.systemd1",
+            "/org/freedesktop/systemd1",
+            "org.freedesktop.systemd1.Manager",
+        ))?
+        .get_property("Environment"),
+    )?;
     Ok(environment
         .into_iter()
-        .filter(|assignment| {
-            VARIABLES
-                .iter()
-                .any(|name| assignment.split_once('=').map(|(key, _)| key) == Some(*name))
-        })
+        .filter(|assignment| VARIABLES.iter().any(|name| is_of(assignment, name)))
         .collect())
+}
+
+/// Whether `assignment` assigns `name`.
+fn is_of(assignment: &str, name: &str) -> bool {
+    assignment.split_once('=').map(|(key, _)| key) == Some(name)
 }
 
 /// The control socket among `assignments`.
 fn socket(assignments: &[String]) -> Option<&str> {
+    value(assignments, VARIABLE)
+}
+
+/// The value `assignments` gives `name`.
+fn value<'a>(assignments: &'a [String], name: &str) -> Option<&'a str> {
     assignments.iter().find_map(|assignment| {
         assignment
-            .strip_prefix(VARIABLE)
+            .strip_prefix(name)
             .and_then(|rest| rest.strip_prefix('='))
     })
 }
 
-fn call<B>(manager: &zbus::blocking::Connection, method: &str, body: &B) -> Result<(), zbus::Error>
+fn call<B>(manager: &zbus::Connection, method: &str, body: &B) -> Result<(), zbus::Error>
 where
-    B: serde::Serialize + zbus::zvariant::DynamicType,
+    B: serde::Serialize + zbus::DynamicType,
 {
-    manager
-        .call_method(
-            Some("org.freedesktop.systemd1"),
-            "/org/freedesktop/systemd1",
-            Some("org.freedesktop.systemd1.Manager"),
-            method,
-            body,
-        )
-        .map(drop)
+    zbus::block_on(manager.call_method(
+        Some("org.freedesktop.systemd1"),
+        "/org/freedesktop/systemd1",
+        Some("org.freedesktop.systemd1.Manager"),
+        method,
+        body,
+    ))
+    .map(drop)
 }

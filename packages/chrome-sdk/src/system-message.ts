@@ -99,6 +99,12 @@ const systemEventSchema = z.looseObject({
       command: z.array(z.string()),
       kind: z.literal("shell_command"),
       sent: z.number(),
+      window: z.string().optional(),
+    }),
+    z.looseObject({
+      command: z.array(z.string()),
+      kind: z.literal("complete_shell_command"),
+      sent: z.number(),
     }),
     z.looseObject({
       app_id: z.string().optional(),

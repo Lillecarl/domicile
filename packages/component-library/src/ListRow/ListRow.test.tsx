@@ -83,8 +83,8 @@ describe(ListRow, () => {
       expect(screen.getByText("10.42.0.17")).toBeVisible();
     });
 
-    // Its height opens at once; the reveal and fade run on the compositor.
-    it("reveals its drawer with a clip on the smooth spring, not its height", async () => {
+    // Its height grows, so the rows under it and the panel's edge move with it.
+    it("opens its drawer's height on the smooth spring", async () => {
       render(
         <List>
           <ListRow disclosure="Details" label="Centar">
@@ -98,7 +98,7 @@ describe(ListRow, () => {
       const panel = screen.getByText("10.42.0.17").parentElement
         ?.parentElement as Element;
       const { transition } = globalThis.getComputedStyle(panel);
-      expect(transition).toBe(springTransition("clip-path", "smooth"));
+      expect(transition).toBe(springTransition("block-size", "smooth"));
     });
 
     it("pads its drawer tightly, centering a footer between its rule and the tile's edge, inset from its side", async () => {
@@ -127,14 +127,30 @@ describe(ListRow, () => {
       ).toBe("0rem");
     });
 
+    it("keeps a footer's action off the edge of a tile with no drawer", () => {
+      render(
+        <List>
+          <ListRow label="Home" surface="filled">
+            <PanelFooter action={<Button>Forget</Button>} />
+          </ListRow>
+        </List>,
+      );
+
+      expect(
+        globalThis.getComputedStyle(
+          screen.getByRole("button", { name: "Forget" }),
+        ).marginInlineEnd,
+      ).toBe("0rem");
+    });
+
     it("is one button when it can be pressed, named for assistive tech", async () => {
       const pressed = new Promise((resolve) => {
         render(
           <List>
             <ListRow
               end="3"
-              label="PrussinNet"
-              name="PrussinNet: 3 unread"
+              label="Domicile"
+              name="Domicile: 3 unread"
               onPress={() => {
                 resolve(true);
               }}
@@ -143,7 +159,7 @@ describe(ListRow, () => {
         );
       });
       await userEvent.click(
-        screen.getByRole("button", { name: "PrussinNet: 3 unread" }),
+        screen.getByRole("button", { name: "Domicile: 3 unread" }),
       );
       expect(await pressed).toBe(true);
     });

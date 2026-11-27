@@ -4,10 +4,12 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use domicile_config::AdBlocking;
 use domicile_host::system::DisplayPower;
+use domicile_launch::command::BrowserWindowLayout;
 use domicile_launch::control::{
-    answer, parse_response, AppReuse, Desktop, IdleTimes, LoadShell, OpenUrl, Response, Screenshot,
-    SendShell, SettingsFiles, Shot,
+    answer, focused_window, parse_response, AppReuse, Desktop, IdleTimes, LoadShell, OpenUrl,
+    Response, Screenshot, SendShell, SettingsFiles, Shot,
 };
 use domicile_launch::extensions::{
     ExtensionSettings, InstalledExtension, SiteAccess, SiteAccessMode,
@@ -19,11 +21,12 @@ use domicile_launch::recent_log::Said;
 use domicile_launch::shell_path::{Shell, ShellFiles};
 use domicile_launch::site_data::SiteData;
 use domicile_launch::site_permissions::{Permission, Setting, SitePermission, SiteSettings};
+use domicile_launch::site_privacy::{SitePrivacy, SitePrivacyChange};
 use domicile_protocol::{
-    AdaptiveSync, DeskRect, DeskShot, DesktopStatus, DisplayChange, DisplayHdr, DisplayInfo,
-    DisplayTransform, EmulatedInput, InputConnection, InputKind, ListedDisplay, ListedInput,
-    ListedView, ListedWindow, LogLevel, LogLevels, MonitorInfo, ShellBinding, ShellCommandHelp,
-    Subsystem, Theme, WindowAct, WindowKind,
+    AdaptiveSync, ChromeMessage, ConfigKey, ConfigOverride, DeskRect, DeskShot, DesktopStatus,
+    DisplayChange, DisplayHdr, DisplayInfo, DisplayTransform, EmulatedInput, InputConnection,
+    InputKind, ListedDisplay, ListedInput, ListedView, ListedWindow, LogLevel, LogLevels,
+    MonitorInfo, ShellBinding, ShellCommandHelp, Subsystem, Theme, WindowAct, WindowKind,
 };
 
 #[test]
@@ -164,9 +167,10 @@ fn a_desktop_told_to_open_an_address_tells_the_engine() {
     let told = Cell::new(None);
     let answered = answered_opening(
         "{\"type\":\"open_url\",\"url\":\"https://example.com/\"}",
-        &|url, profile| {
+        &|url, profile, agent| {
             told.set(Some((url.to_string(), profile.map(str::to_string))));
-            Ok(())
+            assert_eq!(agent, None);
+            Ok(Some("7".to_string()))
         },
     );
 
@@ -182,13 +186,84 @@ fn a_desktop_hands_the_engine_the_profile_an_address_opens_in() {
     let told = Cell::new(None);
     answered_opening(
         "{\"type\":\"open_url\",\"url\":\"https://example.com/\",\"profile\":\"work\"}",
-        &|_, profile| {
+        &|_, profile, _| {
             told.set(profile.map(str::to_string));
-            Ok(())
+            Ok(None)
         },
     );
 
     assert_eq!(told.take(), Some("work".to_string()));
+}
+
+#[test]
+fn an_address_opened_for_an_agent_puts_its_seats_keyboard_in_the_window() {
+    // So the seat holds the window from the start, and the user's focus stays
+    // where it was.
+    let opened = Cell::new(None);
+    let sent = RefCell::new(None);
+    let answered = reply_to(
+        "{\"type\":\"open_url\",\"url\":\"https://example.com/\",\"agent\":3}",
+        &Desktop {
+            open: &|_, _, agent| {
+                opened.set(agent);
+                Ok(Some("7".to_string()))
+            },
+            emulate: &|input, agent| {
+                *sent.borrow_mut() = Some((input.to_vec(), agent));
+                Ok(())
+            },
+            ..nothing_dialed()
+        },
+    );
+
+    assert_eq!(answered, Response::Opened);
+    assert_eq!(opened.take(), Some(3));
+    assert_eq!(
+        sent.take(),
+        Some((
+            vec![EmulatedInput::Focus {
+                window: "7".to_string()
+            }],
+            Some(3)
+        ))
+    );
+}
+
+#[test]
+fn an_agent_whose_engine_names_no_window_is_told_it_opened_unheld() {
+    let Response::Refused { why } = reply_to(
+        "{\"type\":\"open_url\",\"url\":\"https://example.com/\",\"agent\":3}",
+        &Desktop {
+            open: &|_, _, _| Ok(None),
+            ..nothing_dialed()
+        },
+    ) else {
+        panic!("a window no seat holds is not what the agent asked for");
+    };
+    assert_eq!(
+        why,
+        "the address opened, but the engine didn't name its window, so your seat can't hold \
+         it. Don't open it again"
+    );
+}
+
+#[test]
+fn an_agent_whose_seat_cannot_take_the_window_is_told_it_opened_and_why() {
+    let Response::Refused { why } = reply_to(
+        "{\"type\":\"open_url\",\"url\":\"https://example.com/\",\"agent\":3}",
+        &Desktop {
+            open: &|_, _, _| Ok(Some("7".to_string())),
+            emulate: &|_, _| Err("no agent is in as session 3".to_string()),
+            ..nothing_dialed()
+        },
+    ) else {
+        panic!("the seat never took the window");
+    };
+    assert_eq!(
+        why,
+        "the address opened in browser window 7, but your seat can't hold it yet: no agent \
+         is in as session 3. Don't open it again; act in window 7 once you can"
+    );
 }
 
 #[test]
@@ -334,7 +409,7 @@ fn a_desktop_told_to_reuse_an_app_window_tells_the_engine_which() {
 fn an_engine_that_would_not_open_the_address_is_quoted() {
     let Response::Refused { why } = answered_opening(
         "{\"type\":\"open_url\",\"url\":\"https://example.com/\"}",
-        &|_, _| Err("this engine has no shell page to open it in".to_string()),
+        &|_, _, _| Err("this engine has no shell page to open it in".to_string()),
     ) else {
         panic!("an engine that refused the address is not one that opened it");
     };
@@ -448,15 +523,15 @@ fn a_desktop_told_to_send_the_shell_a_command_tells_the_compositor() {
     let told = Cell::new(None);
     let answered = answered_sending(
         "{\"type\":\"send_shell\",\"command\":[\"focus\",\"right\"]}",
-        &|command| {
-            told.set(Some(command.to_vec()));
+        &|command, window, agent| {
+            told.set(Some((command.to_vec(), window.map(str::to_string), agent)));
             Ok(Some("[]".to_string()))
         },
     );
 
     assert_eq!(
         told.take(),
-        Some(vec!["focus".to_string(), "right".to_string()])
+        Some((vec!["focus".to_string(), "right".to_string()], None, None))
     );
     // What the shell printed reaches the terminal.
     assert_eq!(
@@ -464,6 +539,23 @@ fn a_desktop_told_to_send_the_shell_a_command_tells_the_compositor() {
         Response::Sent {
             output: Some("[]".to_string())
         }
+    );
+}
+
+#[test]
+fn a_shell_command_on_a_window_tells_the_compositor_which_and_for_whom() {
+    let told = Cell::new(None);
+    answered_sending(
+        "{\"type\":\"send_shell\",\"command\":[\"kill\"],\"window\":\"w1\",\"agent\":4}",
+        &|command, window, agent| {
+            told.set(Some((command.to_vec(), window.map(str::to_string), agent)));
+            Ok(None)
+        },
+    );
+
+    assert_eq!(
+        told.take(),
+        Some((vec!["kill".to_string()], Some("w1".to_string()), Some(4)))
     );
 }
 
@@ -523,6 +615,7 @@ fn a_desktop_asked_its_displays_or_windows_asks_the_compositor() {
         focused: false,
         urgent: false,
         held_by: None,
+        focused_by: None,
         url: None,
         private: false,
         engine_id: Some("3".to_string()),
@@ -545,6 +638,7 @@ fn a_desktop_asked_its_displays_or_windows_asks_the_compositor() {
             "{\"type\":\"windows\"}",
             &Desktop {
                 windows: &|| Ok(vec![window.clone()]),
+                browser_layouts: &|| Ok(Vec::new()),
                 ..nothing_dialed()
             },
         ),
@@ -566,6 +660,21 @@ fn a_desktop_asked_its_displays_or_windows_asks_the_compositor() {
         ),
         Response::ShellCommands {
             commands: vec![lock]
+        }
+    );
+    assert_eq!(
+        reply_to(
+            "{\"type\":\"complete_shell\",\"command\":[\"workspace\"]}",
+            &Desktop {
+                complete_shell: &|typed| {
+                    assert_eq!(typed, ["workspace"]);
+                    Ok(vec!["mail".to_string()])
+                },
+                ..nothing_dialed()
+            },
+        ),
+        Response::ShellValues {
+            values: vec!["mail".to_string()]
         }
     );
     let binding = ShellBinding {
@@ -744,6 +853,66 @@ fn a_desktop_asked_its_displays_or_windows_asks_the_compositor() {
 }
 
 #[test]
+fn a_temporary_change_to_the_config_goes_to_the_compositor() {
+    let changed = ConfigOverride {
+        path: vec![
+            ConfigKey::Name("theme".to_string()),
+            ConfigKey::Name("mode".to_string()),
+        ],
+        value: "\"dark\"".to_string(),
+        written: "\"light\"".to_string(),
+    };
+    for (request, sent) in [
+        (
+            r#"{"type":"set_config_override","path":["theme","mode"],"value":"\"dark\""}"#,
+            ChromeMessage::SetConfigOverride {
+                path: changed.path.clone(),
+                value: changed.value.clone(),
+            },
+        ),
+        (
+            r#"{"type":"reset_config_overrides","paths":[["theme","mode"]]}"#,
+            ChromeMessage::ResetConfigOverrides {
+                paths: vec![changed.path.clone()],
+            },
+        ),
+        (
+            r#"{"type":"config_overrides"}"#,
+            ChromeMessage::WhichConfigOverrides,
+        ),
+    ] {
+        assert_eq!(
+            reply_to(
+                request,
+                &Desktop {
+                    config_overrides: &|asked| {
+                        assert_eq!(asked, sent);
+                        Ok(vec![changed.clone()])
+                    },
+                    ..nothing_dialed()
+                },
+            ),
+            Response::ConfigOverrides {
+                overrides: vec![changed.clone()]
+            },
+            "{request}"
+        );
+    }
+    assert_eq!(
+        reply_to(
+            r#"{"type":"config_overrides"}"#,
+            &Desktop {
+                config_overrides: &|_| Err("no compositor".to_string()),
+                ..nothing_dialed()
+            },
+        ),
+        Response::Refused {
+            why: "no compositor".to_string()
+        }
+    );
+}
+
+#[test]
 fn a_desktop_asked_its_monitors_asks_the_compositor() {
     let lit = MonitorInfo {
         names: vec!["drm-1".to_string()],
@@ -795,7 +964,7 @@ fn a_compositor_that_did_not_sleep_the_displays_is_quoted() {
 fn a_compositor_that_did_not_send_the_command_is_quoted() {
     let Response::Refused { why } = answered_sending(
         "{\"type\":\"send_shell\",\"command\":[\"focus\",\"right\"]}",
-        &|_| Err("no page of this desktop listens for commands".to_string()),
+        &|_, _, _| Err("no page of this desktop listens for commands".to_string()),
     ) else {
         panic!("a compositor that refused the command is not one that sent it");
     };
@@ -862,6 +1031,55 @@ fn a_desktop_told_to_set_a_site_permission_tells_the_engine() {
     );
 
     assert_eq!(told.take(), Some(a_site(Setting::Block)));
+    assert_eq!(answered, Response::Stored);
+}
+
+fn nytimes_off_in(profile: &str) -> SitePrivacy {
+    SitePrivacy {
+        profile: profile.to_string(),
+        site: "nytimes.com".to_string(),
+        block_ads_and_trackers: AdBlocking::Off,
+    }
+}
+
+#[test]
+fn a_desktop_asked_for_the_sites_ad_blocking_asks_the_engine() {
+    assert_eq!(
+        reply_to(
+            "{\"type\":\"site_privacy\"}",
+            &Desktop {
+                site_privacy: &|| Ok(vec![nytimes_off_in("work")]),
+                ..nothing_dialed()
+            }
+        ),
+        Response::SitePrivacy {
+            sites: vec![nytimes_off_in("work")]
+        }
+    );
+}
+
+#[test]
+fn a_desktop_told_to_clear_a_sites_ad_blocking_tells_the_engine() {
+    let told = RefCell::new(None);
+    let answered = reply_to(
+        "{\"type\":\"set_site_privacy\",\"change\":{\"profile\":\"work\",\"site\":\"nytimes.com\",\"block_ads_and_trackers\":null}}",
+        &Desktop {
+            set_site_privacy: &|change| {
+                told.replace(Some(change.clone()));
+                Ok(())
+            },
+            ..nothing_dialed()
+        },
+    );
+
+    assert_eq!(
+        told.take(),
+        Some(SitePrivacyChange {
+            profile: "work".to_string(),
+            site: "nytimes.com".to_string(),
+            block_ads_and_trackers: None,
+        })
+    );
     assert_eq!(answered, Response::Stored);
 }
 
@@ -1405,7 +1623,7 @@ fn nothing_dialed() -> Desktop<'static> {
         load_unpacked: &|_| panic!("only load_unpacked loads an extension"),
         media_devices: &|| panic!("only media_devices lists media devices"),
         shell: Box::leak(Box::new(served_from("/shell.js"))),
-        open: &|_, _| panic!("only open_url opens a browser window"),
+        open: &|_, _, _| panic!("only open_url opens a browser window"),
         open_app: &|_, _, _, _| panic!("only open_app opens an app window"),
         run_app: &|_, _| panic!("only run_app runs an app module"),
         launch: &|_, _| panic!("only launch starts a program"),
@@ -1416,7 +1634,7 @@ fn nothing_dialed() -> Desktop<'static> {
         act_on_window: &|_, _| panic!("only act_on_window acts on a window"),
         shoot_desk: &|_, _, _| panic!("only shoot_desk shoots the desk"),
         emulate: &|_, _| panic!("only emulate sends input"),
-        devtools: &|_, _, _| panic!("only devtools sends DevTools methods"),
+        devtools: &|_, _, _, _| panic!("only devtools sends DevTools methods"),
         configure_display: &|_, _| panic!("only configure_display configures a display"),
         log_levels: &|| panic!("only the log level requests read the log levels"),
         set_log_levels: &|_| panic!("only the log level requests set log levels"),
@@ -1424,10 +1642,13 @@ fn nothing_dialed() -> Desktop<'static> {
         logs_in_the_journal: false,
         logs: &|| panic!("only recent_logs and export_logs read the logs"),
         monitors: &|| panic!("only monitors lists the monitors"),
+        config_overrides: &|_| panic!("only the config override requests change the config"),
         displays: &|| panic!("only displays lists the displays"),
         windows: &|| panic!("only windows lists the windows"),
+        browser_layouts: &|| panic!("only windows lists the browser windows' layouts"),
         status: &|| panic!("only status asks how the desktop is"),
         shell_commands: &|| panic!("only shell_commands lists the shell's commands"),
+        complete_shell: &|_| panic!("only complete_shell asks the shell to complete"),
         shell_bindings: &|| panic!("only shell_bindings lists the shell's bindings"),
         inputs: &|| panic!("only inputs lists the input devices"),
         idle_time: &|| panic!("only idle_time asks how long nobody has been here"),
@@ -1435,7 +1656,7 @@ fn nothing_dialed() -> Desktop<'static> {
         stop_agent: &|_| panic!("only stop_agent stops an agent"),
         forget_agent: &|_| panic!("only forget_agent forgets an agent"),
         record: &|| panic!("only screen_record records anything"),
-        send: &|_| panic!("only send_shell sends anything"),
+        send: &|_, _, _| panic!("only send_shell sends anything"),
         site_data: &|| panic!("only site_data lists site data"),
         theme: &|_| panic!("only theme reads or sets the theme"),
         set_extension_enabled: &|_, _, _| panic!("only set_extension_enabled enables one"),
@@ -1444,6 +1665,8 @@ fn nothing_dialed() -> Desktop<'static> {
         configure_extension: &|_, _| panic!("only configure_extension configures one"),
         set_media_device: &|_, _| panic!("only set_media_device prefers one"),
         set_permission: &|_| panic!("only set_site_permission sets one"),
+        site_privacy: &|| panic!("only site_privacy lists the sites' ad blocking"),
+        set_site_privacy: &|_| panic!("only set_site_privacy sets a site's ad blocking"),
         uninstall_extension: &|_| panic!("only uninstall_extension uninstalls one"),
         visits: &|_| panic!("only visits lists a page's visits"),
     }
@@ -1599,6 +1822,7 @@ fn three_windows() -> Result<Vec<ListedWindow>, String> {
         focused: true,
         urgent: false,
         held_by: None,
+        focused_by: None,
         url: None,
         private: false,
         engine_id: None,
@@ -1631,6 +1855,102 @@ fn three_windows() -> Result<Vec<ListedWindow>, String> {
 }
 
 #[test]
+fn windows_lists_a_browser_windows_focus_and_size_from_the_engine() {
+    let Response::Windows { windows } = reply_to(
+        "{\"type\":\"windows\"}",
+        &Desktop {
+            windows: &|| {
+                three_windows().map(|windows| {
+                    windows
+                        .into_iter()
+                        .map(|window| ListedWindow {
+                            // No native window has the keyboard.
+                            focused: false,
+                            ..window
+                        })
+                        .collect()
+                })
+            },
+            browser_layouts: &|| {
+                Ok(vec![
+                    BrowserWindowLayout {
+                        id: "3".to_string(),
+                        focused: true,
+                        width: Some(1280),
+                        height: Some(720),
+                    },
+                    BrowserWindowLayout {
+                        id: "7".to_string(),
+                        focused: false,
+                        width: None,
+                        height: None,
+                    },
+                ])
+            },
+            ..nothing_dialed()
+        },
+    ) else {
+        panic!("windows answers with the windows");
+    };
+
+    let listed: Vec<_> = windows
+        .iter()
+        .map(|window| (window.focused, window.size))
+        .collect();
+    assert_eq!(
+        listed,
+        vec![
+            (false, Some([640.0, 480.0])),
+            (true, Some([1280.0, 720.0])),
+            (false, None),
+        ]
+    );
+}
+
+#[test]
+fn a_browser_window_is_not_focused_while_a_native_one_has_the_keyboard() {
+    // The shell's focused page keeps its focus while the user types in a
+    // native window.
+    let Response::Windows { windows } = reply_to(
+        "{\"type\":\"windows\"}",
+        &Desktop {
+            windows: &three_windows,
+            browser_layouts: &|| {
+                Ok(vec![BrowserWindowLayout {
+                    id: "3".to_string(),
+                    focused: true,
+                    width: Some(1280),
+                    height: Some(720),
+                }])
+            },
+            ..nothing_dialed()
+        },
+    ) else {
+        panic!("windows answers with the windows");
+    };
+
+    let focused: Vec<_> = windows.iter().map(|window| window.focused).collect();
+    assert_eq!(focused, vec![true, false, false]);
+}
+
+#[test]
+fn windows_is_refused_when_the_engine_cannot_list_its_windows() {
+    assert_eq!(
+        reply_to(
+            "{\"type\":\"windows\"}",
+            &Desktop {
+                windows: &three_windows,
+                browser_layouts: &|| Err("the engine is gone".to_string()),
+                ..nothing_dialed()
+            },
+        ),
+        Response::Refused {
+            why: "the engine is gone".to_string()
+        }
+    );
+}
+
+#[test]
 fn devtools_sends_to_a_browser_window_by_its_listed_id() {
     assert_eq!(
         reply_to(
@@ -1638,10 +1958,10 @@ fn devtools_sends_to_a_browser_window_by_its_listed_id() {
             &Desktop {
                 windows: &three_windows,
                 status: &|| status(false),
-                devtools: &|window, method, params| {
+                devtools: &|window, agent, method, params| {
                     assert_eq!(
-                        (window, method, params),
-                        ("3", "DOM.getBoxModel", &serde_json::json!({"backendNodeId": 4}))
+                        (window, agent, method, params),
+                        ("3", None, "DOM.getBoxModel", &serde_json::json!({"backendNodeId": 4}))
                     );
                     Ok(serde_json::json!({"model": {}}))
                 },
@@ -1654,6 +1974,29 @@ fn devtools_sends_to_a_browser_window_by_its_listed_id() {
     );
 }
 
+/// An agent session's method names its seat, so the page it drives copies to
+/// that seat's clipboard.
+#[test]
+fn devtools_sends_for_the_agent_session_it_names() {
+    assert_eq!(
+        reply_to(
+            "{\"type\":\"devtools\",\"window\":\"Xy7pQ2mN8vB4cZ1kL6tR9wF3hD5sJ0gE\",\"agent\":7,\"method\":\"Page.reload\",\"params\":{}}",
+            &Desktop {
+                windows: &three_windows,
+                status: &|| status(false),
+                devtools: &|_, agent, _, _| {
+                    assert_eq!(agent, Some(7));
+                    Ok(serde_json::json!({}))
+                },
+                ..nothing_dialed()
+            },
+        ),
+        Response::DevTools {
+            result: serde_json::json!({})
+        }
+    );
+}
+
 #[test]
 fn devtools_sends_to_a_view_the_window_holds() {
     assert_eq!(
@@ -1662,7 +2005,7 @@ fn devtools_sends_to_a_view_the_window_holds() {
             &Desktop {
                 windows: &three_windows,
                 status: &|| status(false),
-                devtools: &|window, _, _| {
+                devtools: &|window, _, _, _| {
                     assert_eq!(window, "9");
                     Ok(serde_json::json!({}))
                 },
@@ -1719,7 +2062,7 @@ fn devtools_sends_window_shell_to_the_shells_own_page() {
             &Desktop {
                 windows: &three_windows,
                 status: &|| status(false),
-                devtools: &|window, method, _| {
+                devtools: &|window, _, method, _| {
                     assert_eq!((window, method), ("shell", "Accessibility.getFullAXTree"));
                     Ok(serde_json::json!({"nodes": []}))
                 },
@@ -1841,6 +2184,7 @@ fn titled(title: &str) -> ListedWindow {
         focused: false,
         urgent: false,
         held_by: None,
+        focused_by: None,
         url: None,
         private: false,
         engine_id: None,
@@ -1984,5 +2328,109 @@ fn export_logs_that_cannot_be_read_is_refused() {
         Response::Refused {
             why: "cannot read the logs: journalctl is not installed".to_string()
         }
+    );
+}
+
+/// Windows the user's keyboard is in `n1` of, agent 3's in `n2`, which
+/// agent 3 holds.
+fn two_keyboards() -> Vec<ListedWindow> {
+    let window = |id: &str| ListedWindow {
+        id: id.to_string(),
+        kind: WindowKind::Native,
+        ..titled(id)
+    };
+    vec![
+        ListedWindow {
+            focused: true,
+            ..window("n1")
+        },
+        ListedWindow {
+            held_by: Some("agent-3".to_string()),
+            focused_by: Some("agent-3".to_string()),
+            ..window("n2")
+        },
+        window("n3"),
+    ]
+}
+
+#[test]
+fn the_focused_window_is_whoever_drives_its_keyboard() {
+    let windows = two_keyboards();
+    assert_eq!(
+        focused_window(&windows, None).map(|window| &*window.id),
+        Ok("n1")
+    );
+    assert_eq!(
+        focused_window(&windows, Some(3)).map(|window| &*window.id),
+        Ok("n2")
+    );
+    assert!(focused_window(&windows, Some(4)).is_err());
+    assert!(focused_window(&[], None).is_err());
+}
+
+#[test]
+fn closing_with_no_window_closes_the_drivers_focus_and_an_agent_only_its_own() {
+    let closed = RefCell::new(Vec::new());
+    let desktop = Desktop {
+        windows: &|| Ok(two_keyboards()),
+        browser_layouts: &|| Ok(Vec::new()),
+        act_on_window: &|id, act| {
+            closed.borrow_mut().push((id.to_string(), act));
+            Ok(())
+        },
+        ..nothing_dialed()
+    };
+    let close = |line: &str| reply_to(line, &desktop);
+    assert_eq!(
+        close("{\"type\":\"act_on_window\",\"act\":\"close\"}"),
+        Response::Done
+    );
+    assert_eq!(
+        close("{\"type\":\"act_on_window\",\"act\":\"close\",\"agent\":3}"),
+        Response::Done
+    );
+    assert!(matches!(
+        close("{\"type\":\"act_on_window\",\"id\":\"n3\",\"act\":\"close\",\"agent\":3}"),
+        Response::Refused { why } if why.contains("doesn't hold window n3")
+    ));
+    assert_eq!(
+        *closed.borrow(),
+        [
+            ("n1".to_string(), WindowAct::Close),
+            ("n2".to_string(), WindowAct::Close)
+        ]
+    );
+}
+
+#[test]
+fn input_into_a_named_window_focuses_it_first() {
+    let done = RefCell::new(Vec::new());
+    let desktop = Desktop {
+        act_on_window: &|id, act| {
+            done.borrow_mut().push(format!("{act:?} {id}"));
+            Ok(())
+        },
+        emulate: &|input, agent| {
+            done.borrow_mut().push(format!("{input:?} {agent:?}"));
+            Ok(())
+        },
+        ..nothing_dialed()
+    };
+    let text = "[{\"kind\":\"text\",\"text\":\"hi\"}]";
+    let into = |agent: &str| {
+        reply_to(
+            &format!("{{\"type\":\"emulate\",\"input\":{text},\"window\":\"n2\"{agent}}}"),
+            &desktop,
+        )
+    };
+    assert_eq!(into(""), Response::Done);
+    assert_eq!(into(",\"agent\":3"), Response::Done);
+    assert_eq!(
+        *done.borrow(),
+        [
+            "Focus n2".to_string(),
+            "[Text { text: \"hi\" }] None".to_string(),
+            "[Focus { window: \"n2\" }, Text { text: \"hi\" }] Some(3)".to_string(),
+        ]
     );
 }

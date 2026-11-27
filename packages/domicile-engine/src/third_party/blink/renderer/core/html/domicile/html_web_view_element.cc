@@ -41,6 +41,7 @@
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/layout/layout_iframe.h"
+#include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
@@ -122,6 +123,7 @@ constexpr char kPermissionRequestWithdrawnEvent[] =
     "domicile-permission-request-withdrawn";
 constexpr char kSitePermissionsChangeEvent[] =
     "domicile-site-permissions-change";
+constexpr char kSitePrivacyChangeEvent[] = "domicile-site-privacy-change";
 
 // A request the shell answers on the event, a change to its devices, and its
 // withdrawal. See domicile_device_request_event.h.
@@ -314,7 +316,11 @@ HTMLWebViewElement::HTMLWebViewElement(Document& document)
       // HeapMojoRemote accepts. Nothing binds before there is a frame.
       host_(document.GetExecutionContext()),
       guest_(document.GetExecutionContext()),
-      client_receiver_(this, document.GetExecutionContext()) {}
+      client_receiver_(this, document.GetExecutionContext()) {
+  // Without it Blink never calls DidRecalcStyle, so a `visibility` change
+  // would not show an unloaded page.
+  SetHasCustomStyleCallbacks();
+}
 
 HTMLWebViewElement::~HTMLWebViewElement() = default;
 
@@ -340,6 +346,12 @@ void HTMLWebViewElement::ParseAttribute(
   // `src` goes to the guest. The base would navigate the placeholder frame,
   // which must stay on about:blank.
   if (params.name == html_names::kSrcAttr) {
+    // Navigating an unloaded window's page loads it, rendered or not.
+    if (shows_when_rendered_ && isConnected()) {
+      shows_when_rendered_ = false;
+      HTMLFrameElementBase::DidNotifySubtreeInsertionsToDocument();
+      RequestGuest(/*rendered=*/true);
+    }
     NavigateGuest();
   } else {
     HTMLFrameElementBase::ParseAttribute(params);
@@ -347,10 +359,14 @@ void HTMLWebViewElement::ParseAttribute(
 }
 
 void HTMLWebViewElement::DidNotifySubtreeInsertionsToDocument() {
+  // Nothing is rendered yet as it is inserted.
+  if (shows_when_rendered_) {
+    return;
+  }
   // Creates the placeholder frame on about:blank, as AttachInnerWebContents
   // prefers (to avoid beforeunload problems).
   HTMLFrameElementBase::DidNotifySubtreeInsertionsToDocument();
-  RequestGuest();
+  RequestGuest(IsRendered());
   // A parsed `src` arrived before there was a guest, so send it now. A browser
   // window's page is already loaded and gets no `src` on attach.
   if (BrowserWindow().IsNull()) {
@@ -367,7 +383,41 @@ void HTMLWebViewElement::RemovedFrom(ContainerNode& insertion_point) {
   }
 }
 
-void HTMLWebViewElement::RequestGuest() {
+void HTMLWebViewElement::AttachLayoutTree(AttachContext& context) {
+  HTMLFrameElementBase::AttachLayoutTree(context);
+  ShowSoonIfUnloaded();
+}
+
+// `visibility` changes with no new layout object.
+void HTMLWebViewElement::DidRecalcStyle(const StyleRecalcChange change) {
+  HTMLFrameElementBase::DidRecalcStyle(change);
+  ShowSoonIfUnloaded();
+}
+
+bool HTMLWebViewElement::IsRendered() const {
+  const LayoutObject* layout = GetLayoutObject();
+  return layout && layout->Style().Visibility() == EVisibility::kVisible;
+}
+
+void HTMLWebViewElement::ShowSoonIfUnloaded() {
+  // Posted, as a frame is not made during style or layout.
+  if (shows_when_rendered_) {
+    GetDocument()
+        .GetTaskRunner(TaskType::kInternalDefault)
+        ->PostTask(FROM_HERE, BindOnce(&HTMLWebViewElement::ShowIfRendered,
+                                       WrapWeakPersistent(this)));
+  }
+}
+
+void HTMLWebViewElement::ShowIfRendered() {
+  if (!shows_when_rendered_ || !isConnected() || !IsRendered()) {
+    return;
+  }
+  shows_when_rendered_ = false;
+  DidNotifySubtreeInsertionsToDocument();
+}
+
+void HTMLWebViewElement::RequestGuest(bool rendered) {
   if (guest_.is_bound()) {
     return;
   }
@@ -394,7 +444,7 @@ void HTMLWebViewElement::RequestGuest() {
   host_->CreateGuest(placeholder->GetLocalFrameToken(),
                      guest_.BindNewPipeAndPassReceiver(task_runner),
                      client_receiver_.BindNewPipeAndPassRemote(task_runner),
-                     BrowserWindow(),
+                     BrowserWindow(), rendered,
                      hasAttribute(AtomicString(kExtensionPopupAttr)),
                      hasAttribute(AtomicString(kPrivateAttr)), Profile(),
                      Partition());
@@ -688,6 +738,23 @@ void HTMLWebViewElement::ReplaceMisspelling(
   guest_->ReplaceMisspelling(menu.id(), word);
 }
 
+void HTMLWebViewElement::RunContextMenuExtensionItem(
+    const DomicileContextMenuEvent& menu,
+    int32_t item,
+    ExceptionState& exception_state) {
+  if (menu.id() != context_menu_id_) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kInvalidStateError,
+        "A newer context menu has replaced this one.");
+    return;
+  }
+  CHECK(guest_.is_bound());
+  // The extension may act on the focused field, so the page takes the focus
+  // back from the shell's menu first.
+  Element::Focus();
+  guest_->RunContextMenuExtensionItem(menu.id(), item);
+}
+
 // Does not change `site_permissions_`: the browser reports the stored result
 // in SitePermissionsChanged.
 void HTMLWebViewElement::setSitePermission(const String& permission,
@@ -936,7 +1003,7 @@ void HTMLWebViewElement::UnhandledModifierUp(const String& key,
       AtomicString(kGuestKeyupEvent), init));
 }
 
-void HTMLWebViewElement::Replaced() {
+void HTMLWebViewElement::Replaced(bool unloaded) {
   // The old page's asks go with it, as when it withdraws them.
   PermissionRequestWithdrawn();
   DeviceRequestWithdrawn();
@@ -957,6 +1024,24 @@ void HTMLWebViewElement::Replaced() {
   // makes a placeholder and asks for the window the same way, and the window
   // id now names the new page.
   DisconnectContentFrame();
+  // The new page reports these only when set.
+  if (page_fullscreen_) {
+    PageFullscreenChanged(false);
+  }
+  if (wake_lock_) {
+    WakeLockChanged(false);
+  }
+  if (!render_process_gone_.empty()) {
+    RenderProcessChanged(
+        domicile::mojom::blink::WebViewRenderProcess::kRunning, 0);
+  }
+  if (!page_failure_.empty()) {
+    PageFailureChanged(nullptr);
+  }
+  if (!privacy_site_.empty()) {
+    SitePrivacyChanged(nullptr);
+  }
+  shows_when_rendered_ = unloaded && !IsRendered();
   DidNotifySubtreeInsertionsToDocument();
 }
 
@@ -1409,6 +1494,96 @@ void HTMLWebViewElement::SitePermissionsChanged(
 
   DispatchEvent(
       *Event::CreateBubble(AtomicString(kSitePermissionsChangeEvent)));
+}
+
+namespace {
+
+String AdBlockingName(domicile::mojom::blink::WebViewAdBlocking mode) {
+  switch (mode) {
+    case domicile::mojom::blink::WebViewAdBlocking::kStandard:
+      return "standard";
+    case domicile::mojom::blink::WebViewAdBlocking::kStrict:
+      return "strict";
+    case domicile::mojom::blink::WebViewAdBlocking::kOff:
+      return "off";
+  }
+}
+
+String SetForName(domicile::mojom::blink::WebViewAdBlockingSetFor set_for) {
+  switch (set_for) {
+    case domicile::mojom::blink::WebViewAdBlockingSetFor::kProfile:
+      return "profile";
+    case domicile::mojom::blink::WebViewAdBlockingSetFor::kSite:
+      return "site";
+    case domicile::mojom::blink::WebViewAdBlockingSetFor::kWindow:
+      return "window";
+  }
+}
+
+std::optional<domicile::mojom::blink::WebViewAdBlocking> AdBlockingNamed(
+    const String& name) {
+  for (const auto mode :
+       {domicile::mojom::blink::WebViewAdBlocking::kStandard,
+        domicile::mojom::blink::WebViewAdBlocking::kStrict,
+        domicile::mojom::blink::WebViewAdBlocking::kOff}) {
+    if (AdBlockingName(mode) == name) {
+      return mode;
+    }
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
+void HTMLWebViewElement::SitePrivacyChanged(
+    domicile::mojom::blink::WebViewSitePrivacyPtr privacy) {
+  if (privacy) {
+    privacy_site_ = privacy->site;
+    block_ads_and_trackers_ = AdBlockingName(privacy->block_ads_and_trackers);
+    block_ads_and_trackers_set_for_ = SetForName(privacy->set_for);
+    blocked_count_ = privacy->blocked;
+  } else {
+    privacy_site_ = g_empty_string;
+    block_ads_and_trackers_ = g_empty_string;
+    block_ads_and_trackers_set_for_ = g_empty_string;
+    blocked_count_ = 0;
+  }
+
+  DispatchEvent(*Event::CreateBubble(AtomicString(kSitePrivacyChangeEvent)));
+}
+
+// Does not change the reported mode: the browser reports the result in
+// SitePrivacyChanged.
+void HTMLWebViewElement::setBlockAdsAndTrackers(
+    const String& mode,
+    const String& scope,
+    ExceptionState& exception_state) {
+  std::optional<domicile::mojom::blink::WebViewAdBlocking> named;
+  if (!mode.IsNull()) {
+    named = AdBlockingNamed(mode);
+    if (!named.has_value()) {
+      exception_state.ThrowTypeError(
+          "A mode must be \"standard\", \"strict\", \"off\" or null.");
+      return;
+    }
+  }
+  if (scope != "site" && scope != "window") {
+    exception_state.ThrowTypeError("It must be for \"site\" or \"window\".");
+    return;
+  }
+  // Only a guest reports a site, so a guest exists past this.
+  if (privacy_site_.empty()) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kInvalidStateError,
+        "This page is not a website, which is never blocked.");
+    return;
+  }
+  CHECK(guest_.is_bound());
+  if (scope == "site") {
+    guest_->SetAdBlockingForSite(named);
+  } else {
+    guest_->SetAdBlockingForWindow(named);
+  }
 }
 
 // Stored before dispatch, so a handler can run the menu immediately.

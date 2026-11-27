@@ -212,6 +212,9 @@ button, and their controls in one panel, each labeled in words.
   wpa_supplicant too. Any answer but `204` is a portal.
   - While the dialog shows, the check repeats every 3 seconds. The dialog
     closes once the probe answers `204`, or on leaving the network.
+  - A check that gets no answer repeats, after 3 seconds, then twice as long
+    each time, up to a minute, until one gets an answer or the desk leaves the
+    network.
   - Closing it by hand stops the checks until the next network.
 - Hidden only on a machine with no network hardware.
 - The compositor refuses the service's calls while locked, so the watches
@@ -582,16 +585,20 @@ extension with an action. See
     screen. A switched-off extension has no pin.
   - **Rows** click as their icon does. An unpinned extension's popup opens
     from the row's icon, shown while the popup is open. Right-clicking an
-    app's name opens its own menu.
+    app's or an extension's row opens its own menu, as right-clicking its
+    icon does.
   - **The tray's actions** are the same profile's, so an extension on only in
     another profile, such as a password manager kept to a work profile, shows
     once a page of that profile is focused, and its popup opens there.
   - **Extensions in <profile>** are the last focused browser page's
     profile's ([BROWSER-PROFILES.md](/docs/architecture/BROWSER-PROFILES.md)):
     the tray shows the actions of those switched on there, and each **Switch**
-    turns one on or off in that profile. One the config switches there is
-    locked. Focusing an app keeps the last page's profile; before any page,
-    it is the default profile's.
+    turns one on or off in that profile, as Settings' Profiles page does. One
+    the config switches there turns until the desktop restarts or the config
+    changes it, and says "Changed from your config" with **Reset** while it
+    differs ([SETTINGS.md](/docs/SETTINGS.md#temporary-changes)). Focusing an
+    app keeps the last page's profile; before any page, it is the default
+    profile's, and the switches wait for the engine to list profiles.
   - **⋯** holds an extension's options page (in a browser window), what
     websites it can read, local files and user scripts,
     each where it can use them, and Uninstall…, which asks first. "On sites
@@ -621,5 +628,9 @@ extension with an action. See
     icon. An outside click or the popup's `window.close()` closes it.
     Escape closes it only if focus is on the shell, not inside the popup.
   - Without a popup, the click fires `action.onClicked`.
+  - Right-click opens the items the extension adds to its action's menu
+    (`chrome.contextMenus`), and nothing when it adds none. Items an
+    extension nests under one entry, as Bitwarden does, show at the top. A
+    chosen item runs on the focused browser window.
   - Disabled actions are hidden. Action state follows the focused browser
     window. See [EXTENSIONS.md](../../../docs/architecture/EXTENSIONS.md).

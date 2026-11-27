@@ -1,5 +1,5 @@
 import type { Result } from "@cprussin/option-result";
-import { Ok } from "@cprussin/option-result";
+import { Err, Ok } from "@cprussin/option-result";
 import type { KeyBinding } from "@domicile-desktop/sdk/bind-keys";
 import { bindKeys } from "@domicile-desktop/sdk/bind-keys";
 import type { Domicile } from "@domicile-desktop/sdk/desktop/desktop";
@@ -9,7 +9,12 @@ import { useEffect, useEffectEvent, useRef } from "react";
 import type { WindowAction } from "../window-state";
 import { WindowActionKind } from "../window-state";
 
-import { COMMAND_HELP, parseCommand } from "./command";
+import {
+  COMMAND_HELP,
+  completeCommand,
+  parseCommand,
+  parseWindowCommand,
+} from "./command";
 import type { Query } from "./query";
 import { parseQuery, QUERY_HELP } from "./query";
 
@@ -38,6 +43,11 @@ type Options = {
   onModeChanged: (mode: string) => void;
   /** Answers a query such as `get-tree` with JSON. */
   answer: (query: Query) => string;
+  /**
+   * The window on a workspace that `send-shell --window` names, by its app id
+   * or a browser window's engine id; see `windowNamed`.
+   */
+  windowNamed: (name: string) => string | undefined;
   /** Reports unknown commands. Injectable for tests. */
   report?: typeof logToConsole;
 };
@@ -65,6 +75,7 @@ export const useKeybindings = ({
   onModeChanged,
   overviewOpen,
   report = logToConsole,
+  windowNamed,
 }: Options): void => {
   const binding = useRef<KeyBinding | undefined>(undefined);
 
@@ -89,6 +100,20 @@ export const useKeybindings = ({
     },
   );
 
+  // An agent's command on a window it holds acts on that window, so neither
+  // the launcher nor the overview holds it back.
+  const onWindowCommand = useEffectEvent(
+    (args: readonly string[], window: string): Result<CommandRan, string> => {
+      const id = windowNamed(window);
+      return id === undefined
+        ? Err(`manganese: no workspace holds window ${window}`)
+        : parseWindowCommand(args, id).map((action) => {
+            onAction(action);
+            return "ran" as const;
+          });
+    },
+  );
+
   const reportRefusal = useEffectEvent((why: string) => {
     report(why);
   });
@@ -101,7 +126,9 @@ export const useKeybindings = ({
     const bound = bindKeys(domicile, keybindings, {
       commands: HELP,
       onCommand,
+      onComplete: completeCommand,
       onModeChanged: modeChanged,
+      onWindowCommand,
       reportRefusal: (why) => {
         reportRefusal(why);
       },

@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use domicile_config::AdBlocking;
 use domicile_launch::app_host::{answer, downloads, read_message, watched, write_message, Host};
 use domicile_launch::browser_profiles::{
     BrowserProfileList, ListedBrowserProfile, ListedBrowserSite, ProfileExtension,
@@ -16,6 +17,7 @@ use domicile_launch::history::{BrowsingData, HistoryItem, HistoryQuery};
 use domicile_launch::media_devices::{MediaDevice, MediaDevices, MediaKind};
 use domicile_launch::site_data::SiteData;
 use domicile_launch::site_permissions::{Permission, Setting, SitePermission, SiteSettings};
+use domicile_launch::site_privacy::{SitePrivacy, SitePrivacyChange};
 use domicile_protocol::{DisplayHdr, LogLevel, LogLevels, MonitorInfo};
 use serde_json::{json, Value};
 
@@ -203,6 +205,38 @@ fn site_permissions_are_the_desktops() {
 }
 
 #[test]
+fn the_sites_ad_blocking_is_the_desktops() {
+    let host = a_host(FILES.clone());
+    assert_eq!(
+        host.answer(&json!({"id": 6, "type": "site_privacy"})),
+        json!({
+            "id": 6,
+            "type": "site_privacy",
+            "sites": [{"profile": "work", "site": "nytimes.com", "block_ads_and_trackers": "off"}],
+        })
+    );
+}
+
+#[test]
+fn a_sites_ad_blocking_is_set_on_the_desktop() {
+    let host = a_host(FILES.clone());
+    assert_eq!(
+        host.answer(&json!({"id": 8, "type": "set_site_privacy", "change": {"profile": "work", "site": "nytimes.com", "block_ads_and_trackers": null}})),
+        json!({"id": 8, "type": "stored"})
+    );
+    assert_eq!(
+        host.asked.take().last(),
+        Some(&Request::SetSitePrivacy {
+            change: SitePrivacyChange {
+                profile: "work".to_string(),
+                site: "nytimes.com".to_string(),
+                block_ads_and_trackers: None,
+            }
+        })
+    );
+}
+
+#[test]
 fn a_site_permission_is_set_on_the_desktop() {
     let host = a_host(FILES.clone());
     assert_eq!(
@@ -246,6 +280,23 @@ fn the_monitors_are_the_desktops() {
             "monitors": [{"names": ["drm-1", "DEL DELL U3219Q 2ZLS413"], "hdr": "unsupported"}],
         })
     );
+}
+
+#[test]
+fn temporary_changes_to_the_config_are_the_desktops() {
+    let host = a_host(FILES.clone());
+    let answered = json!({
+        "id": 24,
+        "type": "config_overrides",
+        "overrides": [{"path": ["theme", "mode"], "value": "\"light\"", "written": "\"dark\""}],
+    });
+    for asked in [
+        json!({"id": 24, "type": "config_overrides"}),
+        json!({"id": 24, "type": "set_config_override", "path": ["theme", "mode"], "value": "\"light\""}),
+        json!({"id": 24, "type": "reset_config_overrides", "paths": [["output"]]}),
+    ] {
+        assert_eq!(host.answer(&asked), answered, "{asked}");
+    }
 }
 
 #[test]
@@ -537,7 +588,8 @@ fn an_address_is_opened_in_a_browser_window_on_the_desktop() {
         host.asked.take().last(),
         Some(&Request::OpenUrl {
             url: options,
-            profile: None
+            profile: None,
+            agent: None,
         })
     );
 }
@@ -772,6 +824,14 @@ impl Fake {
                             }],
                         }),
                         Request::SetSitePermission { .. } => Response::Stored,
+                        Request::SitePrivacy => Response::SitePrivacy {
+                            sites: vec![SitePrivacy {
+                                profile: "work".to_string(),
+                                site: "nytimes.com".to_string(),
+                                block_ads_and_trackers: AdBlocking::Off,
+                            }],
+                        },
+                        Request::SetSitePrivacy { .. } => Response::Stored,
                         Request::LogLevels | Request::ResetLogLevels => Response::LogLevels {
                             levels: LogLevels::default(),
                         },
@@ -878,6 +938,18 @@ impl Fake {
                             },
                         },
                         Request::StopAgent { .. } | Request::ForgetAgent { .. } => Response::Done,
+                        Request::ConfigOverrides
+                        | Request::SetConfigOverride { .. }
+                        | Request::ResetConfigOverrides { .. } => Response::ConfigOverrides {
+                            overrides: vec![domicile_protocol::ConfigOverride {
+                                path: vec![
+                                    domicile_protocol::ConfigKey::Name("theme".to_string()),
+                                    domicile_protocol::ConfigKey::Name("mode".to_string()),
+                                ],
+                                value: "\"light\"".to_string(),
+                                written: "\"dark\"".to_string(),
+                            }],
+                        },
                         other => panic!("the host never asks {other:?}"),
                     })
                 },

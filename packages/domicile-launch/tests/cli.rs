@@ -610,8 +610,67 @@ fn send_shell_sends_every_word_after_it_as_the_command() {
         run(&["send-shell", "focus", "right"]),
         Ok(Invocation::Ask {
             request: Request::SendShell {
-                command: vec!["focus".to_string(), "right".to_string()]
+                command: vec!["focus".to_string(), "right".to_string()],
+                window: None,
+                agent: None,
             }
+        })
+    );
+}
+
+#[test]
+fn send_shell_aims_a_command_at_a_window_maybe_for_an_agent() {
+    let command = ["move", "container", "to", "workspace", "3"].map(String::from);
+    assert_eq!(
+        run(&[
+            "send-shell",
+            "--agent",
+            "4",
+            "--window",
+            "w1",
+            "move",
+            "container",
+            "to",
+            "workspace",
+            "3"
+        ]),
+        Ok(Invocation::Ask {
+            request: Request::SendShell {
+                command: command.to_vec(),
+                window: Some("w1".to_string()),
+                agent: Some(4),
+            }
+        })
+    );
+    assert_eq!(
+        run(&["send-shell", "--window", "w1", "kill"]),
+        Ok(Invocation::Ask {
+            request: Request::SendShell {
+                command: vec!["kill".to_string()],
+                window: Some("w1".to_string()),
+                agent: None,
+            }
+        })
+    );
+}
+
+#[test]
+fn send_shell_for_an_agent_without_a_window_acts_on_its_focus() {
+    // The compositor finds the window the agent's keyboard is in.
+    assert_eq!(
+        run(&["send-shell", "--agent", "4", "kill"]),
+        Ok(Invocation::Ask {
+            request: Request::SendShell {
+                command: vec!["kill".to_string()],
+                window: None,
+                agent: Some(4),
+            }
+        })
+    );
+    assert_eq!(
+        run(&["send-shell", "--window"]),
+        Err(CliError::NoWindowGiven {
+            verb: "send-shell".to_string()
         })
     );
 }
@@ -823,7 +882,9 @@ fn help_after_a_verb_s_first_argument_is_that_argument() {
         run(&["send-shell", "exec", "foot", "--help"]),
         Ok(Invocation::Ask {
             request: Request::SendShell {
-                command: vec!["exec".to_string(), "foot".to_string(), "--help".to_string()]
+                command: vec!["exec".to_string(), "foot".to_string(), "--help".to_string()],
+                window: None,
+                agent: None,
             }
         })
     );
@@ -927,6 +988,7 @@ fn every_command_in_the_help_parses_as_a_verb() {
         "set-log-level",
         "logs",
         "export-logs",
+        "completions",
         "help",
     ];
     for verb in verbs {
@@ -1209,16 +1271,49 @@ fn subscribe_takes_topics_or_hears_every_one() {
 }
 
 #[test]
-fn a_window_is_acted_on_by_its_id() {
+fn a_window_is_acted_on_by_its_id_or_the_focused_one() {
     assert_eq!(
-        run(&["kill-window", "kD3m"]),
+        run(&["kill-window", "--window", "kD3m"]),
         Ok(Invocation::Ask {
             request: Request::ActOnWindow {
-                id: "kD3m".to_string(),
-                act: WindowAct::Kill
+                id: Some("kD3m".to_string()),
+                act: WindowAct::Kill,
+                agent: None,
             }
         })
     );
+    assert_eq!(
+        run(&["close-window"]),
+        Ok(Invocation::Ask {
+            request: Request::ActOnWindow {
+                id: None,
+                act: WindowAct::Close,
+                agent: None,
+            }
+        })
+    );
+    assert_eq!(
+        run(&["close-window", "--agent", "3"]),
+        Ok(Invocation::Ask {
+            request: Request::ActOnWindow {
+                id: None,
+                act: WindowAct::Close,
+                agent: Some(3),
+            }
+        })
+    );
+    assert_eq!(
+        run(&["focus-window", "kD3m"]),
+        Ok(Invocation::Ask {
+            request: Request::ActOnWindow {
+                id: Some("kD3m".to_string()),
+                act: WindowAct::Focus,
+                agent: None,
+            }
+        })
+    );
+    // The id goes after --window, so a bare one is left over.
+    assert!(run(&["close-window", "kD3m"]).is_err());
     assert_eq!(
         run(&["focus-window"]),
         Err(CliError::NoWindow {
@@ -1479,7 +1574,11 @@ fn screenshot_fit_shrinks_the_desk_into_a_file() {
 fn emulated(input: Vec<EmulatedInput>) -> Result<Invocation, CliError> {
     // The user's seat, as no --agent says.
     Ok(Invocation::Ask {
-        request: Request::Emulate { input, agent: None },
+        request: Request::Emulate {
+            input,
+            agent: None,
+            window: None,
+        },
     })
 }
 
@@ -1532,7 +1631,12 @@ fn pointer_moves_then_clicks_presses_or_releases() {
 #[test]
 fn drag_holds_the_left_button_while_moving_there_a_step_at_a_time() {
     let Ok(Invocation::Ask {
-        request: Request::Emulate { input, agent: None },
+        request:
+            Request::Emulate {
+                input,
+                agent: None,
+                window: None,
+            },
     }) = run(&["drag", "0,0", "100,50"])
     else {
         panic!("drag emulates input");
@@ -1569,6 +1673,7 @@ fn agent_sends_input_to_an_agent_sessions_own_seat() {
             request: Request::Emulate {
                 input,
                 agent: Some(7),
+                window: None,
             },
         })
     };
@@ -1660,11 +1765,42 @@ fn type_types_its_text_as_given() {
 }
 
 #[test]
+fn key_and_type_go_into_a_window_they_name() {
+    let into = |input, agent| {
+        Ok(Invocation::Ask {
+            request: Request::Emulate {
+                input,
+                agent,
+                window: Some("kD3m".to_string()),
+            },
+        })
+    };
+    assert_eq!(
+        run(&["type", "--window", "kD3m", "hi"]),
+        into(
+            vec![EmulatedInput::Text {
+                text: "hi".to_string()
+            }],
+            None
+        )
+    );
+    let Ok(Invocation::Ask {
+        request: Request::Emulate { agent, window, .. },
+    }) = run(&["key", "--agent", "7", "--window", "kD3m", "Return"])
+    else {
+        panic!("key emulates input");
+    };
+    assert_eq!((agent, window.as_deref()), (Some(7), Some("kD3m")));
+    assert!(run(&["key", "--window", "kD3m"]).is_err());
+}
+
+#[test]
 fn devtools_sends_a_method_and_its_params_to_a_window() {
     let devtools = |params| {
         Ok(Invocation::Ask {
             request: Request::DevTools {
-                window: "Xy7p".to_string(),
+                window: Some("Xy7p".to_string()),
+                agent: None,
                 view: None,
                 method: "DOM.getBoxModel".to_string(),
                 params,
@@ -1674,6 +1810,7 @@ fn devtools_sends_a_method_and_its_params_to_a_window() {
     assert_eq!(
         run(&[
             "devtools",
+            "--window",
             "Xy7p",
             "DOM.getBoxModel",
             "{\"backendNodeId\":4}"
@@ -1681,53 +1818,99 @@ fn devtools_sends_a_method_and_its_params_to_a_window() {
         devtools(serde_json::json!({"backendNodeId": 4}))
     );
     assert_eq!(
-        run(&["devtools", "Xy7p", "DOM.getBoxModel"]),
+        run(&["devtools", "--window", "Xy7p", "DOM.getBoxModel"]),
         devtools(serde_json::json!({}))
     );
     assert_eq!(
-        run(&["devtools", "--view", "9", "Xy7p", "Page.reload"]),
+        run(&["devtools", "--window", "Xy7p", "--view", "9", "Page.reload"]),
         Ok(Invocation::Ask {
             request: Request::DevTools {
-                window: "Xy7p".to_string(),
+                window: Some("Xy7p".to_string()),
+                agent: None,
                 view: Some("9".to_string()),
                 method: "Page.reload".to_string(),
                 params: serde_json::json!({}),
             },
         })
     );
+    assert_eq!(
+        run(&[
+            "devtools",
+            "--agent",
+            "3",
+            "--window",
+            "Xy7p",
+            "--view",
+            "9",
+            "Page.reload"
+        ]),
+        Ok(Invocation::Ask {
+            request: Request::DevTools {
+                window: Some("Xy7p".to_string()),
+                agent: Some(3),
+                view: Some("9".to_string()),
+                method: "Page.reload".to_string(),
+                params: serde_json::json!({}),
+            },
+        })
+    );
+    // Without --window, the focused window's page.
+    assert_eq!(
+        run(&["devtools", "--agent", "3", "Page.reload"]),
+        Ok(Invocation::Ask {
+            request: Request::DevTools {
+                window: None,
+                agent: Some(3),
+                view: None,
+                method: "Page.reload".to_string(),
+                params: serde_json::json!({}),
+            },
+        })
+    );
+    assert!(run(&["devtools", "--agent", "three", "Page.reload"]).is_err());
     assert!(run(&["devtools", "--view"]).is_err());
-    assert!(run(&["devtools", "Xy7p"]).is_err());
-    assert!(run(&["devtools", "Xy7p", "Page.reload", "[1]"]).is_err());
-    assert!(run(&["devtools", "Xy7p", "Page.reload", "{", "more"]).is_err());
+    assert!(run(&["devtools", "--window", "Xy7p"]).is_err());
+    assert!(run(&["devtools", "Page.reload", "[1]"]).is_err());
+    assert!(run(&["devtools", "Page.reload", "{", "more"]).is_err());
 }
 
 #[test]
 fn accessibility_reads_a_windows_tree_and_acts_on_its_elements() {
     use domicile_launch::accessibility::Act;
     assert_eq!(
-        run(&["accessibility", "kD3m"]),
+        run(&["accessibility", "--window", "kD3m"]),
         Ok(Invocation::Accessibility {
-            window: "kD3m".to_string()
+            window: Some("kD3m".to_string()),
+            agent: None,
+        })
+    );
+    assert_eq!(
+        run(&["accessibility", "--agent", "3"]),
+        Ok(Invocation::Accessibility {
+            window: None,
+            agent: Some(3),
         })
     );
     let act = |act| {
         Ok(Invocation::AccessibilityAct {
-            window: "kD3m".to_string(),
+            window: Some("kD3m".to_string()),
+            agent: None,
             element: ":1.7/w/1".to_string(),
             act,
         })
     };
     assert_eq!(
-        run(&["accessibility-act", "kD3m", ":1.7/w/1", "click"]),
+        run(&["accessibility-act", "--window", "kD3m", ":1.7/w/1", "click"]),
         act(Act::Click)
     );
     assert_eq!(
-        run(&["accessibility-act", "kD3m", ":1.7/w/1", "focus"]),
+        run(&["accessibility-act", "--window", "kD3m", ":1.7/w/1", "focus"]),
         act(Act::Focus)
     );
     assert_eq!(
         run(&[
             "accessibility-act",
+            "--window",
             "kD3m",
             ":1.7/w/1",
             "set-text",
@@ -1735,11 +1918,33 @@ fn accessibility_reads_a_windows_tree_and_acts_on_its_elements() {
         ]),
         act(Act::SetText("hi there".to_string()))
     );
-    assert!(run(&["accessibility"]).is_err());
-    assert!(run(&["accessibility-act", "kD3m", ":1.7/w/1"]).is_err());
-    assert!(run(&["accessibility-act", "kD3m", ":1.7/w/1", "explode"]).is_err());
-    assert!(run(&["accessibility-act", "kD3m", ":1.7/w/1", "set-text"]).is_err());
-    assert!(run(&["accessibility-act", "kD3m", ":1.7/w/1", "click", "more"]).is_err());
+    assert!(run(&["accessibility", "kD3m"]).is_err());
+    assert!(run(&["accessibility-act", "--window", "kD3m", ":1.7/w/1"]).is_err());
+    assert!(run(&[
+        "accessibility-act",
+        "--window",
+        "kD3m",
+        ":1.7/w/1",
+        "explode"
+    ])
+    .is_err());
+    assert!(run(&[
+        "accessibility-act",
+        "--window",
+        "kD3m",
+        ":1.7/w/1",
+        "set-text"
+    ])
+    .is_err());
+    assert!(run(&[
+        "accessibility-act",
+        "--window",
+        "kD3m",
+        ":1.7/w/1",
+        "click",
+        "more"
+    ])
+    .is_err());
 }
 
 #[test]
@@ -1873,4 +2078,27 @@ fn export_logs_hides_urls_and_titles_unless_asked_to_show_everything() {
             extra: "more.txt".to_string()
         })
     );
+}
+
+#[test]
+fn completions_takes_a_shell_or_the_words_to_complete() {
+    use domicile_launch::completion::CompletionShell;
+    assert_eq!(
+        run(&["completions", "nushell"]),
+        Ok(Invocation::Completions {
+            shell: CompletionShell::Nushell
+        })
+    );
+    // An empty word survives, after the `=`.
+    assert_eq!(
+        run(&["completions", "--complete=", "send-shell", "--help"]),
+        Ok(Invocation::Complete {
+            words: vec!["send-shell".to_string(), "--help".to_string()],
+            current: String::new(),
+        })
+    );
+    assert!(matches!(
+        run(&["completions", "tcsh"]),
+        Err(CliError::NotACompletionShell { .. })
+    ));
 }

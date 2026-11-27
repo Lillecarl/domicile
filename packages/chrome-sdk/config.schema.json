@@ -10,6 +10,26 @@
       "pattern": "^#[0-9a-fA-F]{6}$",
       "type": "string"
     },
+    "AdBlocking": {
+      "description": "How a profile's pages block ads and trackers. See\n[`Protections::block_ads_and_trackers`].",
+      "oneOf": [
+        {
+          "const": "standard",
+          "description": "Blocks what the lists name from other sites, and lets a site's own\nads through unless a rule is `$important`, as Brave's Standard does.",
+          "type": "string"
+        },
+        {
+          "const": "strict",
+          "description": "Blocks a site's own ads too. Some pages may break.",
+          "type": "string"
+        },
+        {
+          "const": "off",
+          "description": "Blocks nothing.",
+          "type": "string"
+        }
+      ]
+    },
     "AgentsConfig": {
       "additionalProperties": false,
       "description": "Agents that drive the desktop, such as Claude Code. See\n`docs/AGENTS.md`.",
@@ -26,6 +46,26 @@
       "additionalProperties": false,
       "description": "Browser profiles: sets of sign-ins, site data and extensions, and the\nsites each opens. See `docs/architecture/BROWSER-PROFILES.md`.",
       "properties": {
+        "block_lists": {
+          "default": [
+            "https://easylist.to/easylist/easylist.txt",
+            "https://easylist.to/easylist/easyprivacy.txt",
+            "https://ublockorigin.github.io/uAssets/filters/filters.txt"
+          ],
+          "description": "The filter lists ads and trackers are blocked with, in Adblock Plus\nand uBlock Origin syntax: each an `https:` address, which the engine\nfetches and keeps up to date, or an absolute path. EasyList,\nEasyPrivacy and uBlock Origin's filters unless set; `[]` blocks with\n`block_rules` only.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "block_rules": {
+          "default": [],
+          "description": "Rules of your own, in the same syntax, which apply on top of\n`block_lists`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "default_private_profile": {
           "default": "private",
           "description": "The profile a new private window opens in. Private.",
@@ -53,13 +93,29 @@
               "color": "#0d9488",
               "extensions": null,
               "name": "Default",
-              "private": false
+              "private": false,
+              "protections": {
+                "block_ads_and_trackers": null,
+                "block_third_party_cookies": true,
+                "global_privacy_control": true,
+                "hide_device_details": true,
+                "hide_local_ip_address": true,
+                "remove_tracking_from_links": true
+              }
             },
             "private": {
               "color": "#a78bfa",
               "extensions": null,
               "name": "Private",
-              "private": true
+              "private": true,
+              "protections": {
+                "block_ads_and_trackers": null,
+                "block_third_party_cookies": true,
+                "global_privacy_control": true,
+                "hide_device_details": true,
+                "hide_local_ip_address": true,
+                "remove_tracking_from_links": true
+              }
             }
           },
           "description": "The profiles, by id. An id is a directory name: lowercase letters,\ndigits and `-`.",
@@ -100,6 +156,18 @@
           "default": false,
           "description": "Keeps no history, sign-ins or site data after its last page closes.",
           "type": "boolean"
+        },
+        "protections": {
+          "$ref": "#/$defs/Protections",
+          "default": {
+            "block_ads_and_trackers": null,
+            "block_third_party_cookies": true,
+            "global_privacy_control": true,
+            "hide_device_details": true,
+            "hide_local_ip_address": true,
+            "remove_tracking_from_links": true
+          },
+          "description": "What it keeps sites from learning about you. Each is on unless the\nconfig turns it off."
         }
       },
       "required": ["name", "color"],
@@ -727,6 +795,50 @@
       "required": ["name", "displays"],
       "type": "object"
     },
+    "Protections": {
+      "additionalProperties": false,
+      "description": "What a browser profile keeps sites from learning about you. See\n[`BrowserProfile::protections`].",
+      "properties": {
+        "block_ads_and_trackers": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AdBlocking"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How the profile's pages block ads and trackers, with\n[`BrowserConfig::block_lists`]. Unset: `standard`, or `strict` in a\nprivate profile."
+        },
+        "block_third_party_cookies": {
+          "default": true,
+          "description": "Blocks cookies a page's embedded sites set or read, which track you\nfrom site to site.",
+          "type": "boolean"
+        },
+        "global_privacy_control": {
+          "default": true,
+          "description": "Asks sites not to sell or share your data, with the\n`Sec-GPC: 1` header and `navigator.globalPrivacyControl`.",
+          "type": "boolean"
+        },
+        "hide_device_details": {
+          "default": true,
+          "description": "Shows sites the device's canvas drawing, audio and processor count a\nlittle off, the same way for a site until the desktop starts again,\nas Brave's farbling does, so they can't recognize the device by\nthem. Not on a site or in a window whose ad blocking is off.",
+          "type": "boolean"
+        },
+        "hide_local_ip_address": {
+          "default": true,
+          "description": "Keeps WebRTC, as video calls use, from telling sites your local\nnetwork address.",
+          "type": "boolean"
+        },
+        "remove_tracking_from_links": {
+          "default": true,
+          "description": "Takes the click ids (`fbclid`, `gclid` and the like) out of links to\nother sites, and in [`AdBlocking::Strict`] the `utm_` campaign\nparameters too. Not on a site or in a window whose ad blocking is off.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "ScrollMethod": {
       "description": "How a touchpad generates scrolling.",
       "enum": ["default", "two_finger", "edge", "on_button_down"],
@@ -1037,6 +1149,12 @@
     "browser": {
       "$ref": "#/$defs/BrowserConfig",
       "default": {
+        "block_lists": [
+          "https://easylist.to/easylist/easylist.txt",
+          "https://easylist.to/easylist/easyprivacy.txt",
+          "https://ublockorigin.github.io/uAssets/filters/filters.txt"
+        ],
+        "block_rules": [],
         "default_private_profile": "private",
         "default_profile": "default",
         "order": [],
@@ -1045,13 +1163,29 @@
             "color": "#0d9488",
             "extensions": null,
             "name": "Default",
-            "private": false
+            "private": false,
+            "protections": {
+              "block_ads_and_trackers": null,
+              "block_third_party_cookies": true,
+              "global_privacy_control": true,
+              "hide_device_details": true,
+              "hide_local_ip_address": true,
+              "remove_tracking_from_links": true
+            }
           },
           "private": {
             "color": "#a78bfa",
             "extensions": null,
             "name": "Private",
-            "private": true
+            "private": true,
+            "protections": {
+              "block_ads_and_trackers": null,
+              "block_third_party_cookies": true,
+              "global_privacy_control": true,
+              "hide_device_details": true,
+              "hide_local_ip_address": true,
+              "remove_tracking_from_links": true
+            }
           }
         },
         "sites": {}

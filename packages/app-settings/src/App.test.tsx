@@ -20,6 +20,7 @@ import type {
   KnownAgents,
   Monitor,
   SettingsFiles,
+  SitePrivacy,
   WebAgents,
 } from "./host";
 
@@ -126,9 +127,12 @@ const renderApp = async (
     options,
     profiles,
     refuse,
+    sitePrivacy,
     webAgents,
     writable = true,
   }: {
+    /** The sites with their own ad blocking; none by default. */
+    sitePrivacy?: SitePrivacy[];
     /** Agents on the web; none by default. */
     webAgents?: WebAgents;
     /** The agents in now and remembered; none by default. */
@@ -158,6 +162,7 @@ const renderApp = async (
     profiles: structuredClone(profiles),
     refuse,
     siteData: structuredClone(SITE_DATA),
+    sitePrivacy: structuredClone(sitePrivacy),
     sites: structuredClone(SITES),
     webAgents: structuredClone(webAgents),
   });
@@ -249,18 +254,78 @@ describe(App, () => {
       });
     });
 
-    it("shows a read-only config's values and says why it cannot change", async () => {
-      await renderApp("Appearance", {
+    it("changes a read-only config's settings until the desktop restarts", async () => {
+      const { host, user } = await renderApp("Appearance", {
         config: { theme: { mode: "light" } },
         writable: false,
       });
       expect(screen.getByRole("status")).toHaveTextContent(
-        "These settings come from your config file, which cannot be changed here. Change them where the file is made, such as your home-manager config.",
+        "Your config file can't be changed here, so changes you make last until the desktop restarts or your config changes them.",
       );
-      expect(screen.getByRole("img", { name: "Locked" })).toBeInTheDocument();
-      const theme = screen.getByRole("combobox", { name: "Theme" });
-      expect(theme).toHaveTextContent("Light");
-      expect(theme).toBeDisabled();
+      await choose(user, "Theme", "Dark");
+      await waitFor(() => {
+        expect(host.state.overrides).toEqual([
+          { path: ["theme", "mode"], value: null, written: "light" },
+        ]);
+      });
+      expect(host.writes).toEqual([]);
+      expect(screen.getByRole("combobox", { name: "Theme" })).toHaveTextContent(
+        "Dark",
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "1 setting differs from your config until the desktop restarts or your config changes it.",
+      );
+      expect(screen.getByText("Changed from your config")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Reset Theme" }));
+      await waitFor(() => {
+        expect(
+          screen.getByRole("combobox", { name: "Theme" }),
+        ).toHaveTextContent("Light");
+      });
+      expect(host.state.overrides).toEqual([]);
+    });
+
+    it("shows a change the shell made over a writable config, and writes over it", async () => {
+      const { host, user } = await renderApp("Appearance", {
+        config: { theme: { mode: "light" } },
+      });
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      host.state.overrides = [
+        { path: ["theme", "mode"], value: "dark", written: "light" },
+      ];
+      host.change();
+      expect(
+        await screen.findByText("Changed from your config"),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: "Theme" })).toHaveTextContent(
+        "Dark",
+      );
+      await choose(user, "Theme", "Light");
+      await waitFor(() => {
+        expect(host.state.overrides).toEqual([]);
+      });
+      expect(written(host.writes)).toEqual({ theme: { mode: "light" } });
+    });
+
+    it("resets every change on the page at once", async () => {
+      const { host, user } = await renderApp("Appearance", {
+        writable: false,
+      });
+      host.state.overrides = [
+        { path: ["theme", "mode"], value: "light", written: "dark" },
+        { path: ["theme", "contrast"], value: "high", written: null },
+        { path: ["idle", "blank_after_seconds"], value: 60, written: null },
+      ];
+      host.change();
+      await user.click(
+        await screen.findByRole("button", { name: "Reset all" }),
+      );
+      await waitFor(() => {
+        expect(host.state.overrides).toEqual([
+          { path: ["idle", "blank_after_seconds"], value: 60, written: null },
+        ]);
+      });
     });
 
     it("says why the desktop refused a change", async () => {
@@ -465,6 +530,166 @@ describe(App, () => {
       );
       await waitFor(() => {
         expect(written(host.writes).lockdown).toEqual({ disable_camera: true });
+      });
+    });
+
+    it("stops asking sites not to sell your data in the default profile", async () => {
+      const { host, user } = await renderApp("Privacy");
+      const protections = await profileCard("Website protections");
+      expect(
+        protections.getByRole("combobox", { name: "Profile" }),
+      ).toHaveTextContent("Default");
+      await user.click(
+        protections.getByRole("switch", {
+          name: "Ask sites not to sell or share your data",
+        }),
+      );
+      await waitFor(() => {
+        const { profiles } = written(host.writes).browser;
+        expect(profiles.default.protections).toEqual({
+          global_privacy_control: false,
+        });
+        expect(profiles.private).toEqual({
+          color: "#a78bfa",
+          name: "Private",
+          private: true,
+        });
+      });
+    });
+
+    it("keeps the tracking in links in the default profile", async () => {
+      const { host, user } = await renderApp("Privacy");
+      const protections = await profileCard("Website protections");
+      await user.click(
+        protections.getByRole("switch", { name: "Remove tracking from links" }),
+      );
+      await waitFor(() => {
+        const { profiles } = written(host.writes).browser;
+        expect(profiles.default.protections).toEqual({
+          remove_tracking_from_links: false,
+        });
+      });
+    });
+
+    it("shows sites the device's true details in the default profile", async () => {
+      const { host, user } = await renderApp("Privacy");
+      const protections = await profileCard("Website protections");
+      await user.click(
+        protections.getByRole("switch", { name: "Hide your device's details" }),
+      );
+      await waitFor(() => {
+        const { profiles } = written(host.writes).browser;
+        expect(profiles.default.protections).toEqual({
+          hide_device_details: false,
+        });
+      });
+    });
+
+    it("blocks a site's own ads too in the default profile", async () => {
+      const { host, user } = await renderApp("Privacy");
+      await choose(user, "Block ads and trackers", "Strict");
+      await waitFor(() => {
+        const { profiles } = written(host.writes).browser;
+        expect(profiles.default.protections).toEqual({
+          block_ads_and_trackers: "strict",
+        });
+      });
+    });
+
+    it("shows a private profile on strict, and writes nothing to keep it there", async () => {
+      const { host, user } = await renderApp("Privacy", {
+        config: {
+          browser: {
+            ...BROWSER,
+            profiles: {
+              ...BROWSER.profiles,
+              private: {
+                ...BROWSER.profiles.private,
+                protections: { block_ads_and_trackers: "off" },
+              },
+            },
+          },
+        },
+      });
+      await choose(user, "Profile", "Private");
+      expect(
+        screen.getByRole("combobox", { name: "Block ads and trackers" }),
+      ).toHaveTextContent("Off");
+      await choose(user, "Block ads and trackers", "Strict");
+      await waitFor(() => {
+        const { profiles } = written(host.writes).browser;
+        expect(profiles.private).toEqual({
+          ...BROWSER.profiles.private,
+        });
+      });
+    });
+
+    it("lists the sites whose protections the profile's windows changed", async () => {
+      const { host, user } = await renderApp("Privacy", {
+        config: { browser: BROWSER },
+        sitePrivacy: [
+          {
+            block_ads_and_trackers: "off",
+            profile: "personal",
+            site: "secure.chase.com",
+          },
+          {
+            block_ads_and_trackers: "strict",
+            profile: "personal",
+            site: "news.example",
+          },
+          { block_ads_and_trackers: "off", profile: "work", site: "espn.com" },
+        ],
+      });
+      const sites = await profileCard("Sites you changed");
+      expect(sites.getByText("Protections off")).toBeInTheDocument();
+      expect(sites.getByText("Ads and trackers: Strict")).toBeInTheDocument();
+      expect(sites.queryByText("espn.com")).toBeNull();
+
+      await user.click(
+        sites.getByRole("button", {
+          name: "Turn protections back on for secure.chase.com",
+        }),
+      );
+      await waitFor(() => {
+        expect(host.state.sitePrivacy).toEqual([
+          {
+            block_ads_and_trackers: "strict",
+            profile: "personal",
+            site: "news.example",
+          },
+          { block_ads_and_trackers: "off", profile: "work", site: "espn.com" },
+        ]);
+      });
+      await choose(user, "Profile", "Work");
+      expect(
+        (await profileCard("Sites you changed")).getByText("espn.com"),
+      ).toBeInTheDocument();
+    });
+
+    it("shows no sites card while no site has its own", async () => {
+      await renderApp("Privacy");
+      await profileCard("Website protections");
+      expect(
+        screen.queryByRole("region", { name: "Sites you changed" }),
+      ).toBeNull();
+    });
+
+    it("changes the protections of the profile chosen, keeping the others", async () => {
+      const { host, user } = await renderApp("Privacy", {
+        config: { browser: BROWSER },
+      });
+      await choose(user, "Profile", "Work");
+      await user.click(
+        screen.getByRole("switch", { name: "Block cookies from other sites" }),
+      );
+      await waitFor(() => {
+        const { profiles } = written(host.writes).browser;
+        expect(profiles.work).toEqual({
+          ...BROWSER.profiles.work,
+          protections: { block_third_party_cookies: false },
+        });
+        expect(profiles.personal).toEqual(BROWSER.profiles.personal);
       });
     });
 
@@ -714,26 +939,38 @@ describe(App, () => {
   });
 
   describe("extensions", () => {
-    it("turns an extension off", async () => {
-      const { host, user } = await renderApp("Extensions");
-      await user.click(
-        await screen.findByRole("switch", { name: "uBlock Origin Lite" }),
-      );
-      await waitFor(() => {
-        expect(host.state.installed[0]?.enabled).toBe(false);
-      });
+    it("names the profiles an extension is on in", async () => {
+      await renderApp("Extensions", { profiles: PROFILES });
+      expect(
+        within(
+          (await ublock()).getByRole("list", {
+            name: "uBlock Origin Lite is on in",
+          }),
+        )
+          .getAllByRole("listitem")
+          .map((item) => item.textContent),
+      ).toEqual(["Work"]);
     });
 
-    it("says whether an extension is on beside its switch", async () => {
-      const { user } = await renderApp("Extensions");
-      const toggle = await screen.findByRole("switch", {
-        name: "uBlock Origin Lite",
-      });
-      expect(toggle.closest("label")).toHaveTextContent("On");
-      await user.click(toggle);
-      await waitFor(() => {
-        expect(toggle.closest("label")).toHaveTextContent("Off");
-      });
+    it("says when an extension is on in no profile", async () => {
+      const off = structuredClone(PROFILES);
+      for (const profile of off.profiles) {
+        for (const extension of profile.extensions) {
+          extension.enabled = false;
+        }
+      }
+      await renderApp("Extensions", { profiles: off });
+      expect((await ublock()).getByText("Not on in any profile")).toBeVisible();
+    });
+
+    it("opens the Profiles page to choose where an extension is on", async () => {
+      const { user } = await renderApp("Extensions", { profiles: PROFILES });
+      await user.click(
+        (await ublock()).getByRole("button", { name: "Choose profiles" }),
+      );
+      expect(
+        await screen.findByRole("heading", { level: 1, name: "Profiles" }),
+      ).toBeVisible();
     });
 
     it("opens an extension's options", async () => {
@@ -758,18 +995,17 @@ describe(App, () => {
       });
     });
 
-    it("shows an extension's settings only while it is on", async () => {
-      const { user } = await renderApp("Extensions");
-      const row = await ublock();
+    it("shows an extension's settings while it is off everywhere", async () => {
+      const off = structuredClone(PROFILES);
+      for (const profile of off.profiles) {
+        for (const extension of profile.extensions) {
+          extension.enabled = false;
+        }
+      }
+      await renderApp("Extensions", { profiles: off });
       expect(
-        row.getByRole("switch", { name: "Allow on local files" }),
+        (await ublock()).getByRole("switch", { name: "Allow on local files" }),
       ).toBeVisible();
-      await user.click(row.getByRole("switch", { name: "uBlock Origin Lite" }));
-      await waitFor(() => {
-        expect(
-          row.queryByRole("switch", { name: "Allow on local files" }),
-        ).not.toBeInTheDocument();
-      });
     });
 
     it("shows only the settings an extension can use", async () => {
@@ -920,6 +1156,48 @@ describe(App, () => {
       });
     });
 
+    it("asks which profiles a folder just loaded goes on in", async () => {
+      const { host, user } = await renderApp("Extensions", {
+        profiles: PROFILES,
+      });
+      await user.click(
+        screen.getByRole("button", { name: "Load unpacked folder" }),
+      );
+      const dialog = within(
+        await screen.findByRole("dialog", { name: "Install My Extension?" }),
+      );
+      const work = dialog.getByRole("switch", { name: "Work" });
+      expect(work).not.toBeChecked();
+      expect(
+        dialog.getByRole("switch", { name: "Personal" }),
+      ).not.toBeChecked();
+      await user.click(work);
+      await user.click(dialog.getByRole("button", { name: "Install" }));
+      await waitFor(() => {
+        expect(host.switched).toEqual([
+          { enabled: true, id: "c".repeat(32), profile: "work" },
+        ]);
+      });
+      expect(host.uninstalled).toEqual([]);
+    });
+
+    it("uninstalls a folder just loaded when its install is canceled", async () => {
+      const { host, user } = await renderApp("Extensions", {
+        profiles: PROFILES,
+      });
+      await user.click(
+        screen.getByRole("button", { name: "Load unpacked folder" }),
+      );
+      const dialog = within(
+        await screen.findByRole("dialog", { name: "Install My Extension?" }),
+      );
+      await user.click(dialog.getByRole("button", { name: "Cancel" }));
+      await waitFor(() => {
+        expect(host.uninstalled).toEqual(["c".repeat(32)]);
+      });
+      expect(host.switched).toEqual([]);
+    });
+
     it("loads nothing when the picker is canceled", async () => {
       const { host, user } = await renderApp("Extensions", { chosen: null });
       await user.click(
@@ -947,9 +1225,6 @@ describe(App, () => {
         configExtensions: [UBLOCK],
         writable: false,
       });
-      expect(
-        await screen.findByRole("switch", { name: "uBlock Origin Lite" }),
-      ).toBeInTheDocument();
       expect(
         (await ublock()).queryByRole("button", { name: "Uninstall" }),
       ).not.toBeInTheDocument();
@@ -1247,26 +1522,56 @@ describe(App, () => {
       expect(host.writes).toEqual([]);
     });
 
-    it("switches an extension the config locks in the config", async () => {
+    it("switches an extension the config switches in the config, in one click", async () => {
       const { host, user } = await openProfiles();
       const work = await profileCard("Work");
-      await user.click(
-        work.getByRole("switch", { name: "uBlock Origin Lite in Work" }),
-      );
+      const ublock = work.getByRole("switch", {
+        name: "uBlock Origin Lite in Work",
+      });
+      await user.click(ublock);
       await waitFor(() => {
         expect(written(host.writes).browser.profiles.work.extensions).toEqual(
           [],
         );
       });
+      // The engine still lists it on: the config's list is what shows.
+      expect(ublock).not.toBeChecked();
       expect(host.switched).toEqual([]);
     });
 
-    it("locks what the config sets when the config is read-only", async () => {
-      await openProfiles(false);
+    it("switches what a read-only config switches until the desktop restarts", async () => {
+      const { host, user } = await openProfiles(false);
       const work = await profileCard("Work");
-      expect(
-        work.getByRole("switch", { name: "uBlock Origin Lite in Work" }),
-      ).toHaveAttribute("aria-disabled", "true");
+      const ublock = work.getByRole("switch", {
+        name: "uBlock Origin Lite in Work",
+      });
+      await user.click(ublock);
+      await waitFor(() => {
+        expect(host.state.overrides).toEqual([
+          {
+            path: ["browser", "profiles", "work", "extensions"],
+            value: [],
+            written: [UBLOCK],
+          },
+        ]);
+      });
+      // At once, as the config says, without waiting for the engine.
+      expect(ublock).not.toBeChecked();
+      expect(work.getByText("Changed from your config")).toBeVisible();
+      expect(host.writes).toEqual([]);
+      expect(host.switched).toEqual([]);
+
+      await user.click(
+        work.getByRole("button", { name: "Reset uBlock Origin Lite in Work" }),
+      );
+      await waitFor(() => {
+        expect(host.state.overrides).toEqual([]);
+      });
+      expect(ublock).toBeChecked();
+    });
+
+    it("locks the profiles themselves when the config is read-only", async () => {
+      await openProfiles(false);
       expect(
         screen.getByRole("combobox", { name: "Where *.acme.com opens" }),
       ).toBeDisabled();
@@ -1340,6 +1645,73 @@ describe(App, () => {
         expect(browser.default_profile).toBe("work");
         expect(browser.sites).toEqual({});
       });
+    });
+
+    it("keeps a switch made for now out of the file when the profiles change", async () => {
+      const { host, user } = await openProfiles();
+      const change = {
+        path: ["browser", "profiles", "work", "extensions"],
+        value: [],
+        written: [UBLOCK],
+      };
+      host.state.overrides = [change];
+      host.change();
+      const work = await profileCard("Work");
+      expect(
+        await work.findByText("Changed from your config"),
+      ).toBeInTheDocument();
+      await user.click(work.getByRole("button", { name: "Make default" }));
+      await waitFor(() => {
+        expect(written(host.writes).browser.default_profile).toBe("work");
+      });
+      expect(written(host.writes).browser.profiles.work.extensions).toEqual([
+        UBLOCK,
+      ]);
+      expect(host.state.overrides).toEqual([change]);
+    });
+
+    it("writes a switch into the file's list, not the tray's switches for now", async () => {
+      const { host, user } = await openProfiles();
+      const other = "abcdefghijklmnopabcdefghijklmnop";
+      host.state.overrides = [
+        {
+          path: ["browser", "profiles", "work", "extensions"],
+          value: [UBLOCK, other],
+          written: [UBLOCK],
+        },
+      ];
+      host.change();
+      const work = await profileCard("Work");
+      await user.click(
+        await work.findByRole("switch", { name: "uBlock Origin Lite in Work" }),
+      );
+      await waitFor(() => {
+        expect(written(host.writes).browser.profiles.work.extensions).toEqual(
+          [],
+        );
+      });
+    });
+
+    it("resets a switch the tray made for now without writing the file", async () => {
+      const { host, user } = await openProfiles();
+      host.state.overrides = [
+        {
+          path: ["browser", "profiles", "work", "extensions"],
+          value: [],
+          written: [UBLOCK],
+        },
+      ];
+      host.change();
+      const work = await profileCard("Work");
+      await user.click(
+        await work.findByRole("button", {
+          name: "Reset uBlock Origin Lite in Work",
+        }),
+      );
+      await waitFor(() => {
+        expect(host.state.overrides).toEqual([]);
+      });
+      expect(host.writes).toEqual([]);
     });
 
     it("moves a profile in the config's order", async () => {

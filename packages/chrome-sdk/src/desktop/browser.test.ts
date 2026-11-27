@@ -16,12 +16,14 @@ describe("browser", () => {
 
     expect(desktop(fake.host).browser.windows).toStrictEqual([
       {
+        agent: undefined,
         appId: "",
         height: 0,
         id: "1",
         ignoresPointer: false,
         isApp: false,
         isCaptured: false,
+        isDiscarded: false,
         isHidden: false,
         isPrivate: false,
         menu: undefined,
@@ -57,6 +59,16 @@ describe("browser", () => {
     expect(
       desktop(fake.host).browser.windows?.map((window) => window.opener),
     ).toStrictEqual([undefined, "1"]);
+  });
+
+  it("lists the agent seat that opened each one", () => {
+    const fake = new FakeDomicileHost();
+    fake.openBrowser("https://a.example/");
+    fake.openBrowser("https://b.example/", { agent: "agent-3" });
+
+    expect(
+      desktop(fake.host).browser.windows?.map((window) => window.agent),
+    ).toStrictEqual([undefined, "agent-3"]);
   });
 
   it("lists an Electron app's views apart from the windows", () => {
@@ -121,6 +133,13 @@ describe("browser", () => {
     ]);
   });
 
+  it("unloads a window's page", () => {
+    const fake = new FakeDomicileHost();
+    desktop(fake.host).browser.discard("1");
+
+    expect(fake.calls).toStrictEqual([["discardBrowserWindow", "1"]]);
+  });
+
   it("opens a window in a profile and moves one to another", () => {
     const fake = new FakeDomicileHost();
     const { browser } = desktop(fake.host);
@@ -166,6 +185,20 @@ describe("browser", () => {
     expect(browser.profiles).toStrictEqual([work]);
     expect(changes).toBe(1);
     stop();
+  });
+
+  it("says which pages may be unloaded while memory is short", () => {
+    const fake = new FakeDomicileHost();
+    const heard: (readonly string[])[] = [];
+    const stop = desktop(fake.host).browser.on("memoryShort", (ids) => {
+      heard.push(ids);
+    });
+
+    fake.dispatch("browsermemoryshort", { data: '["2","1"]' });
+    stop();
+    fake.dispatch("browsermemoryshort", { data: '["2"]' });
+
+    expect(heard).toStrictEqual([["2", "1"]]);
   });
 
   it("pins a site to a profile and finds the site that routes an address", async () => {
@@ -246,15 +279,102 @@ describe("browser", () => {
       ONE_PASSWORD,
       BITWARDEN,
     ]);
-    await expect(
-      browser.setExtensionEnabled("work", ONE_PASSWORD, false),
-    ).rejects.toThrow("only the config");
     expect(fake.calls[0]).toStrictEqual([
       "setBrowserProfileExtensionEnabled",
       "work",
       BITWARDEN,
       true,
     ]);
+  });
+
+  it("switches one the config lists with a temporary change to its list", async () => {
+    const fake = new FakeDomicileHost();
+    const { browser } = desktop(fake.host);
+    const BITWARDEN = "nngceckbapebfimnlniiiahkandclblb";
+    const ONE_PASSWORD = "aeblfdkhhhdcdjpifhhbdiojplfjncoa";
+    const UBLOCK = "ddkjiahejlhfcafbddmgiahcphecmpfh";
+    fake.set({
+      browserProfiles: [
+        {
+          color: "#3366ff",
+          configSites: [],
+          enabledExtensions: [ONE_PASSWORD, UBLOCK],
+          extensions: [BITWARDEN, ONE_PASSWORD, UBLOCK],
+          id: "work",
+          isDefault: true,
+          isDefaultPrivate: false,
+          isPrivate: false,
+          lockedExtensions: [BITWARDEN, ONE_PASSWORD, UBLOCK],
+          name: "Work",
+          pinnedSites: [],
+        },
+      ],
+    });
+    const path = ["browser", "profiles", "work", "extensions"];
+    /** Answers the next request, as the compositor would. */
+    const answer = (value: string[] | undefined, written: string[]) => {
+      fake.dispatch("configoverrides", {
+        data: JSON.stringify({
+          overrides:
+            value === undefined
+              ? []
+              : [
+                  {
+                    path,
+                    value: JSON.stringify(value),
+                    written: JSON.stringify(written),
+                  },
+                ],
+          type: "config_overrides",
+        }),
+      });
+    };
+    const settle = () => new Promise((done) => setTimeout(done, 0));
+    // The file lists an extension the desk doesn't have, which stays.
+    const written = ["gone", ONE_PASSWORD, UBLOCK];
+    const switched = browser.setExtensionEnabled("work", UBLOCK, false);
+    await settle();
+    answer(undefined, []);
+    await settle();
+    answer([ONE_PASSWORD], written);
+    await settle();
+    answer(["gone", ONE_PASSWORD], written);
+    await switched;
+    expect(
+      fake.calls.map((call) =>
+        call[0] === "changeConfig" ? JSON.parse(String(call[1])) : call,
+      ),
+    ).toStrictEqual([
+      { type: "which_config_overrides" },
+      {
+        path,
+        type: "set_config_override",
+        value: JSON.stringify([ONE_PASSWORD]),
+      },
+      {
+        path,
+        type: "set_config_override",
+        value: JSON.stringify(["gone", ONE_PASSWORD]),
+      },
+    ]);
+
+    const changed = browser.changedExtensions("work");
+    answer(["gone", ONE_PASSWORD], written);
+    expect(await changed).toStrictEqual([UBLOCK]);
+
+    // Back on, it is the file's list again, in the file's order.
+    fake.calls.length = 0;
+    const reset = browser.resetExtension("work", UBLOCK);
+    await settle();
+    answer(["gone", ONE_PASSWORD], written);
+    await settle();
+    answer(undefined, []);
+    await reset;
+    expect(JSON.parse(String(fake.calls[1]?.[1]))).toStrictEqual({
+      path,
+      type: "set_config_override",
+      value: JSON.stringify(written),
+    });
   });
 
   it("opens an app window in a profile", () => {

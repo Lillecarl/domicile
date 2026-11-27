@@ -20,6 +20,12 @@
 //! {"type":"set_site_permission","version":1,"origin":"https://meet.example","permission":"camera","setting":"block"}
 //! {"type":"set"}   |   {"type":"refused","why":"…"}
 //!
+//! {"type":"site_privacy","version":1}
+//! {"type":"site_privacy","sites":[{"profile":"work","site":"nytimes.com","block_ads_and_trackers":"off"}]}
+//!
+//! {"type":"set_site_privacy","version":1,"profile":"work","site":"nytimes.com","block_ads_and_trackers":null}
+//! {"type":"set"}   |   {"type":"refused","why":"…"}
+//!
 //! {"type":"load_unpacked","version":1,"directory":"/home/me/src/my-extension"}
 //! {"type":"loaded_unpacked","id":"…"}   |   {"type":"refused","why":"…"}
 //!
@@ -83,6 +89,7 @@
 
 use std::path::Path;
 
+use domicile_config::AdBlocking;
 use serde::{Deserialize, Serialize};
 
 use crate::browser_profiles::BrowserProfileList;
@@ -93,6 +100,7 @@ use crate::media_devices::{MediaDevices, MediaKind};
 use crate::shell_path::{Shell, ShellFiles};
 use crate::site_data::SiteData;
 use crate::site_permissions::{Permission, Setting, SitePermission, SiteSettings};
+use crate::site_privacy::{SitePrivacy, SitePrivacyChange};
 
 /// The protocol version the supervisor sends and the engine checks.
 ///
@@ -115,10 +123,17 @@ pub(crate) const NO_SHELL_WINDOW: &str = "this engine has no shell window to loa
 pub enum Reply {
     /// The engine is serving the shell.
     Loaded,
-    /// The engine passed the address to the shell.
-    Opened,
+    /// The engine passed the address to the shell, in this window: the one it
+    /// opened, or the app window it reused. An engine that predates agents'
+    /// browser windows, and `run_app`, name none.
+    Opened {
+        #[serde(default)]
+        window: Option<String>,
+    },
     /// Every permission's default and every site's own setting.
     SitePermissions(SiteSettings),
+    /// Every browser profile's sites with their own ad blocking.
+    SitePrivacy { sites: Vec<SitePrivacy> },
     /// The engine stored a site's setting, a preferred media device, whether
     /// an extension is enabled or an extension's settings.
     Set,
@@ -150,8 +165,25 @@ pub enum Reply {
     /// A DevTools Protocol method's result.
     #[serde(rename = "devtools")]
     DevTools { result: serde_json::Value },
+    /// Every browser window as the user has it now, in open order.
+    BrowserWindows { windows: Vec<BrowserWindowLayout> },
     /// The engine refused, with its reason.
     Refused { why: String },
+}
+
+/// A browser window as the user has it now, as `browser_windows` lists it.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct BrowserWindowLayout {
+    /// Its id in the engine.
+    pub id: String,
+    /// The shell's focused page is this window's. The user's keyboard is in
+    /// it only while no native window has it.
+    pub focused: bool,
+    /// Its page's size in CSS pixels, absent while the shell doesn't draw it.
+    #[serde(default)]
+    pub width: Option<u32>,
+    #[serde(default)]
+    pub height: Option<u32>,
 }
 
 /// The request to serve `shell`.
@@ -178,12 +210,15 @@ pub fn run_app_line(root: &Path, module: &Path) -> String {
 }
 
 /// The request to open `url` in the shell, in browser profile `profile` or
-/// with none in the one its site opens in. The engine validates both.
-pub fn open_url_line(url: &str, profile: Option<&str>) -> String {
+/// with none in the one its site opens in. The engine validates both. With
+/// `agent`, an agent session, the window is listed as that agent seat's, which
+/// the shell opens without the user's focus.
+pub fn open_url_line(url: &str, profile: Option<&str>, agent: Option<u32>) -> String {
     line(&Command::OpenUrl {
         url,
         version: VERSION,
         profile,
+        agent: agent.map(|session| format!("agent-{session}")),
         app: false,
         app_id: None,
         reuse: AppReuse::New,
@@ -206,6 +241,7 @@ pub fn open_app_line(
         url,
         version: VERSION,
         profile,
+        agent: None,
         app: true,
         app_id: id,
         reuse,
@@ -224,6 +260,22 @@ pub fn set_site_permission_line(site: &SitePermission) -> String {
         origin: &site.origin,
         permission: site.permission,
         setting: site.setting,
+    })
+}
+
+/// The request for every browser profile's sites with their own ad blocking.
+pub fn site_privacy_line() -> String {
+    line(&Command::SitePrivacy { version: VERSION })
+}
+
+/// The request to set a site's ad blocking in a browser profile, or with
+/// none go back to the profile's.
+pub fn set_site_privacy_line(change: &SitePrivacyChange) -> String {
+    line(&Command::SetSitePrivacy {
+        version: VERSION,
+        profile: &change.profile,
+        site: &change.site,
+        block_ads_and_trackers: change.block_ads_and_trackers,
     })
 }
 
@@ -373,14 +425,26 @@ pub fn set_log_levels_line(min_level: i32, vmodule: &str) -> String {
 }
 
 /// The request to send DevTools Protocol `method` with `params` to browser
-/// window `window`, by its id in the engine.
-pub fn devtools_line(window: &str, method: &str, params: &serde_json::Value) -> String {
+/// window `window`, by its id in the engine, for agent session `agent` when
+/// given: the page it drives copies to that seat's clipboard.
+pub fn devtools_line(
+    window: &str,
+    agent: Option<u32>,
+    method: &str,
+    params: &serde_json::Value,
+) -> String {
     line(&Command::DevTools {
         version: VERSION,
         window,
+        agent: agent.map(|session| format!("agent-{session}")),
         method,
         params,
     })
+}
+
+/// The request for every browser window's focus and size.
+pub fn browser_windows_line() -> String {
+    line(&Command::BrowserWindows { version: VERSION })
 }
 
 /// Parses one reply line, without its trailing newline.
@@ -417,6 +481,9 @@ enum Command<'a> {
         // Left out when none, the profile the site opens in.
         #[serde(skip_serializing_if = "Option::is_none")]
         profile: Option<&'a str>,
+        // The agent seat, `agent-<session>`; left out for the user's.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
         // Left out when false, so a browser window's line is the one every
         // engine reads.
         #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -436,6 +503,17 @@ enum Command<'a> {
         origin: &'a str,
         permission: Permission,
         setting: Setting,
+    },
+    SitePrivacy {
+        version: u32,
+    },
+    SetSitePrivacy {
+        version: u32,
+        profile: &'a str,
+        site: &'a str,
+        // Sent as `null` to go back to the profile's: the engine refuses a
+        // request without it.
+        block_ads_and_trackers: Option<AdBlocking>,
     },
     LoadUnpacked {
         version: u32,
@@ -523,8 +601,14 @@ enum Command<'a> {
     DevTools {
         version: u32,
         window: &'a str,
+        // The agent seat, `agent-<session>`; left out for none.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
         method: &'a str,
         params: &'a serde_json::Value,
+    },
+    BrowserWindows {
+        version: u32,
     },
 }
 

@@ -119,6 +119,10 @@ One request channel carries all dialogs. Each interface's backend builds on it.
   - A second login session's launcher gives the first its variables back when
     it exits, if the first still runs, instead of stopping
     `graphical-session.target` and the frontend (`graphical_session::end`).
+    The first can be another compositor, such as niri; it runs while its
+    `WAYLAND_DISPLAY` socket answers. For such a compositor the launcher also
+    sets the D-Bus activation environment, restarts the frontend under the
+    compositor's name and stops `domicile-session.target`.
 - **`Secret` goes to the keyring.** `gnome-keyring` or `oo7-portal` implements
   it. It has no UI, and the store must outlive the session.
   `domicile-portals.conf` routes it to the keyring.
@@ -338,7 +342,7 @@ One request channel carries all dialogs. Each interface's backend builds on it.
   same picker and indicator. The engine asks before it answers the page, so a
   cancel rejects `getDisplayMedia()`; the capture then restores the pick from
   the picker session's restore token (`persist_mode` 1). The engine then
-  asks the compositor's `org.domicile.ScreenCast.Pick(node)`, on this
+  asks the compositor's `com.domicile_desktop.ScreenCast.Pick(node)`, on this
   backend's bus name and path, what the picker stream's node shows: its
   source type, the browser window, and its sound node. The page's
   `displaySurface` is the source's, and asking for audio gets the sound

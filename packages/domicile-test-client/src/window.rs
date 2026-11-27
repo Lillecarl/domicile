@@ -441,7 +441,7 @@ struct Client {
     notify: Option<String>,
     /// The bus `notify` was sent on, which must outlive the notification;
     /// see [`crate::notification::notify`].
-    notified_on: Option<zbus::blocking::Connection>,
+    notified_on: Option<zbus::Connection>,
     /// The clipboard and primary selection devices. `None` unless a copy or
     /// paste was requested.
     selections: Option<Selections>,
@@ -886,7 +886,7 @@ impl Client {
         toplevel.set_title(self.title.clone());
         crate::say!(toplevel.id(), "set_title(\"{}\")", self.title);
         // Chromes identify windows by app id; the title is for people.
-        toplevel.set_app_id("dev.domicile.test-client".to_string());
+        toplevel.set_app_id("com.domicile_desktop.test-client".to_string());
         if let Some((width, height)) = self.min_size {
             toplevel.set_min_size(width, height);
         }

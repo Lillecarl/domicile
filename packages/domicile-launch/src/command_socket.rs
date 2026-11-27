@@ -13,13 +13,14 @@ use std::time::Duration;
 
 use crate::browser_profiles::BrowserProfileList;
 use crate::command::{
-    browser_profiles_line, clear_browsing_data_line, clear_site_data_line, config_extensions_line,
-    configure_extension_line, delete_history_line, devtools_line, disable_while_typing_line,
-    extensions_line, history_line, load_shell_line, load_unpacked_line, media_devices_line,
-    open_app_line, open_url_line, pin_browser_site_line, reply, run_app_line,
+    browser_profiles_line, browser_windows_line, clear_browsing_data_line, clear_site_data_line,
+    config_extensions_line, configure_extension_line, delete_history_line, devtools_line,
+    disable_while_typing_line, extensions_line, history_line, load_shell_line, load_unpacked_line,
+    media_devices_line, open_app_line, open_url_line, pin_browser_site_line, reply, run_app_line,
     set_extension_enabled_line, set_log_levels_line, set_media_device_line,
-    set_site_permission_line, site_data_line, site_permissions_line, uninstall_extension_line,
-    visits_line, Reply, NO_SHELL_WINDOW,
+    set_site_permission_line, set_site_privacy_line, site_data_line, site_permissions_line,
+    site_privacy_line, uninstall_extension_line, visits_line, BrowserWindowLayout, Reply,
+    NO_SHELL_WINDOW,
 };
 use crate::control::AppReuse;
 use crate::extensions::{ExtensionSettings, InstalledExtension};
@@ -28,6 +29,7 @@ use crate::media_devices::{MediaDevices, MediaKind};
 use crate::shell_path::Shell;
 use crate::site_data::SiteData;
 use crate::site_permissions::{SitePermission, SiteSettings};
+use crate::site_privacy::{SitePrivacy, SitePrivacyChange};
 
 /// Why the engine did not carry out a command.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -76,19 +78,31 @@ pub fn load_shell(socket: &Path, shell: &Shell, patience: Duration) -> Result<()
     carry_out(socket, &load_shell_line(shell), Reply::Loaded, patience)
 }
 
-/// Tells the engine at `socket` to open `url` in the shell.
+/// Tells the engine at `socket` to open `url` in the shell, for agent session
+/// `agent`'s seat if given. Returns the window it opened, which an engine that
+/// predates agents' browser windows doesn't name.
 pub fn open_url(
     socket: &Path,
     url: &str,
     profile: Option<&str>,
+    agent: Option<u32>,
     patience: Duration,
-) -> Result<(), CommandError> {
-    carry_out(
-        socket,
-        &open_url_line(url, profile),
-        Reply::Opened,
-        patience,
-    )
+) -> Result<Option<String>, CommandError> {
+    match answered(socket, &open_url_line(url, profile, agent), patience)? {
+        Reply::Opened { window } => Ok(window),
+        other => Err(unexpected(socket, &other)),
+    }
+}
+
+/// Asks the engine at `socket` for every browser window's focus and size.
+pub fn browser_windows(
+    socket: &Path,
+    patience: Duration,
+) -> Result<Vec<BrowserWindowLayout>, CommandError> {
+    match answered(socket, &browser_windows_line(), patience)? {
+        Reply::BrowserWindows { windows } => Ok(windows),
+        other => Err(unexpected(socket, &other)),
+    }
 }
 
 /// Tells the engine at `socket` to run the app module `module` under `root`
@@ -99,7 +113,10 @@ pub fn run_app(
     module: &Path,
     patience: Duration,
 ) -> Result<(), CommandError> {
-    carry_out(socket, &run_app_line(root, module), Reply::Opened, patience)
+    match answered(socket, &run_app_line(root, module), patience)? {
+        Reply::Opened { .. } => Ok(()),
+        other => Err(unexpected(socket, &other)),
+    }
 }
 
 /// Tells the engine at `socket` to open `url` in an app window, as app `id`'s
@@ -113,12 +130,10 @@ pub fn open_app(
     profile: Option<&str>,
     patience: Duration,
 ) -> Result<(), CommandError> {
-    carry_out(
-        socket,
-        &open_app_line(url, id, reuse, profile),
-        Reply::Opened,
-        patience,
-    )
+    match answered(socket, &open_app_line(url, id, reuse, profile), patience)? {
+        Reply::Opened { .. } => Ok(()),
+        other => Err(unexpected(socket, &other)),
+    }
 }
 
 /// Asks the engine at `socket` for every permission's default and every
@@ -142,6 +157,25 @@ pub fn set_site_permission(
         Reply::Set,
         patience,
     )
+}
+
+/// Asks the engine at `socket` for every browser profile's sites with their
+/// own ad blocking. The engine answers once each profile has loaded.
+pub fn site_privacy(socket: &Path, patience: Duration) -> Result<Vec<SitePrivacy>, CommandError> {
+    match answered(socket, &site_privacy_line(), patience)? {
+        Reply::SitePrivacy { sites } => Ok(sites),
+        other => Err(unexpected(socket, &other)),
+    }
+}
+
+/// Tells the engine at `socket` to set a site's ad blocking in a browser
+/// profile, or go back to the profile's.
+pub fn set_site_privacy(
+    socket: &Path,
+    change: &SitePrivacyChange,
+    patience: Duration,
+) -> Result<(), CommandError> {
+    carry_out(socket, &set_site_privacy_line(change), Reply::Set, patience)
 }
 
 /// Tells the engine at `socket` to load the unpacked extension in
@@ -372,16 +406,21 @@ pub fn disable_while_typing(
 }
 
 /// Sends DevTools Protocol `method` with `params` to browser window `window`
-/// of the engine at `socket`, by its id there, and returns the method's
-/// result.
+/// of the engine at `socket`, by its id there, for agent session `agent` when
+/// given, and returns the method's result.
 pub fn devtools(
     socket: &Path,
     window: &str,
+    agent: Option<u32>,
     method: &str,
     params: &serde_json::Value,
     patience: Duration,
 ) -> Result<serde_json::Value, CommandError> {
-    match answered(socket, &devtools_line(window, method, params), patience)? {
+    match answered(
+        socket,
+        &devtools_line(window, agent, method, params),
+        patience,
+    )? {
         Reply::DevTools { result } => Ok(result),
         other => Err(unexpected(socket, &other)),
     }

@@ -49,24 +49,48 @@ impl DomicileCompositor {
         }
         // Measure only the first app to commit, so a second window does not add
         // commits to rounds its keys did not cause.
-        if self.latency_app.get_or_insert_with(|| app_id.to_string()) != app_id {
+        if !takes_part(self.latency_app.as_deref(), app_id) {
             return;
         }
+        self.latency_app = Some(app_id.to_string());
         // Taken out and put back; a dropped run restarts from an empty floor.
-        let mut run = self.latency.take().unwrap_or_else(|| {
-            let mut run = Latency::new(budget);
-            // The window's first frame may be shown before the run starts, and
-            // a still client draws no other.
-            if let Some(frame) = self.latency_frame.or_else(spike_latency_frame) {
-                run.refreshes_every(frame);
-            }
-            run
-        });
+        let mut run = self
+            .latency
+            .take()
+            .unwrap_or_else(|| self.new_latency_run(budget));
         // Use the caller's timestamp from before `publish_frame`, so the import
         // and submit count in `commit_to_pixel`, not the client's time.
         run.committed(committed);
         self.latency = Some(run);
         // Sampling happens in `step_the_latency`, not here.
+    }
+
+    /// Start the keystroke-to-pixel run when the engine takes a frame of
+    /// `app_id`, if one is configured and none runs.
+    ///
+    /// A frame committed before the engine embedded the window is taken when
+    /// the window is embedded, with no commit then. A still client, like the
+    /// guard's terminal, commits nothing more until the run's first key, so a
+    /// run started only on a commit would never press one.
+    pub fn latency_frame_taken(&mut self, app_id: &str) {
+        let (Some(_), Some(budget)) = (spike_latency_point(), spike_latency_budget()) else {
+            return;
+        };
+        if !takes_part(self.latency_app.as_deref(), app_id) || self.latency.is_some() {
+            return;
+        }
+        self.latency_app = Some(app_id.to_string());
+        self.latency = Some(self.new_latency_run(budget));
+    }
+
+    fn new_latency_run(&self, budget: latency::Budget) -> Latency {
+        let mut run = Latency::new(budget);
+        // The window's first frame may be shown before the run starts, and a
+        // still client draws no other.
+        if let Some(frame) = self.latency_frame.or_else(spike_latency_frame) {
+            run.refreshes_every(frame);
+        }
+        run
     }
 
     /// Give the latency run a presented frame of `app_id`: viz's display
@@ -244,6 +268,14 @@ impl DomicileCompositor {
             "latency: {} commit(s) passed over for coming too soon to be the key's answer",
             report.answered_too_soon
         );
+        // Rounds answered by a commit that came too soon to count on its own,
+        // credited because the pixel changed after it with no commit since.
+        // Always logged.
+        tracing::info!(
+            target: "domicile::engine::spike",
+            "latency: {} round(s) answered by a commit that came sooner than expected",
+            report.answered_soon
+        );
         // Rounds the client answered with more than one frame. `commit to
         // pixel` is timed from the first, so a high count means some of the
         // client's own redraw is counted as ours. Always logged.
@@ -275,6 +307,12 @@ impl DomicileCompositor {
             ),
         }
     }
+}
+
+/// Whether `app_id` is the app the latency run measures: the first one the
+/// run saw, `measured`, or any while it has seen none.
+fn takes_part(measured: Option<&str>, app_id: &str) -> bool {
+    measured.is_none_or(|measured| measured == app_id)
 }
 
 pub fn spike_latency_point() -> Option<LatencyPoint> {
@@ -346,4 +384,24 @@ fn spike_latency_budget() -> Option<latency::Budget> {
         }
         parsed
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::takes_part;
+
+    #[test]
+    fn a_frame_the_engine_takes_starts_the_run_without_a_commit() {
+        assert!(takes_part(None, "app-1"));
+    }
+
+    #[test]
+    fn the_measured_app_keeps_taking_part() {
+        assert!(takes_part(Some("app-1"), "app-1"));
+    }
+
+    #[test]
+    fn a_second_app_does_not() {
+        assert!(!takes_part(Some("app-1"), "app-2"));
+    }
 }

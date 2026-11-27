@@ -27,6 +27,7 @@
   X(gesture, Gesture)                                             \
   X(focusrequested, Focusrequested)                               \
   X(displayschanged, Displayschanged)                             \
+  X(browsermemoryshort, Browsermemoryshort)                       \
   X(browserprofileschanged, Browserprofileschanged)               \
   X(browserwindowschanged, Browserwindowschanged)                 \
   X(castsinkschanged, Castsinkschanged)                           \
@@ -40,6 +41,8 @@
   X(notificationschanged, Notificationschanged)                   \
   X(extensionschanged, Extensionschanged)                         \
   X(extensionpopuprequested, Extensionpopuprequested)             \
+  X(extensioncommandschanged, Extensioncommandschanged)           \
+  X(extensioncommandpressed, Extensioncommandpressed)             \
   X(installedextensionschanged, Installedextensionschanged)       \
   X(idlechanged, Idlechanged)                                     \
   X(lockedchanged, Lockedchanged)                                 \
@@ -50,6 +53,7 @@
   X(shelloptionschanged, Shelloptionschanged)                     \
   X(system, System)                                               \
   X(portalrequests, Portalrequests)                               \
+  X(configoverrides, Configoverrides)                             \
   X(compositorreplaced, Compositorreplaced)                       \
   X(shadereffectlost, Shadereffectlost)
 

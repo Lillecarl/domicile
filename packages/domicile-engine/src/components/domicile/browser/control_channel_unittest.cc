@@ -252,6 +252,9 @@ class FakeClient : public mojom::ControlChannelClient {
     replaced_.SetValue();
   }
   void PortalRequests(const std::string&) override {}
+  void ConfigOverrides(const std::string& message) override {
+    heard_.push_back("config " + message);
+  }
 
   std::vector<std::string> heard_;
   base::test::TestFuture<void> locked_;
@@ -738,17 +741,35 @@ TEST_F(ControlChannelTest, TheBrowserProfilesReachTheBrowserWithThePage) {
       heard.GetRepeatingCallback<const Page&, const BrowserProfiles&>());
 
   Say("{\"type\":\"browser_profiles\",\"profiles\":[{\"id\":\"default\","
-      "\"name\":\"Personal\",\"color\":\"#0d9488\",\"private\":false}],"
+      "\"name\":\"Personal\",\"color\":\"#0d9488\",\"private\":false,"
+      "\"protections\":{\"block_ads_and_trackers\":\"standard\","
+      "\"block_third_party_cookies\":true,"
+      "\"global_privacy_control\":true,\"hide_local_ip_address\":true,"
+      "\"remove_tracking_from_links\":true,\"hide_device_details\":true}}],"
       "\"default_profile\":\"work\",\"default_private_profile\":\"work\","
-      "\"sites\":{}}\n"
+      "\"block_lists\":[],\"block_rules\":[],\"sites\":{}}\n"
       "{\"type\":\"browser_profiles\",\"profiles\":[{\"id\":\"default\","
-      "\"name\":\"Personal\",\"color\":\"#0d9488\",\"private\":false},"
+      "\"name\":\"Personal\",\"color\":\"#0d9488\",\"private\":false,"
+      "\"protections\":{\"block_ads_and_trackers\":\"standard\","
+      "\"block_third_party_cookies\":true,"
+      "\"global_privacy_control\":true,\"hide_local_ip_address\":true,"
+      "\"remove_tracking_from_links\":true,\"hide_device_details\":true}},"
       "{\"id\":\"private\",\"name\":\"Private\",\"color\":\"#a78bfa\","
-      "\"private\":true},{\"id\":\"work\",\"name\":\"Work\","
+      "\"private\":true,"
+      "\"protections\":{\"block_ads_and_trackers\":\"standard\","
+      "\"block_third_party_cookies\":true,"
+      "\"global_privacy_control\":true,\"hide_local_ip_address\":true,"
+      "\"remove_tracking_from_links\":true,\"hide_device_details\":true}},"
+      "{\"id\":\"work\",\"name\":\"Work\","
       "\"color\":\"#2563eb\",\"private\":false,"
-      "\"extensions\":[\"aeblfdkhhhdcdjpifhhbdiojplfjncoa\"]}],"
+      "\"extensions\":[\"aeblfdkhhhdcdjpifhhbdiojplfjncoa\"],"
+      "\"protections\":{\"block_ads_and_trackers\":\"standard\","
+      "\"block_third_party_cookies\":true,"
+      "\"global_privacy_control\":true,\"hide_local_ip_address\":true,"
+      "\"remove_tracking_from_links\":true,\"hide_device_details\":true}}],"
       "\"default_profile\":\"default\",\"default_private_profile\":"
-      "\"private\",\"sites\":{\"github.com/acme\":\"work\"}}\n");
+      "\"private\",\"block_lists\":[],\"block_rules\":[],"
+      "\"sites\":{\"github.com/acme\":\"work\"}}\n");
 
   const auto [page, profiles] = heard.Take();
   EXPECT_EQ(page, Page{});
@@ -1035,6 +1056,63 @@ TEST_F(ControlChannelTest, RemovingAClipboardRowReachesTheCompositor) {
   control_->RemoveClipboardEntry(7);
   control_.FlushForTesting();
   EXPECT_EQ(Heard(), R"({"entry":7,"type":"remove_clipboard_entry"})");
+}
+
+// A temporary change to the config goes to the compositor as the page wrote
+// it, one that is no change to the config goes nowhere, and the answer comes
+// back as the compositor wrote it.
+TEST_F(ControlChannelTest, AChangeToTheConfigReachesTheCompositorAndBack) {
+  control_->SetClient(client_.BindRemote());
+  control_.FlushForTesting();
+  EXPECT_EQ(Heard(), kHello);
+  control_->ChangeConfig(R"({"type":"unlock","passphrase":"guess"})");
+  control_->ChangeConfig(
+      R"({"type":"reset_config_overrides","paths":[["theme"]]})");
+  control_.FlushForTesting();
+  EXPECT_EQ(Heard(),
+            R"({"paths":[["theme"]],"type":"reset_config_overrides"})");
+  Say("{\"type\":\"config_overrides\",\"overrides\":[]}\n"
+      "{\"type\":\"locked\",\"locked\":false}\n");
+  EXPECT_TRUE(client_.locked_.Wait());
+  EXPECT_EQ(client_.heard_,
+            (std::vector<std::string>{
+                R"(config {"type":"config_overrides","overrides":[]})",
+                "locked false"}));
+}
+
+// Each config change gets one answer, in order: one the compositor that hung
+// up never answered is refused, and the next compositor answers only what is
+// asked of it.
+TEST_F(ControlChannelTest, AConfigChangeNoCompositorAnswersIsRefused) {
+  control_->SetClient(client_.BindRemote());
+  control_.FlushForTesting();
+  EXPECT_EQ(Heard(), kHello);
+  control_->ChangeConfig(R"({"type":"which_config_overrides"})");
+  control_->ChangeConfig(R"({"type":"which_config_overrides"})");
+  control_.FlushForTesting();
+  EXPECT_EQ(Heard(), R"({"type":"which_config_overrides"})");
+  EXPECT_EQ(Heard(), R"({"type":"which_config_overrides"})");
+  Say("{\"type\":\"config_overrides\",\"overrides\":[]}\n");
+
+  compositor_.reset();
+  AcceptTheNextCompositor();
+  EXPECT_EQ(Heard(), kHello);
+  EXPECT_TRUE(client_.replaced_.Wait());
+  control_->ChangeConfig(R"({"type":"which_config_overrides"})");
+  control_.FlushForTesting();
+  EXPECT_EQ(Heard(), R"({"type":"which_config_overrides"})");
+  Say("{\"type\":\"config_overrides\",\"overrides\":[]}\n"
+      "{\"type\":\"locked\",\"locked\":false}\n");
+  EXPECT_TRUE(client_.locked_.Wait());
+
+  const std::string refused =
+      R"(config {"overrides":[],"refused":"the compositor exited before it )"
+      R"(answered","type":"config_overrides"})";
+  const std::string answered =
+      R"(config {"type":"config_overrides","overrides":[]})";
+  EXPECT_EQ(client_.heard_,
+            (std::vector<std::string>{answered, refused, "replaced", answered,
+                                      "locked false"}));
 }
 
 // The page taking and letting go of the pointer reaches the compositor.

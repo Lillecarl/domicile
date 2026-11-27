@@ -38,10 +38,11 @@ struct Told {
   // Set to hold `load_shell`'s answer in `held_load` instead of giving it.
   bool hold_load = false;
   ShellLoaded held_load;
-  // Set to hold `run_app`'s or `open_url`'s answer in `held_open` instead of
-  // giving it.
+  // Set to hold `run_app`'s answer in `held_open`, or `open_url`'s in
+  // `held_url`, instead of giving it.
   bool hold_open = false;
   WindowOpened held_open;
+  UrlOpened held_url;
   // Set to hold `media_devices`'s and `set_media_device`'s answers, as until
   // the devices are listed, in `held_devices` and `held_device` instead of
   // giving them.
@@ -61,6 +62,7 @@ struct Told {
   std::string url;
   std::optional<AppLaunch> app;
   std::string profile;
+  std::string agent;
   bool set = false;
   std::string origin;
   std::optional<WebViewPermission> permission;
@@ -74,6 +76,10 @@ struct Told {
   std::string toggled_in;
   std::string pinned_site;
   std::string pinned_to;
+  std::string privacy_profile;
+  std::string privacy_site;
+  // Set once `set_site_privacy` ran: the mode, or none for the profile's.
+  std::optional<std::optional<AdBlockingMode>> privacy_mode;
   std::string configured;
   std::optional<ExtensionSettings> settings;
   std::optional<HistorySearch> search;
@@ -85,6 +91,7 @@ struct Told {
   // Whether the recording `disable_while_typing` has the pads rest.
   bool typing_rests = true;
   std::string devtools_window;
+  std::optional<std::string> devtools_agent;
   std::string devtools_method;
   std::optional<base::DictValue> devtools_params;
   std::optional<int> min_log_level;
@@ -197,19 +204,23 @@ std::string Answer(std::string_view line,
     }
     std::move(opened).Run(has_window);
   };
+  // Opens window "7".
   auto open_url = [told, has_window](const GURL& url,
                                      std::optional<AppLaunch> app,
                                      const std::string& profile,
-                                     WindowOpened opened) {
+                                     const std::string& agent,
+                                     UrlOpened opened) {
     told->opened = true;
     told->url = url.spec();
     told->app = app;
     told->profile = profile;
+    told->agent = agent;
     if (told->hold_open) {
-      told->held_open = std::move(opened);
+      told->held_url = std::move(opened);
       return;
     }
-    std::move(opened).Run(has_window);
+    std::move(opened).Run(has_window ? std::optional<std::string>("7")
+                                     : std::nullopt);
   };
   // The desk's profiles are `default` and `work`.
   auto has_browser_profile = [](const std::string& id) {
@@ -316,6 +327,34 @@ std::string Answer(std::string_view line,
     }
     return base::ok();
   };
+  auto list_site_privacy = [has_window](SitePrivacyFound found) {
+    if (!has_window) {
+      std::move(found).Run(std::nullopt);
+      return;
+    }
+    std::move(found).Run(std::vector<StoredSitePrivacy>{
+        {.profile = "work",
+         .site = "nytimes.com",
+         .block_ads_and_trackers = AdBlockingMode::kOff},
+        {.profile = "personal",
+         .site = "news.example",
+         .block_ads_and_trackers = AdBlockingMode::kStrict}});
+  };
+  auto set_site_privacy =
+      [told, has_window](const std::string& profile, const std::string& site,
+                         std::optional<AdBlockingMode> mode)
+      -> base::expected<void, std::string> {
+    if (!has_window) {
+      return base::unexpected("no shell");
+    }
+    if (profile == "missing") {
+      return base::unexpected("no profile \"missing\"");
+    }
+    told->privacy_profile = profile;
+    told->privacy_site = site;
+    told->privacy_mode = mode;
+    return base::ok();
+  };
   auto list_media_devices = [told, has_window](MediaDevicesFound found) {
     if (told->hold_devices) {
       told->held_devices = std::move(found);
@@ -407,11 +446,13 @@ std::string Answer(std::string_view line,
     return told->typing_rests;
   };
   // Answers with the method it was sent, so a test can see it went through.
-  auto send_devtools = [told, has_window](const std::string& window,
-                                          const std::string& method,
-                                          base::DictValue params,
-                                          DevToolsAnswered answered) {
+  auto send_devtools = [told, has_window](
+                           const std::string& window,
+                           const std::optional<std::string>& agent,
+                           const std::string& method, base::DictValue params,
+                           DevToolsAnswered answered) {
     told->devtools_window = window;
+    told->devtools_agent = agent;
     told->devtools_method = method;
     told->devtools_params = std::move(params);
     if (!has_window) {
@@ -426,6 +467,15 @@ std::string Answer(std::string_view line,
     told->min_log_level = min_level;
     told->vmodule = vmodule;
   };
+  // Window "3" has the shell's focus; window "7" isn't drawn.
+  auto list_browser_windows = [has_window]() {
+    return has_window ? std::vector<BrowserWindowLayout>{{.id = "3",
+                                                          .focused = true,
+                                                          .width = 1280,
+                                                          .height = 720},
+                                                         {.id = "7"}}
+                      : std::vector<BrowserWindowLayout>();
+  };
   told->reply.clear();
   AnswerCommand(line,
                 {.load_shell = load_shell,
@@ -434,6 +484,8 @@ std::string Answer(std::string_view line,
                  .has_browser_profile = has_browser_profile,
                  .list_site_permissions = list_site_permissions,
                  .set_site_permission = set_site_permission,
+                 .list_site_privacy = list_site_privacy,
+                 .set_site_privacy = set_site_privacy,
                  .load_unpacked = load_unpacked,
                  .uninstall_extension = uninstall_extension,
                  .list_config_extensions = list_config_extensions,
@@ -452,7 +504,8 @@ std::string Answer(std::string_view line,
                  .clear_site_data = clear_site_data,
                  .disable_while_typing = disable_while_typing,
                  .send_devtools = send_devtools,
-                 .set_log_levels = set_log_levels},
+                 .set_log_levels = set_log_levels,
+                 .list_browser_windows = list_browser_windows},
                 base::BindOnce([](std::string* out,
                                   std::string line) { *out = std::move(line); },
                                &told->reply));
@@ -885,8 +938,83 @@ TEST(CommandProtocolTest, AnswersAnAddressOnceTheShellWindowCanTakeIt) {
              &told),
       "");
 
-  std::move(told.held_open).Run(true);
+  std::move(told.held_url).Run("7");
   EXPECT_EQ(TypeOf(told.reply), "opened");
+}
+
+TEST(CommandProtocolTest, AnswersWithTheWindowItOpened) {
+  // An agent drives the window it opened by this id.
+  Told told;
+  const std::string reply = Answer(
+      R"({"type":"open_url","version":1,"url":"https://example.com/"})",
+      &told);
+  EXPECT_EQ(base::JSONReader::ReadDict(reply, base::JSON_PARSE_RFC),
+            base::JSONReader::ReadDict(R"({"type":"opened","window":"7"})",
+                                       base::JSON_PARSE_RFC));
+}
+
+TEST(CommandProtocolTest, OpensABrowserWindowForTheAgentARequestNames) {
+  Told told;
+  const std::string reply = Answer(
+      R"({"type":"open_url","version":1,"url":"https://example.com/",)"
+      R"("agent":"agent-3"})",
+      &told);
+  EXPECT_EQ(TypeOf(reply), "opened");
+  EXPECT_EQ(told.agent, "agent-3");
+
+  // None is the user's.
+  Answer(R"({"type":"open_url","version":1,"url":"https://example.com/"})",
+         &told);
+  EXPECT_EQ(told.agent, "");
+}
+
+TEST(CommandProtocolTest, RefusesAnAgentThatIsNoSeat) {
+  for (const char* agent : {R"("")", "3", "null"}) {
+    Told told;
+    const std::string reply =
+        Answer(base::StrCat({R"({"type":"open_url","version":1,)",
+                             R"("url":"https://example.com/","agent":)", agent,
+                             "}"}),
+               &told);
+    EXPECT_EQ(TypeOf(reply), "refused") << agent;
+    EXPECT_THAT(WhyOf(reply), HasSubstr("\"agent\"")) << agent;
+    EXPECT_FALSE(told.opened) << agent;
+  }
+}
+
+TEST(CommandProtocolTest, RefusesAnAgentForAnAppWindow) {
+  // An app window may be the user's open one, reused.
+  Told told;
+  const std::string reply = Answer(
+      R"({"type":"open_url","version":1,"url":"https://example.com/",)"
+      R"("app":true,"agent":"agent-3"})",
+      &told);
+  EXPECT_EQ(TypeOf(reply), "refused");
+  EXPECT_THAT(WhyOf(reply), HasSubstr("browser window"));
+  EXPECT_FALSE(told.opened);
+}
+
+TEST(CommandProtocolTest, ListsEachBrowserWindowsFocusAndSize) {
+  Told told;
+  const std::string reply =
+      Answer(R"({"type":"browser_windows","version":1})", &told);
+  EXPECT_EQ(
+      base::JSONReader::ReadDict(reply, base::JSON_PARSE_RFC),
+      base::JSONReader::ReadDict(
+          R"({"type":"browser_windows","windows":[)"
+          R"({"id":"3","focused":true,"width":1280,"height":720},)"
+          R"({"id":"7","focused":false}]})",
+          base::JSON_PARSE_RFC));
+}
+
+TEST(CommandProtocolTest, ListsNoBrowserWindowsWithoutAShell) {
+  Told told;
+  const std::string reply = Answer(R"({"type":"browser_windows","version":1})",
+                                   &told, /*has_window=*/false);
+  EXPECT_EQ(base::JSONReader::ReadDict(reply, base::JSON_PARSE_RFC),
+            base::JSONReader::ReadDict(
+                R"({"type":"browser_windows","windows":[]})",
+                base::JSON_PARSE_RFC));
 }
 
 TEST(CommandProtocolTest, ListsEachPermissionsDefaultAndEachSitesSetting) {
@@ -1209,6 +1337,71 @@ TEST(CommandProtocolTest, PinsASiteToTheProfileARequestNames) {
                           &missing)),
             "refused");
   EXPECT_EQ(missing.pinned_site, "");
+}
+
+TEST(CommandProtocolTest, ListsEachProfilesSitesWithTheirOwnAdBlocking) {
+  Told told;
+  EXPECT_EQ(
+      base::JSONReader::ReadDict(
+          Answer(R"({"type":"site_privacy","version":1})", &told),
+          base::JSON_PARSE_RFC),
+      base::JSONReader::ReadDict(
+          R"({"type":"site_privacy","sites":[)"
+          R"({"profile":"work","site":"nytimes.com",)"
+          R"("block_ads_and_trackers":"off"},)"
+          R"({"profile":"personal","site":"news.example",)"
+          R"("block_ads_and_trackers":"strict"}]})",
+          base::JSON_PARSE_RFC));
+  EXPECT_EQ(TypeOf(Answer(R"({"type":"site_privacy","version":1})", &told,
+                          /*has_window=*/false)),
+            "refused");
+}
+
+TEST(CommandProtocolTest, SetsASitesAdBlockingInAProfile) {
+  Told told;
+  EXPECT_EQ(TypeOf(Answer(R"({"type":"set_site_privacy","version":1,)"
+                          R"("profile":"work","site":"nytimes.com",)"
+                          R"("block_ads_and_trackers":"strict"})",
+                          &told)),
+            "set");
+  EXPECT_EQ(told.privacy_profile, "work");
+  EXPECT_EQ(told.privacy_site, "nytimes.com");
+  EXPECT_EQ(told.privacy_mode,
+            std::optional<std::optional<AdBlockingMode>>(
+                AdBlockingMode::kStrict));
+}
+
+TEST(CommandProtocolTest, SetsASiteBackToItsProfilesAdBlockingWithNull) {
+  Told told;
+  EXPECT_EQ(TypeOf(Answer(R"({"type":"set_site_privacy","version":1,)"
+                          R"("profile":"work","site":"nytimes.com",)"
+                          R"("block_ads_and_trackers":null})",
+                          &told)),
+            "set");
+  EXPECT_EQ(told.privacy_mode,
+            std::optional<std::optional<AdBlockingMode>>(std::in_place,
+                                                          std::nullopt));
+}
+
+TEST(CommandProtocolTest, RefusesASitesAdBlockingItCannotSet) {
+  for (const char* line : {
+           // No mode, not even null.
+           R"({"type":"set_site_privacy","version":1,"profile":"work",)"
+           R"("site":"nytimes.com"})",
+           // A mode that isn't one.
+           R"({"type":"set_site_privacy","version":1,"profile":"work",)"
+           R"("site":"nytimes.com","block_ads_and_trackers":"extreme"})",
+           // No site.
+           R"({"type":"set_site_privacy","version":1,"profile":"work",)"
+           R"("site":"","block_ads_and_trackers":"off"})",
+           // A profile the desk doesn't have.
+           R"({"type":"set_site_privacy","version":1,"profile":"missing",)"
+           R"("site":"nytimes.com","block_ads_and_trackers":"off"})",
+       }) {
+    Told told;
+    EXPECT_EQ(TypeOf(Answer(line, &told)), "refused") << line;
+    EXPECT_FALSE(told.privacy_mode.has_value()) << line;
+  }
 }
 
 TEST(CommandProtocolTest, RefusesASwitchWithoutAnIdAndAnEnabled) {
@@ -1569,6 +1762,28 @@ TEST(CommandProtocolTest, SendsADevToolsMethodToABrowserWindow) {
                                        base::JSON_PARSE_RFC));
 }
 
+// The agent seat a method is sent for: a page it drove copies to that seat's
+// clipboard.
+TEST(CommandProtocolTest, SendsADevToolsMethodForAnAgentSeat) {
+  Told told;
+  EXPECT_EQ(TypeOf(Answer(R"({"type":"devtools","version":1,"window":"w1",)"
+                          R"("agent":"agent-3","method":"Page.reload"})",
+                          &told)),
+            "devtools");
+  EXPECT_EQ(told.devtools_agent, "agent-3");
+}
+
+// `domicile devtools` by hand names no seat.
+TEST(CommandProtocolTest, SendsADevToolsMethodForNoAgentSeat) {
+  Told told;
+  told.devtools_agent = "agent-9";
+  EXPECT_EQ(TypeOf(Answer(R"({"type":"devtools","version":1,"window":"w1",)"
+                          R"("method":"Page.reload"})",
+                          &told)),
+            "devtools");
+  EXPECT_EQ(told.devtools_agent, std::nullopt);
+}
+
 TEST(CommandProtocolTest, SendsADevToolsMethodWithoutParamsAsAnEmptyObject) {
   Told told;
   EXPECT_EQ(TypeOf(Answer(R"({"type":"devtools","version":1,"window":"w1",)"
@@ -1586,6 +1801,21 @@ TEST(CommandProtocolTest, PassesOnWhyABrowserWindowCouldNotAnswer) {
              &told, /*has_window=*/false);
   EXPECT_EQ(TypeOf(refused), "refused");
   EXPECT_THAT(WhyOf(refused), HasSubstr("no browser window w9"));
+}
+
+// A file request an agent's input set off waits for the agent, which reads
+// and answers it with Domicile's own methods.
+TEST(CommandProtocolTest, SendsDomicilesFileChooserMethodsToABrowserWindow) {
+  Told told;
+  for (const char* method : {"Domicile.fileChooser", "Domicile.chooseFiles"}) {
+    EXPECT_EQ(TypeOf(Answer(base::StrCat({R"({"type":"devtools","version":1,)",
+                                          R"("window":"w1","method":")",
+                                          method, R"("})"}),
+                            &told)),
+              "devtools")
+        << method;
+    EXPECT_EQ(told.devtools_method, method);
+  }
 }
 
 // An agent drives pages, but reads no cookies and runs no script of its own.
@@ -1640,7 +1870,11 @@ TEST(CommandProtocolTest, RefusesADevToolsRequestMissingAField) {
         R"({"type":"devtools","version":1,"window":"","method":"Page.reload"})",
         R"({"type":"devtools","version":1,"window":"w1"})",
         R"({"type":"devtools","version":1,"window":"w1",)"
-        R"("method":"Page.reload","params":[1]})"}) {
+        R"("method":"Page.reload","params":[1]})",
+        R"({"type":"devtools","version":1,"window":"w1",)"
+        R"("agent":"","method":"Page.reload"})",
+        R"({"type":"devtools","version":1,"window":"w1",)"
+        R"("agent":3,"method":"Page.reload"})"}) {
     EXPECT_EQ(TypeOf(Answer(line, &told)), "refused") << line;
   }
   EXPECT_TRUE(told.devtools_method.empty());

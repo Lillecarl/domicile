@@ -44,9 +44,10 @@ domicile open --electron claude-desktop.desktop [-- <its Exec>]
   command names are followed.
   What the wrappers set reaches the app: when the command is a bash script,
   it runs with `BASH_ENV` naming a script that replaces `exec`. Each script
-  it execs runs the same way; the `exec` of the program execs `domicile`
-  instead, which records the command line and the environment it got and
-  exits. A compiled wrapper is followed by running its `makeCWrapper`
+  it execs runs the same way; the `exec` of the program, or of a script in
+  another shell, execs `domicile` instead, which records the command line
+  and the environment it got and exits. Such a script is the app's own
+  launcher, as VS Code's `sh` one is, and the app gets what it was given. A compiled wrapper is followed by running its `makeCWrapper`
   command as bash, which sets what the wrapper sets, adds its flags and
   execs the same way. The app gets that
   environment (`LD_PRELOAD`, `PATH`) and those arguments, less the app's own
@@ -54,6 +55,9 @@ domicile open --electron claude-desktop.desktop [-- <its Exec>]
   ([`electron_wrapper.rs`](../../packages/domicile-launch/src/electron_wrapper.rs)).
   A command that is neither a bash script nor a compiled wrapper, or that never reaches the app's program
   within 10 seconds, gives its arguments alone, and the latter is logged.
+  Whatever following the wrappers started is killed after, found by the
+  launch directory in its environment, so a program that left their process
+  group never runs the app on its own Electron as well.
 - **`electron.apps`** in the desk config lists desktop entry ids. The
   compositor copies each entry into a directory first on the desk's
   `XDG_DATA_DIRS`, with every `Exec` running
@@ -82,7 +86,13 @@ A bun workspace package, `packages/electron-host`, run by Bun.
   archives' paths, sizes and times, so an update makes a new mirror.
 - Runs `package.json`'s `main` from the mirror.
 - A module hook answers `require("electron")` with the stand-in, which
-  implements Electron's main-process API over the Electron socket.
+  implements Electron's main-process API over the Electron socket, and
+  `original-fs` with Node's `fs`: the mirror is plain files.
+- `module.registerHooks`, which Bun lacks, is given to the scripts that
+  import it (found once per mirror), in the main and in utility processes. Resolve hooks run for `require`; the
+  app's imports resolve as Bun resolves them, which is logged. Load hooks
+  throw. VS Code registers one at start
+  ([`module-hooks.ts`](../../packages/electron-host/src/module-hooks.ts)).
 - Sets `process.type`, `process.versions.electron`, `process.resourcesPath`
   and `app.getPath()` as Electron does. `userData` is the app's existing
   directory (`~/.config/Claude`), so logins and settings carry over.
@@ -416,7 +426,9 @@ The host carries out the webContents members that act on the page with
   before the page's own scripts, with a sandboxed Electron page's `electron`
   module bound in: `contextBridge`, `ipcRenderer`, `webFrame` (the main
   frame, its own `top`, with `frameToken`, `insertCSS`, `insertText`, the
-  zoom and pinch zoom's limits), `crashReporter`, and `webUtils` and `nativeImage`, whose calls
+  zoom and pinch zoom's limits; a zoom the app sets is kept, not applied,
+  as the shell zooms pages, which VS Code's preload does before anything
+  else), `crashReporter`, and `webUtils` and `nativeImage`, whose calls
   say they don't work yet. Its `process` has `isMainFrame`, `contextId`, and
   `versions.electron` and `resourcesPath` from the app's `hello`; Electron's
   own calls on it, such as `getCPUUsage`, say they don't work yet. Its
@@ -461,7 +473,12 @@ The host carries out the webContents members that act on the page with
   `invoke`/`handle`, `postMessage` with ports, and `sendSync`. `sendSync`
   blocks only the calling page, on a sync Mojo call that the browser process
   answers when the host replies. Arguments travel as JSON, not structured
-  clones, so a `Map` or bytes do not survive the trip.
+  clones, so a `Map` does not survive the trip. Bytes do: an `ArrayBuffer`,
+  a typed array or a `Buffer` goes as an object of one key,
+  `$domicileBytes`, holding them in base64, and arrives as a `Buffer` in
+  the app and a `Uint8Array` in the page, as Electron gives them. VS Code's
+  IPC is nothing but bytes
+  ([`wire-values.ts`](../../packages/electron-host/src/electron/wire-values.ts)).
 - **Message ports:** each port the main process holds an end of is a relay.
   The preload's world keeps the page-side end of a pipe and forwards what
   arrives on it over the socket as `port_message`; the host's `port_post`
@@ -478,7 +495,9 @@ The host carries out the webContents members that act on the page with
 - **`protocol.handle`** (and the older `register*Protocol`) sends a session's
   requests for a scheme to the app: `handle_protocol` names the session and
   scheme, the engine sends each request as `protocol_request`, and the app
-  answers with a whole body, a file the engine reads, or a stream of pieces
+  answers with a whole body, a file the engine reads (typed from its name
+  when the app gives no `Content-Type`, as a module script needs one), or a
+  stream of pieces
   ([`electron_app.h`](../../packages/domicile-engine/src/components/domicile/browser/electron_app.h),
   [`domicile_electron_loader.h`](../../packages/domicile-engine/src/chrome/browser/domicile/domicile_electron_loader.h)).
   A window opens a URL in a scheme its session handles; content keeps other
@@ -617,7 +636,8 @@ The host carries out the webContents members that act on the page with
   `setPreloads`) run before the window's in a sandboxed page, each in turn,
   one's error thrown apart so the next still runs; a Node page refuses
   them for now. `setCodeCachePath` is `set_code_cache_path`: the partition
-  keeps the code V8 compiles from then on in the app's directory
+  keeps the code V8 compiles from then on in the app's directory, its
+  started cache moved on the code cache thread (patch 0290)
   ([`domicile_code_cache.h`](../../packages/domicile-engine/src/content/public/browser/domicile_code_cache.h)).
 - **Session events**: a page's resource hint (`<link rel=preconnect>`)
   comes as `preconnect {session, url, allow_credentials}`, its session's

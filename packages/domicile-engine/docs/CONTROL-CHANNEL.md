@@ -146,9 +146,9 @@ The engine has two channels to the rest of Domicile:
     shell moves the pointer onto the newly focused window.
   - A page may move the pointer only within its own box. Coordinates outside
     are clamped.
-  - `unless_over`, a box in the page's coordinates, skips the warp while the
-    pointer is over it, by `DeskPointer`'s position. The page cannot see the
-    pointer over a browser window's page.
+  - The warp happens only while the pointer is over one of `only_over` and not
+    over `unless_over`, boxes in the page's coordinates, by `DeskPointer`'s
+    position. The page cannot see the pointer over a browser window's page.
   - Logic and tests: `components/domicile/browser/pointer_warp.h`. Execution:
     `chrome/browser/domicile/domicile_pointer_warp.cc`.
   - The move that lands a warp reaches no client as relative motion: nobody
@@ -219,7 +219,8 @@ The engine has two channels to the rest of Domicile:
   pinned to that app. A compositor that hangs up ends its calls and is
   dialed again, as above, with no `compositorreplaced`. See
   [APP-MODULES.md](/docs/architecture/APP-MODULES.md).
-- **Extension tray:** the `extensions` event and `activateExtension()` use
+- **Extension tray:** the `extensions` event, `activateExtension()`, and
+  extensions' commands and menus use
   `components/domicile/mojom/extension_tray.mojom`, a separate browser-side
   pipe. Action state is the browser's own; the compositor never sees it. See
   `chrome/browser/domicile/domicile_extension_tray.h`.
@@ -286,12 +287,22 @@ The supervisor connects, sends one JSON line, reads one reply, and closes.
 
 {"type":"open_url","version":1,"url":"https://example.com/"}
 {"type":"open_url","version":1,"url":"https://example.com/","app":true}
-{"type":"opened"}   |   {"type":"refused","why":"…"}
+{"type":"open_url","version":1,"url":"https://example.com/","agent":"agent-3"}
+{"type":"opened","window":"7"}   |   {"type":"refused","why":"…"}
+
+{"type":"browser_windows","version":1}
+{"type":"browser_windows","windows":[{"id":"7","focused":true,"width":1280,"height":720}]}
 
 {"type":"site_permissions","version":1}
 {"type":"site_permissions","defaults":{"camera":"ask",…},"sites":[{"origin":"https://meet.example","permission":"camera","setting":"allow"}]}
 
 {"type":"set_site_permission","version":1,"origin":"https://meet.example","permission":"camera","setting":"block"}
+{"type":"set"}   |   {"type":"refused","why":"…"}
+
+{"type":"site_privacy","version":1}
+{"type":"site_privacy","sites":[{"profile":"work","site":"nytimes.com","block_ads_and_trackers":"off"}]}
+
+{"type":"set_site_privacy","version":1,"profile":"work","site":"nytimes.com","block_ads_and_trackers":null}
 {"type":"set"}   |   {"type":"refused","why":"…"}
 
 {"type":"load_unpacked","version":1,"directory":"/home/me/src/my-extension"}
@@ -378,6 +389,16 @@ The supervisor connects, sends one JSON line, reads one reply, and closes.
   `target="_blank"` does. The shell gets it in `browserwindowschanged`, so a
   shell mid-reload gets it with every other window. An unparsable URL, a
   non-boolean `app`, or a desk with no shell to own the window, is refused.
+- `open_url` answers with the id of the window it opened, or the app window
+  it reused.
+- `"agent"` opens a browser window for that agent seat, listed with `agent`:
+  the shell opens it without the user's focus, and `domicile` then puts the
+  seat's keyboard in it. Refused with `"app":true`, as an app window may be
+  the user's, reused.
+- `browser_windows` lists each browser window in open order: whether the
+  shell's focused page is its, and its page's size in CSS pixels, left out
+  while the shell doesn't draw it. `domicile list-windows` merges it into the
+  compositor's list.
 - `"app":true` opens an app window, listed with `isApp`
   ([WEB-APPS.md](/docs/architecture/WEB-APPS.md)). An engine without it
   ignores the key and opens a browser window.
@@ -386,6 +407,13 @@ The supervisor connects, sends one JSON line, reads one reply, and closes.
   shell profile's content settings for each of `kSitePermissions`, as the
   address bar's panel does: user settings for one origin. Setting a
   permission's default removes the site's own.
+- `site_privacy` and `set_site_privacy` are the Settings app's Privacy page
+  too. They list and set each browser profile's sites with their own ad
+  blocking, as a shell's `setBlockAdsAndTrackers(mode, "site")` keeps them
+  ([AD-BLOCKING.md](/docs/architecture/AD-BLOCKING.md)). The listing answers
+  once every profile has loaded. A private profile keeps its sites only while
+  a window is open, so it lists none without one and refuses a change.
+  `null` goes back to the profile's mode.
 - `load_unpacked`, `uninstall_extension` and `config_extensions` are the
   Settings app's too ([EXTENSIONS.md](/docs/architecture/EXTENSIONS.md#from-the-settings-app)).
   `domicile load-extension` sends `load_unpacked` as well. The engine replies to

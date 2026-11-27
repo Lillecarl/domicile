@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { None, Ok } from "@cprussin/option-result";
+import { appMenu } from "@domicile-desktop/sdk/app-menu";
 import type { watchMenu } from "@domicile-desktop/sdk/dbusmenu";
 import { MenuEntry } from "@domicile-desktop/sdk/dbusmenu";
 import type { BrowserProfile } from "@domicile-desktop/sdk/desktop/browser";
@@ -100,13 +101,24 @@ const darkAction: Extension = {
 };
 
 /** A desk that records each call the menu makes, by name and arguments. */
-const recordingDomicile = (calls: unknown[][], refuse = false): Domicile =>
+const recordingDomicile = (
+  calls: unknown[][],
+  refuse = false,
+  changed: readonly string[] = [],
+): Domicile =>
   ({
     browser: {
+      changedExtensions: () => Promise.resolve(changed),
       open: (...args: unknown[]) => calls.push(["browser.open", ...args]),
+      resetExtension: (...args: unknown[]) => {
+        calls.push(["browser.resetExtension", ...args]);
+        return Promise.resolve();
+      },
       setExtensionEnabled: (...args: unknown[]) => {
         calls.push(["browser.setExtensionEnabled", ...args]);
-        return Promise.resolve();
+        return refuse
+          ? Promise.reject(new DOMException("still loading", "OperationError"))
+          : Promise.resolve();
       },
     },
     extensions: {
@@ -116,12 +128,23 @@ const recordingDomicile = (calls: unknown[][], refuse = false): Domicile =>
         calls.push(["extensions.configure", ...args]);
         return Promise.resolve();
       },
-      setEnabled: (...args: unknown[]) => {
-        calls.push(["extensions.setEnabled", ...args]);
-        return refuse
-          ? Promise.reject(new DOMException("not installed", "OperationError"))
-          : Promise.resolve();
-      },
+      menu: (id: string) =>
+        Promise.resolve(
+          appMenu(
+            JSON.stringify([
+              {
+                checked: false,
+                enabled: true,
+                id: 4,
+                label: `Read ${id}`,
+                type: "normal",
+                visible: true,
+              },
+            ]),
+          ),
+        ),
+      runMenuItem: (...args: unknown[]) =>
+        calls.push(["extensions.runMenuItem", ...args]),
       uninstall: (...args: unknown[]) => {
         calls.push(["extensions.uninstall", ...args]);
         return Promise.resolve();
@@ -132,7 +155,22 @@ const recordingDomicile = (calls: unknown[][], refuse = false): Domicile =>
     },
   }) as unknown as Domicile;
 
-/** A Work profile with Dark Reader off and Switched Off locked on. */
+/** The default profile, with Dark Reader on and Switched Off off. */
+const home: BrowserProfile = {
+  color: "#06b6d4",
+  configSites: [],
+  enabledExtensions: [DARK],
+  extensions: [DARK, OFF],
+  id: "default",
+  isDefault: true,
+  isDefaultPrivate: false,
+  isPrivate: false,
+  lockedExtensions: [],
+  name: "Default",
+  pinnedSites: [],
+};
+
+/** A Work profile with Dark Reader off and Switched Off on by its config. */
 const work: BrowserProfile = {
   color: "#d97706",
   configSites: [],
@@ -149,24 +187,28 @@ const work: BrowserProfile = {
 
 type Options = {
   calls?: unknown[][];
+  /** The extensions a temporary change switches apart from the config. */
+  changed?: readonly string[];
   extensions?: readonly Extension[];
   installed?: readonly InstalledExtension[];
-  profile?: BrowserProfile;
+  /** `null` for none: the engine has not listed profiles. */
+  profile?: BrowserProfile | null;
   refuse?: boolean;
   unpinned?: ReadonlySet<string>;
 };
 
 const renderMenu = ({
   calls = [],
+  changed = [],
   extensions = [darkAction],
   installed = [darkReader, switchedOff],
-  profile,
+  profile = home,
   refuse = false,
   unpinned = new Set(),
 }: Options = {}) =>
   render(
     <TrayIconsMenu
-      domicile={recordingDomicile(calls, refuse)}
+      domicile={recordingDomicile(calls, refuse, changed)}
       extensions={extensions}
       icons={() => Promise.resolve(Ok(() => Promise.resolve(Ok(None()))))}
       installed={installed}
@@ -176,7 +218,7 @@ const renderMenu = ({
       onPin={(key) => calls.push(["onPin", key])}
       onSettings={() => calls.push(["onSettings"])}
       onUnpin={(key) => calls.push(["onUnpin", key])}
-      profile={profile}
+      profile={profile ?? undefined}
       unpinned={unpinned}
       watch={watchingNetwork(calls)}
     />,
@@ -261,6 +303,19 @@ describe(TrayIconsMenu, () => {
     expect(calls).toStrictEqual([["menu.click", 1]]);
   });
 
+  it("opens an extension's own menu from its row, and runs the entry chosen", async () => {
+    const calls: unknown[][] = [];
+    renderMenu({ calls });
+    await openMenu();
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Dark Reader" }));
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: `Read ${DARK}` }),
+    );
+
+    expect(calls).toStrictEqual([["extensions.runMenuItem", 4]]);
+  });
+
   it("switches an extension off", async () => {
     const calls: unknown[][] = [];
     renderMenu({ calls });
@@ -268,7 +323,19 @@ describe(TrayIconsMenu, () => {
 
     await userEvent.click(screen.getByRole("switch", { name: "Dark Reader" }));
 
-    expect(calls).toStrictEqual([["extensions.setEnabled", DARK, false]]);
+    expect(calls).toStrictEqual([
+      ["browser.setExtensionEnabled", "default", DARK, false],
+    ]);
+  });
+
+  it("can't switch an extension before the engine lists profiles", async () => {
+    renderMenu({ profile: null });
+    await openMenu();
+
+    expect(screen.getByRole("switch", { name: "Dark Reader" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
   });
 
   it("switches the extensions of the last focused page's profile", async () => {
@@ -279,14 +346,29 @@ describe(TrayIconsMenu, () => {
     expect(screen.getByText("Extensions in Work")).toBeVisible();
     const dark = screen.getByRole("switch", { name: "Dark Reader" });
     expect(dark).not.toBeChecked();
-    const locked = screen.getByRole("switch", { name: "Switched Off" });
-    expect(locked).toBeChecked();
-    expect(locked).toHaveAttribute("aria-disabled", "true");
+    const configured = screen.getByRole("switch", { name: "Switched Off" });
+    expect(configured).toBeChecked();
+    expect(configured).not.toHaveAttribute("aria-disabled");
     await userEvent.click(dark);
+    await userEvent.click(configured);
 
     expect(calls).toStrictEqual([
       ["browser.setExtensionEnabled", "work", DARK, true],
+      ["browser.setExtensionEnabled", "work", OFF, false],
     ]);
+  });
+
+  it("says which switches differ from the config, and puts one back", async () => {
+    const calls: unknown[][] = [];
+    renderMenu({ calls, changed: [OFF], profile: work });
+    await openMenu();
+
+    expect(await screen.findByText("Changed from your config")).toBeVisible();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Reset Switched Off" }),
+    );
+
+    expect(calls).toStrictEqual([["browser.resetExtension", "work", OFF]]);
   });
 
   it("says when the engine refuses a change", async () => {
@@ -296,7 +378,7 @@ describe(TrayIconsMenu, () => {
     await userEvent.click(screen.getByRole("switch", { name: "Dark Reader" }));
 
     expect(
-      await screen.findByText("Couldn't switch Dark Reader off"),
+      await screen.findByText("Couldn't switch Dark Reader off in Default"),
     ).toBeVisible();
   });
 

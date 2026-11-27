@@ -26,6 +26,7 @@
 #include "base/memory/self_deleting.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -47,7 +48,10 @@
 #include "components/domicile/browser/render_process.h"
 #include "components/domicile/browser/screen_capture.h"
 #include "components/domicile/browser/shortcut_registry.h"
+#include "components/domicile/browser/page_privacy.h"
 #include "components/domicile/browser/site_permissions.h"
+#include "components/domicile/browser/site_privacy.h"
+#include "components/user_prefs/user_prefs.h"
 #include "components/domicile/browser/unfocused_web_views.h"
 #include "components/permissions/permission_decision_auto_blocker.h"
 #include "components/permissions/permissions_client.h"
@@ -260,6 +264,18 @@ AddToDictionaryCallback& AddToDictionarySlot() {
   return *add;
 }
 
+// Storage for SetExtensionMenus's callback.
+ExtensionMenusCallback& ExtensionMenusSlot() {
+  static base::NoDestructor<ExtensionMenusCallback> menus;
+  return *menus;
+}
+
+// Storage for SetExtensionKeys's callback.
+ExtensionKeysCallback& ExtensionKeysSlot() {
+  static base::NoDestructor<ExtensionKeysCallback> keys;
+  return *keys;
+}
+
 // The guests' camera and microphone. See SetMediaAccess.
 MediaAccess* g_media_access = nullptr;
 
@@ -288,6 +304,20 @@ const AddToDictionaryCallback& DictionaryAdder() {
   // //chrome sets it in StartDesk, with the window host.
   CHECK(!AddToDictionarySlot().is_null());
   return AddToDictionarySlot();
+}
+
+// Finds a menu's extension items. See SetExtensionMenus.
+const ExtensionMenusCallback& ExtensionMenus() {
+  // //chrome sets it in StartDesk, with the window host.
+  CHECK(!ExtensionMenusSlot().is_null());
+  return ExtensionMenusSlot();
+}
+
+// Finds an extension's key. See SetExtensionKeys.
+const ExtensionKeysCallback& ExtensionKeys() {
+  // //chrome sets it in StartDesk, with the window host.
+  CHECK(!ExtensionKeysSlot().is_null());
+  return ExtensionKeysSlot();
 }
 
 // Serves WebViewGuestHost for one document.
@@ -323,6 +353,7 @@ class WebViewGuestHost final
     mojo::PendingReceiver<mojom::WebViewGuest> guest;
     mojo::PendingRemote<mojom::WebViewGuestClient> client;
     std::optional<std::string> window;
+    bool rendered;
     bool extension_popup;
     bool private_browsing;
     std::string profile;
@@ -335,6 +366,7 @@ class WebViewGuestHost final
                    mojo::PendingReceiver<mojom::WebViewGuest> guest,
                    mojo::PendingRemote<mojom::WebViewGuestClient> client,
                    const std::optional<std::string>& window,
+                   bool rendered,
                    bool extension_popup,
                    bool private_browsing,
                    const std::string& profile,
@@ -379,6 +411,7 @@ class WebViewGuestHost final
                                   std::move(guest),
                                   std::move(client),
                                   window,
+                                  rendered,
                                   extension_popup,
                                   private_browsing,
                                   profile,
@@ -387,7 +420,7 @@ class WebViewGuestHost final
         return;
       case PlaceholderStage::kReady:
         Give(*placeholder, std::move(guest), std::move(client), window,
-             extension_popup, private_browsing, profile, *parsed);
+             rendered, extension_popup, private_browsing, profile, *parsed);
         return;
     }
   }
@@ -458,7 +491,7 @@ class WebViewGuestHost final
         return;
       case PlaceholderStage::kReady:
         Give(*placeholder, std::move(request.guest), std::move(request.client),
-             request.window, request.extension_popup,
+             request.window, request.rendered, request.extension_popup,
              request.private_browsing, request.profile, request.partition);
         return;
     }
@@ -498,6 +531,7 @@ class WebViewGuestHost final
             mojo::PendingReceiver<mojom::WebViewGuest> guest,
             mojo::PendingRemote<mojom::WebViewGuestClient> client,
             const std::optional<std::string>& window,
+            bool rendered,
             bool extension_popup,
             bool private_browsing,
             const std::string& profile,
@@ -519,6 +553,12 @@ class WebViewGuestHost final
     if (shown == nullptr) {
       LOG(WARNING) << "domicile: a <webview> named browser window \""
                    << *window << "\", which is not open; it shows nothing.";
+      return;
+    }
+    if (!rendered && !shown->IsAttached() &&
+        shown->contents().GetController().NeedsReload()) {
+      mojo::Remote<mojom::WebViewGuestClient>(std::move(client))
+          ->Replaced(/*unloaded=*/true);
       return;
     }
     shown->AttachToElement(render_frame_host(), placeholder, std::move(guest),
@@ -888,6 +928,12 @@ std::unique_ptr<content::WebContents> WebViewGuest::MakeContents(
   zoom::ZoomController::CreateForWebContents(guest_contents_);
   zoom_observation_.Observe(
       zoom::ZoomController::FromWebContents(guest_contents_));
+
+  // The shield's: the page's ad blocking and its count.
+  PagePrivacy::CreateForWebContents(guest_contents_);
+  PagePrivacy::FromWebContents(guest_contents_)
+      ->OnChanged(base::BindRepeating(&WebViewGuest::ReportSitePrivacy,
+                                      weak_factory_.GetWeakPtr()));
   return contents;
 }
 
@@ -899,7 +945,7 @@ void WebViewGuest::AttachToElement(
   CHECK(!window_id_.empty());
 
   // A window shows in one frame at a time; a second element shows nothing.
-  if (attaching_ || guest_contents_->GetOuterWebContents() != nullptr) {
+  if (IsAttached()) {
     LOG(WARNING) << "domicile: a <webview> named browser window " << window_id_
                  << ", which another <webview> is already showing; it shows "
                     "nothing.";
@@ -949,6 +995,18 @@ void WebViewGuest::AttachWindowTo(
             << " to a <webview>.";
 
   ReportEverything();
+}
+
+bool WebViewGuest::IsAttached() const {
+  return attaching_ || guest_contents_->GetOuterWebContents() != nullptr;
+}
+
+bool WebViewGuest::IsShown() const {
+  content::WebContents* outer = guest_contents_->GetOuterWebContents();
+  return attaching_ ||
+         (outer != nullptr &&
+          (guest_contents_->GetVisibility() != content::Visibility::HIDDEN ||
+           outer->GetVisibility() == content::Visibility::HIDDEN));
 }
 
 void WebViewGuest::ElementGone() {
@@ -1008,6 +1066,8 @@ void WebViewGuest::ReportEverything() {
   }
   reported_site_permissions_.clear();
   ReportSitePermissions();
+  reported_site_privacy_.reset();
+  ReportSitePrivacy();
   reported_render_process_ = mojom::WebViewRenderProcess::kRunning;
   reported_exit_code_ = 0;
   ReportRenderProcess();
@@ -1076,6 +1136,18 @@ void WebViewGuest::SetAddToDictionary(AddToDictionaryCallback add) {
 }
 
 // static
+void WebViewGuest::SetExtensionMenus(ExtensionMenusCallback menus) {
+  CHECK(ExtensionMenusSlot().is_null());
+  ExtensionMenusSlot() = std::move(menus);
+}
+
+// static
+void WebViewGuest::SetExtensionKeys(ExtensionKeysCallback keys) {
+  CHECK(ExtensionKeysSlot().is_null());
+  ExtensionKeysSlot() = std::move(keys);
+}
+
+// static
 void WebViewGuest::SetMediaAccess(MediaAccess* access) {
   CHECK(!g_media_access);
   g_media_access = access;
@@ -1098,13 +1170,10 @@ void WebViewGuest::ChooseDownloadPath(
   //
   // Wrapped so a pipe closing unanswered still answers //chrome, which holds
   // the download until then.
-  client_->FileChooserRequested(
-      mojom::WebViewFileChooserMode::kSave, {},
-      suggested_path.BaseName().AsUTF8Unsafe(),
-      base::GetHomeDir().AsUTF8Unsafe(), StartFolder(suggested_path),
-      mojo::WrapCallbackWithDefaultInvokeIfNotRun(
-          base::BindOnce(&DownloadPathChosen, std::move(chosen)),
-          std::nullopt));
+  AskForFiles(mojom::WebViewFileChooserMode::kSave, {},
+              suggested_path.BaseName().AsUTF8Unsafe(),
+              StartFolder(suggested_path),
+              base::BindOnce(&DownloadPathChosen, std::move(chosen)));
 }
 
 void WebViewGuest::ChooseFiles(
@@ -1113,13 +1182,88 @@ void WebViewGuest::ChooseFiles(
     const base::FilePath& suggested_path,
     base::OnceCallback<void(std::optional<std::vector<base::FilePath>>)>
         chosen) {
-  // Wrapped, as in ChooseDownloadPath: the dialog waits for an answer.
-  client_->FileChooserRequested(
-      mode, accept, suggested_path.BaseName().AsUTF8Unsafe(),
-      base::GetHomeDir().AsUTF8Unsafe(), StartFolder(suggested_path),
-      mojo::WrapCallbackWithDefaultInvokeIfNotRun(
-          base::BindOnce(&DialogFilesChosen, mode, std::move(chosen)),
-          std::nullopt));
+  AskForFiles(mode, accept, suggested_path.BaseName().AsUTF8Unsafe(),
+              StartFolder(suggested_path),
+              base::BindOnce(&DialogFilesChosen, mode, std::move(chosen)));
+}
+
+void WebViewGuest::NoteAgentInput(std::optional<std::string> seat) {
+  agent_drove_last_ = true;
+  agent_seat_driving_ = std::move(seat);
+}
+
+void WebViewGuest::NotePersonInput() {
+  agent_drove_last_ = false;
+  agent_seat_driving_.reset();
+}
+
+std::optional<WebViewGuest::AgentFileRequest>
+WebViewGuest::agent_file_request() const {
+  return agent_file_request_;
+}
+
+base::expected<void, std::string> WebViewGuest::AnswerAgentFileRequest(
+    std::optional<std::vector<std::string>> paths) {
+  if (!agent_file_request_.has_value()) {
+    return base::unexpected(base::StrCat(
+        {"browser window ", window_id_,
+         "'s page is waiting on no file chooser; a click or key that opens "
+         "one makes it wait"}));
+  }
+  if (paths.has_value() &&
+      !ChosenPaths(agent_file_request_->mode, *paths).has_value()) {
+    return base::unexpected(std::string(
+        agent_file_request_->mode == mojom::WebViewFileChooserMode::kOpenMultiple
+            ? "the file chooser takes one or more paths, absolute or under "
+              "the home, with no \"..\""
+            : "the file chooser takes one path, absolute or under the home, "
+              "with no \"..\""));
+  }
+  LOG(INFO) << "domicile: an agent "
+            << (paths.has_value() ? "answered" : "canceled")
+            << " browser window " << window_id_ << "'s file chooser"
+            << (paths.has_value()
+                    ? base::StrCat({" with ", base::NumberToString(paths->size()),
+                                    " path(s)"})
+                    : std::string())
+            << ".";
+  agent_file_request_.reset();
+  std::move(agent_files_answered_).Run(paths);
+  return base::ok();
+}
+
+void WebViewGuest::AskForFiles(mojom::WebViewFileChooserMode mode,
+                               std::vector<std::string> accept,
+                               std::string suggested_name,
+                               std::string folder,
+                               FilesAnswered answered) {
+  // Wrapped so a pipe closing, a guest going away or a newer request
+  // replacing this one still answers: the page, or //chrome holding a
+  // download, waits for it.
+  FilesAnswered once = mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+      std::move(answered), std::nullopt);
+  if (!agent_drove_last_) {
+    client_->FileChooserRequested(mode, accept, suggested_name,
+                                  base::GetHomeDir().AsUTF8Unsafe(), folder,
+                                  std::move(once));
+    return;
+  }
+  // Logged before holding; the agent file chooser guard greps for it.
+  LOG(INFO) << "domicile: an agent's input in browser window " << window_id_
+            << " asked for a file; holding it for the agent, not the shell.";
+  // A newer request replaces the one held, which is canceled, as a shell's
+  // picker does.
+  FilesAnswered replaced = std::move(agent_files_answered_);
+  agent_file_request_ = AgentFileRequest{
+      .mode = mode,
+      .accept = std::move(accept),
+      .suggested_name = std::move(suggested_name),
+      .folder = std::move(folder),
+  };
+  agent_files_answered_ = std::move(once);
+  if (replaced) {
+    std::move(replaced).Run(std::nullopt);
+  }
 }
 
 void WebViewGuest::AskPermission(
@@ -1625,14 +1769,15 @@ void WebViewGuest::MoveHistoryFrom(WebViewGuest& source,
             << " took its old page's history.";
 }
 
-void WebViewGuest::Replaced() {
+void WebViewGuest::Replaced(bool unloaded) {
   // Before the pipe closes, so the element hears it.
-  client_->Replaced();
+  client_->Replaced(unloaded);
   receiver_.reset();
   Unclient();
   find_text_.clear();
   LOG(INFO) << "domicile: browser window " << window_id_
-            << "'s page was replaced by one in another browser profile.";
+            << "'s page was replaced by one "
+            << (unloaded ? "that is unloaded." : "in another browser profile.");
 }
 
 std::optional<std::string> WebViewGuest::ProfileToMoveTo(const GURL& from,
@@ -1826,8 +1971,15 @@ content::KeyboardEventProcessingResult WebViewGuest::PreHandleKeyboardEvent(
   const bool pressed =
       event.GetType() == blink::WebInputEvent::Type::kRawKeyDown ||
       event.GetType() == blink::WebInputEvent::Type::kKeyDown;
+  // An Electron app has no extensions.
+  base::OnceClosure run_extension_command;
+  if (pressed && !app_page_ && (held.alt || held.ctrl || held.meta)) {
+    run_extension_command = ExtensionKeys().Run(*guest_contents_, event);
+  }
   if (!pressed || (modifiers & blink::WebInputEvent::kIsAutoRepeat) != 0) {
-    return content::KeyboardEventProcessingResult::NOT_HANDLED;
+    return run_extension_command
+               ? content::KeyboardEventProcessingResult::HANDLED
+               : content::KeyboardEventProcessingResult::NOT_HANDLED;
   }
 
   // Escape leaves page fullscreen before the page sees it, as in Chrome, so a
@@ -1840,6 +1992,12 @@ content::KeyboardEventProcessingResult WebViewGuest::PreHandleKeyboardEvent(
   // A matched chord is HANDLED so the page never sees it and cannot override a
   // desktop shortcut.
   if (ShortcutRegistry::Get().Press(chord, page)) {
+    return content::KeyboardEventProcessingResult::HANDLED;
+  }
+  // Before the page, as in Chrome, so a page's own use of the keys does not
+  // keep them from the extension.
+  if (run_extension_command) {
+    std::move(run_extension_command).Run();
     return content::KeyboardEventProcessingResult::HANDLED;
   }
   if (!ui::KeycodeConverter::IsDomKeyForModifier(key)) {
@@ -1946,13 +2104,17 @@ bool WebViewGuest::HandleContextMenu(
 
   context_menu_id_ += 1;
   context_menu_frame_ = render_frame_host.GetGlobalId();
+  context_menu_document_ = render_frame_host.GetWeakDocumentPtr();
   context_menu_params_ = params;
+  context_menu_extensions_ = ExtensionMenus().Run(*guest_contents_, params);
 
   // The context menu guard greps for this line.
   LOG(INFO) << "domicile: a <webview>'s page asked for a context menu; "
                "asking the shell to draw it.";
-  client_->ContextMenuRequested(
-      AsWebViewContextMenu(context_menu_id_, params, in_page));
+  mojom::WebViewContextMenuPtr menu =
+      AsWebViewContextMenu(context_menu_id_, params, in_page);
+  menu->extension_items = context_menu_extensions_->json();
+  client_->ContextMenuRequested(std::move(menu));
   return true;
 }
 
@@ -2085,6 +2247,23 @@ void WebViewGuest::ReplaceMisspelling(int32_t menu, const std::string& word) {
       kEditTries);
 }
 
+void WebViewGuest::RunContextMenuExtensionItem(int32_t menu, int32_t item) {
+  CHECK(guest_contents_);
+  if (!IsNewestContextMenu(menu)) {
+    return;
+  }
+  // The document, not its frame: the item grants activeTab on the page, and a
+  // frame may hold another document by now.
+  content::RenderFrameHost* frame =
+      context_menu_document_.AsRenderFrameHostIfValid();
+  if (frame == nullptr || !frame->IsActive()) {
+    LOG(INFO) << "domicile: the page a <webview>'s context menu was for is "
+                 "gone; dropping the extension item.";
+    return;
+  }
+  context_menu_extensions_->Run(item, *guest_contents_, *frame);
+}
+
 bool WebViewGuest::IsNewestContextMenu(int32_t menu) {
   // The element only sends ids it received, so this is a bad message.
   if (menu <= 0 || menu > context_menu_id_) {
@@ -2171,6 +2350,79 @@ void WebViewGuest::SetSitePermission(
                       setting);
 }
 
+namespace {
+
+AdBlockingMode ModeOf(mojom::WebViewAdBlocking mode) {
+  switch (mode) {
+    case mojom::WebViewAdBlocking::kStandard:
+      return AdBlockingMode::kStandard;
+    case mojom::WebViewAdBlocking::kStrict:
+      return AdBlockingMode::kStrict;
+    case mojom::WebViewAdBlocking::kOff:
+      return AdBlockingMode::kOff;
+  }
+}
+
+std::optional<AdBlockingMode> ModeOf(
+    std::optional<mojom::WebViewAdBlocking> mode) {
+  if (!mode.has_value()) {
+    return std::nullopt;
+  }
+  return ModeOf(*mode);
+}
+
+mojom::WebViewAdBlocking WireModeOf(AdBlockingMode mode) {
+  switch (mode) {
+    case AdBlockingMode::kStandard:
+      return mojom::WebViewAdBlocking::kStandard;
+    case AdBlockingMode::kStrict:
+      return mojom::WebViewAdBlocking::kStrict;
+    case AdBlockingMode::kOff:
+      return mojom::WebViewAdBlocking::kOff;
+  }
+}
+
+mojom::WebViewAdBlockingSetFor WireSetForOf(AdBlockingSetFor set_for) {
+  switch (set_for) {
+    case AdBlockingSetFor::kProfile:
+      return mojom::WebViewAdBlockingSetFor::kProfile;
+    case AdBlockingSetFor::kSite:
+      return mojom::WebViewAdBlockingSetFor::kSite;
+    case AdBlockingSetFor::kWindow:
+      return mojom::WebViewAdBlockingSetFor::kWindow;
+  }
+}
+
+}  // namespace
+
+void WebViewGuest::SetAdBlockingForSite(
+    std::optional<mojom::WebViewAdBlocking> mode) {
+  CHECK(guest_contents_);
+  const std::string site = PagePrivacy::FromWebContents(guest_contents_)->site();
+  // The shell sends what it last saw, and the page may have navigated since.
+  if (site.empty()) {
+    LOG(WARNING) << "domicile: the shell set ad blocking for a page with no "
+                    "site; it is dropped.";
+    return;
+  }
+  VLOG(1) << "domicile: ad blocking for " << site << " is now "
+          << (mode.has_value() ? AdBlockingModeName(ModeOf(*mode))
+                               : "the profile's");
+  SetSiteAdBlocking(
+      *user_prefs::UserPrefs::Get(guest_contents_->GetBrowserContext()), site,
+      ModeOf(mode));
+}
+
+void WebViewGuest::SetAdBlockingForWindow(
+    std::optional<mojom::WebViewAdBlocking> mode) {
+  CHECK(guest_contents_);
+  VLOG(1) << "domicile: ad blocking in browser window " << window_id_
+          << " is now "
+          << (mode.has_value() ? AdBlockingModeName(ModeOf(*mode))
+                               : "its site's");
+  PagePrivacy::FromWebContents(guest_contents_)->SetForWindow(ModeOf(mode));
+}
+
 void WebViewGuest::ListMediaDevices(ListMediaDevicesCallback callback) {
   CHECK(guest_contents_);
   Media().WhenDevicesListed(base::BindOnce(
@@ -2239,14 +2491,11 @@ void WebViewGuest::RunFileChooser(
   //
   // Wrapped, as in ChooseDownloadPath, so an unanswered pipe cancels the
   // chooser instead of leaving the page waiting.
-  client_->FileChooserRequested(
-      AsWebViewFileChooserMode(params.mode),
-      AcceptedExtensions(params.accept_types),
-      params.default_file_name.BaseName().AsUTF8Unsafe(),
-      base::GetHomeDir().AsUTF8Unsafe(), StartFolder(params.default_file_name),
-      mojo::WrapCallbackWithDefaultInvokeIfNotRun(
-          base::BindOnce(&FilesChosen, std::move(listener), params.mode),
-          std::nullopt));
+  AskForFiles(AsWebViewFileChooserMode(params.mode),
+              AcceptedExtensions(params.accept_types),
+              params.default_file_name.BaseName().AsUTF8Unsafe(),
+              StartFolder(params.default_file_name),
+              base::BindOnce(&FilesChosen, std::move(listener), params.mode));
 }
 
 void WebViewGuest::EnumerateDirectory(
@@ -2301,12 +2550,27 @@ bool WebViewGuest::PreHandleMouseEvent(content::WebContents* source,
   return false;
 }
 
+void WebViewGuest::DomicileMouseEventTo(content::WebContents* source,
+                                        content::RenderWidgetHost* widget) {
+  const int process = widget->GetProcess()->GetDeprecatedID();
+  const int routing = widget->GetRoutingID();
+  if (process == pointer_process_ && routing == pointer_routing_) {
+    return;
+  }
+  pointer_process_ = process;
+  pointer_routing_ = routing;
+  // PreHandleMouseEvent, next, reports it.
+  tooltip_.clear();
+}
+
 bool WebViewGuest::DomicileTooltip(content::WebContents* source,
                                    content::RenderWidgetHost* widget,
                                    const std::u16string& text) {
+  // Chrome draws none from a widget the pointer is not over either.
+  if (widget != PointerWidget()) {
+    return true;
+  }
   tooltip_ = base::UTF16ToUTF8(text);
-  tooltip_process_ = widget->GetProcess()->GetDeprecatedID();
-  tooltip_routing_ = widget->GetRoutingID();
   ReportTooltip();
   return true;
 }
@@ -2316,10 +2580,13 @@ void WebViewGuest::ReportTooltip() {
   // the tooltip appeared, so moving under one tooltip sends nothing.
   if (TooltipNow() == reported_tooltip_) {
     tooltip_delay_.Stop();
+    tooltip_waits_since_ = base::TimeTicks();
   } else if (TooltipNow().empty() || !reported_tooltip_.empty()) {
     tooltip_delay_.Stop();
+    tooltip_waits_since_ = base::TimeTicks();
     SendTooltip();
   } else if (!tooltip_delay_.IsRunning()) {
+    tooltip_waits_since_ = base::TimeTicks::Now();
     // Unretained: the timer is a member, so it never runs after this is gone.
     tooltip_delay_.Start(FROM_HERE, kTooltipDelay,
                          base::BindOnce(&WebViewGuest::SendTooltip,
@@ -2329,13 +2596,13 @@ void WebViewGuest::ReportTooltip() {
 
 const std::string& WebViewGuest::TooltipNow() const {
   // A frame's widget can go away under its tooltip, and its tooltip with it.
-  return pointer_inside_ && TooltipWidget() != nullptr ? tooltip_
+  return pointer_inside_ && PointerWidget() != nullptr ? tooltip_
                                                        : base::EmptyString();
 }
 
-content::RenderWidgetHost* WebViewGuest::TooltipWidget() const {
+content::RenderWidgetHost* WebViewGuest::PointerWidget() const {
   content::RenderWidgetHost* widget =
-      content::RenderWidgetHost::FromID(tooltip_process_, tooltip_routing_);
+      content::RenderWidgetHost::FromID(pointer_process_, pointer_routing_);
   // A crashed frame keeps its widget and loses its view.
   return widget != nullptr && widget->GetView() != nullptr ? widget : nullptr;
 }
@@ -2348,7 +2615,17 @@ void WebViewGuest::SendTooltip() {
   reported_tooltip_ = tooltip;
   // Where the pointer is now, which is where Chrome shows it after its delay.
   const gfx::Point at =
-      tooltip.empty() ? gfx::Point() : PointerInPage(*TooltipWidget());
+      tooltip.empty() ? gfx::Point() : PointerInPage(*PointerWidget());
+  // Measured here, where the delay is kept: a reading taken outside the
+  // browser also counts the time it took to move the pointer.
+  const base::TimeDelta waited =
+      tooltip_waits_since_.is_null()
+          ? base::TimeDelta()
+          : base::TimeTicks::Now() - tooltip_waits_since_;
+  tooltip_waits_since_ = base::TimeTicks();
+  VLOG(1) << "domicile: a <webview> reports the tooltip \"" << tooltip
+          << "\" at " << at.x() << "," << at.y() << ", "
+          << waited.InMilliseconds() << " ms after the page named it";
   client_->TooltipChanged(tooltip, at.x(), at.y());
 }
 
@@ -2812,6 +3089,24 @@ void WebViewGuest::ReportSitePermissions() {
     report.push_back(mojom::WebViewSitePermission::New(permission, setting));
   }
   client_->SitePermissionsChanged(std::move(report));
+}
+
+void WebViewGuest::ReportSitePrivacy() {
+  CHECK(guest_contents_);
+  const PagePrivacy& privacy = *PagePrivacy::FromWebContents(guest_contents_);
+  std::string site = privacy.site();
+  mojom::WebViewSitePrivacyPtr now;
+  if (!site.empty()) {
+    now = mojom::WebViewSitePrivacy::New(std::move(site),
+                                         WireModeOf(privacy.mode()),
+                                         WireSetForOf(privacy.set_for()),
+                                         privacy.blocked());
+  }
+  if (now.Equals(reported_site_privacy_)) {
+    return;
+  }
+  reported_site_privacy_ = now.Clone();
+  client_->SitePrivacyChanged(std::move(now));
 }
 
 void WebViewGuest::ReportRenderProcess() {

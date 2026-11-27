@@ -37,6 +37,13 @@ a tree holding both teaches both.
 in `turbo test`. The one exemption is a spelling that is somebody
 else's API — `nix-store --realise` is Nix's flag, not a word.
 
+## No flaky tests
+
+A test that can fail and then pass on the same code is a broken test. Never
+rerun a failed test, guard or CI run unchanged, and never accept a flaky one:
+find whether the code or the test is wrong and fix it. See
+[TESTING.md](/docs/guidelines/TESTING.md#a-test-that-fails-is-never-rerun-unchanged).
+
 ## Change the engine when the engine is the right place
 
 Fix a problem in the layer that owns it, even when that layer is the engine.
@@ -138,7 +145,7 @@ every TS file you write or modify.
 
 | Doc | Covers |
 |---|---|
-| [/docs/guidelines/TESTING.md](/docs/guidelines/TESTING.md) | **TDD is mandatory.** Failing test first, then the minimum production code to make it pass. Parsimonious coverage, unit over integration, dependency injection over mocking, never widen exports for tests, warnings are failures. |
+| [/docs/guidelines/TESTING.md](/docs/guidelines/TESTING.md) | **TDD is mandatory.** Failing test first, then the minimum production code to make it pass. Parsimonious coverage, unit over integration, dependency injection over mocking, never widen exports for tests, warnings are failures, a failed test is never rerun unchanged. |
 | [/docs/guidelines/ERRORS.md](/docs/guidelines/ERRORS.md) | **Code offensively** (PR-blocker): no defensive guards, no catch-and-swallow, no silent fallbacks; throw or return a `Result`. Promise error handling (never `void promise()`). |
 | [/docs/guidelines/CONTROL_FLOW.md](/docs/guidelines/CONTROL_FLOW.md) | `undefined` over `null`, explicit `undefined` checks, curly braces always, explicit control flow, ternaries, no unnecessary `let`, `switch` over `if`/`else if`. |
 | [/docs/guidelines/FUNCTIONS.md](/docs/guidelines/FUNCTIONS.md) | Functional/immutable/declarative defaults, arrow syntax, docstrings, manual loops over generators. |
@@ -198,6 +205,7 @@ not rules, and carry no authority level. Read the one for the area you work in.
 | [/docs/architecture/APP-MODULES.md](/docs/architecture/APP-MODULES.md) | Apps as modules: `domicile open --app <entry.js>` calls `main(root, host)` on `domicile://app-<id>/`; History and Settings as app modules instead of extensions. |
 | [/docs/architecture/ELECTRON-APPS.md](/docs/architecture/ELECTRON-APPS.md) | Electron apps on the engine: `electron-host` runs the main process with a stand-in `electron` module, windows are app windows, preload and IPC over the Electron socket. The plan. |
 | [/docs/architecture/BROWSER-PROFILES.md](/docs/architecture/BROWSER-PROFILES.md) | Browser profiles: a Chrome profile per profile, sites mapped to profiles, moving a page between them. The plan. |
+| [/docs/architecture/AD-BLOCKING.md](/docs/architecture/AD-BLOCKING.md) | The engine's ad and tracker blocking: adblock-rust in front of every website request, the config's lists kept up to date, standard, strict and off per profile, and the plan for the address-bar shield and cosmetic filters. |
 | [/docs/architecture/MOTION.md](/docs/architecture/MOTION.md) | Shader effects for shells (SkSL as a `filter` function run in viz) and the motion pass over manganese: springs, interruptible motion, per-surface changes. The plan. |
 | [/docs/architecture/AGENT-SEATS.md](/docs/architecture/AGENT-SEATS.md) | A seat per agent: its own pointer, focus and clipboard, multiplexed onto each client's one `wl_seat`; the person wins a window both want. The plan. |
 

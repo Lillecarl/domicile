@@ -4,10 +4,10 @@
 //! pinned because the JS client hard-codes them.
 
 use domicile_protocol::{
-    negotiate, ActivityKind, AdaptiveSync, AppCursorImage, AppFrame, Appearance, BrowserProfile,
-    ChromeMessage, ClipboardEntry, CursorHiding, CursorImage, CursorShape, CursorTheme, DisplayHdr,
-    DisplayInfo, DisplayTransform, HostMessage, Owner, Passphrase, PointerConstraint,
-    PointerOverWindow, SurfaceRect, PROTOCOL_VERSION,
+    negotiate, ActivityKind, AdBlocking, AdaptiveSync, AppCursorImage, AppFrame, Appearance,
+    BrowserProfile, BrowserProtections, ChromeMessage, ClipboardEntry, CursorHiding, CursorImage,
+    CursorShape, CursorTheme, DisplayHdr, DisplayInfo, DisplayTransform, HostMessage, Owner,
+    Passphrase, PointerConstraint, PointerOverWindow, SurfaceRect, PROTOCOL_VERSION,
 };
 
 fn chrome_round_trip(msg: &ChromeMessage) {
@@ -288,10 +288,20 @@ fn browser_profiles_wire_shape_is_pinned() {
             color: "#d97706".into(),
             private: false,
             extensions: Some(vec!["aeblfdkhhhdcdjpifhhbdiojplfjncoa".into()]),
+            protections: BrowserProtections {
+                block_third_party_cookies: true,
+                global_privacy_control: false,
+                hide_local_ip_address: true,
+                remove_tracking_from_links: true,
+                hide_device_details: false,
+                block_ads_and_trackers: AdBlocking::Standard,
+            },
         }],
         default_profile: "work".into(),
         default_private_profile: "private".into(),
         sites: [("github.com/acme".to_string(), "work".to_string())].into(),
+        block_lists: vec!["https://easylist.to/easylist/easylist.txt".into()],
+        block_rules: vec!["||ads.example^".into()],
     })
     .unwrap();
     assert_eq!(
@@ -304,10 +314,20 @@ fn browser_profiles_wire_shape_is_pinned() {
                 "color": "#d97706",
                 "private": false,
                 "extensions": ["aeblfdkhhhdcdjpifhhbdiojplfjncoa"],
+                "protections": {
+                    "block_third_party_cookies": true,
+                    "global_privacy_control": false,
+                    "hide_local_ip_address": true,
+                    "remove_tracking_from_links": true,
+                    "hide_device_details": false,
+                    "block_ads_and_trackers": "standard",
+                },
             }],
             "default_profile": "work",
             "default_private_profile": "private",
             "sites": { "github.com/acme": "work" },
+            "block_lists": ["https://easylist.to/easylist/easylist.txt"],
+            "block_rules": ["||ads.example^"],
         })
     );
 }

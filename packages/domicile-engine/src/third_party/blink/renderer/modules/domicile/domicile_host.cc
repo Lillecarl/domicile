@@ -643,6 +643,14 @@ void DomicileHost::answerPortalRequest(ScriptState*,
   }
 }
 
+void DomicileHost::changeConfig(ScriptState*,
+                                const String& request,
+                                ExceptionState& exception_state) {
+  if (Ready(exception_state)) {
+    channel_->ChangeConfig(request);
+  }
+}
+
 // The whole of what a page may do about the lock, and it is an offer rather
 // than a decision: what opens the desk is the compositor agreeing, and what
 // this page hears about it is `lockedchanged` like every other chrome on the
@@ -706,11 +714,13 @@ void DomicileHost::syncFrames(ScriptState*, ExceptionState& exception_state) {
   }
 }
 
-void DomicileHost::warpPointer(ScriptState*,
-                               double x,
-                               double y,
-                               DOMRectReadOnly* unless_over,
-                               ExceptionState& exception_state) {
+void DomicileHost::warpPointer(
+    ScriptState*,
+    double x,
+    double y,
+    const HeapVector<Member<DOMRectReadOnly>>& only_over,
+    DOMRectReadOnly* unless_over,
+    ExceptionState& exception_state) {
   // A coordinate that is not a number is not a place, and every arithmetic
   // that follows it -- the browser's clamp into this page's box, the round to
   // a pixel -- would carry it. Refused here because the page is where the
@@ -731,10 +741,22 @@ void DomicileHost::warpPointer(ScriptState*,
     exception_state.ThrowTypeError("warpPointer: unlessOver must be finite");
     return;
   }
+  // Refused for the same reason: a NaN box would never hold the pointer.
+  Vector<gfx::RectF> from;
+  for (const DOMRectReadOnly* box : only_over) {
+    if (!std::isfinite(box->x()) || !std::isfinite(box->y()) ||
+        !std::isfinite(box->width()) || !std::isfinite(box->height())) {
+      exception_state.ThrowTypeError("warpPointer: onlyOver must be finite");
+      return;
+    }
+    from.push_back(gfx::RectF(box->left(), box->top(),
+                              box->right() - box->left(),
+                              box->bottom() - box->top()));
+  }
   if (Ready(exception_state)) {
     warp_landing_.Warped(gfx::PointF(x, y));
     channel_->WarpPointer(
-        x, y,
+        x, y, from,
         unless_over == nullptr
             ? std::nullopt
             : std::make_optional(gfx::RectF(
@@ -1275,6 +1297,58 @@ void DomicileHost::activateExtension(ScriptState*,
   }
   if (Ready(exception_state)) {
     tray_->Activate(id);
+  }
+}
+
+void DomicileHost::reserveExtensionKeys(ScriptState*,
+                                        const Vector<String>& keys,
+                                        ExceptionState& exception_state) {
+  if (Ready(exception_state)) {
+    tray_->ReserveKeys(keys);
+  }
+}
+
+void DomicileHost::runExtensionCommand(ScriptState*,
+                                       const String& id,
+                                       const String& name,
+                                       ExceptionState& exception_state) {
+  if (id.empty() || name.empty()) {
+    exception_state.ThrowTypeError(
+        "id and name must be an extension's id and its command's name");
+    return;
+  }
+  if (Ready(exception_state)) {
+    tray_->RunCommand(id, name);
+  }
+}
+
+ScriptPromise<IDLString> DomicileHost::extensionMenu(
+    ScriptState* script_state,
+    const String& id,
+    ExceptionState& exception_state) {
+  if (id.empty()) {
+    exception_state.ThrowTypeError("id must be a non-empty extension id");
+    return EmptyPromise();
+  }
+  if (!Ready(exception_state)) {
+    return EmptyPromise();
+  }
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLString>>(
+      script_state, exception_state.GetContext());
+  auto promise = resolver->Promise();
+  tray_->ActionMenu(
+      id, BindOnce(
+              [](ScriptPromiseResolver<IDLString>* resolver,
+                 const String& menu) { resolver->Resolve(menu); },
+              WrapPersistent(resolver)));
+  return promise;
+}
+
+void DomicileHost::runExtensionMenuItem(ScriptState*,
+                                        int32_t item,
+                                        ExceptionState& exception_state) {
+  if (Ready(exception_state)) {
+    tray_->RunActionMenuItem(item);
   }
 }
 
@@ -2168,6 +2242,35 @@ void DomicileHost::ExtensionsChanged(
   DispatchEvent(*Event::Create(domicile_event_names::Extensionschanged()));
 }
 
+// Held as it came: the SDK parses it, as it does a window's menu.
+void DomicileHost::CommandsChanged(const String& commands) {
+  extension_commands_ = commands;
+  DispatchEvent(
+      *Event::Create(domicile_event_names::Extensioncommandschanged()));
+}
+
+void DomicileHost::CommandPressed(const String& id,
+                                  const String& name,
+                                  const String& profile,
+                                  CommandPressedCallback handled) {
+  const AtomicString& type = domicile_event_names::Extensioncommandpressed();
+  if (!HasEventListeners(type)) {
+    std::move(handled).Run(false);
+    return;
+  }
+  auto command = std::make_unique<JSONObject>();
+  command->SetString("id", id);
+  command->SetString("name", name);
+  command->SetString("profile", profile);
+  MessageEvent* event = MessageEvent::Create();
+  event->initMessageEvent(type, /*bubbles=*/false, /*cancelable=*/false,
+                          command->ToJSONString(), /*origin=*/nullptr,
+                          /*last_event_id=*/String(), /*source=*/nullptr,
+                          /*ports=*/nullptr);
+  DispatchEvent(*event);
+  std::move(handled).Run(true);
+}
+
 // Every installed extension, wholesale, as `extensions` is.
 void DomicileHost::InstalledChanged(
     Vector<domicile::mojom::blink::InstalledExtensionPtr> extensions) {
@@ -2578,6 +2681,18 @@ void DomicileHost::closeBrowserWindow(ScriptState*,
   }
   if (Ready(exception_state)) {
     windows_->Close(id);
+  }
+}
+
+void DomicileHost::discardBrowserWindow(ScriptState*,
+                                        const String& id,
+                                        ExceptionState& exception_state) {
+  if (id.empty()) {
+    exception_state.ThrowTypeError("id must be a browser window's id");
+    return;
+  }
+  if (Ready(exception_state)) {
+    windows_->Discard(id);
   }
 }
 
@@ -3161,7 +3276,7 @@ void DomicileHost::ListBrowserWindows() {
         window->width, window->height, window->private_browsing,
         window->partition,
         window->profile.empty() ? String() : String(window->profile),
-        window->app, window->app_id, window->captured,
+        window->app, window->app_id, window->captured, window->discarded,
         toplevel_id == browser_toplevel_ids_.end() ? String()
                                                    : toplevel_id->value,
         window->parent.empty() ? String() : String(window->parent), window->x,
@@ -3173,7 +3288,8 @@ void DomicileHost::ListBrowserWindows() {
         window->wants_maximized, window->wants_minimized,
         window->wants_fullscreen, window->urgent, window->ignores_pointer,
         window->shape.empty() ? String() : window->shape,
-        window->opener.empty() ? String() : window->opener));
+        window->opener.empty() ? String() : window->opener,
+        window->agent.empty() ? String() : String(window->agent)));
   }
   browser_windows_ = MakeGarbageCollected<FrozenArray<DomicileBrowserWindow>>(
       std::move(listed));
@@ -3182,6 +3298,26 @@ void DomicileHost::ListBrowserWindows() {
 }
 
 // Stored, like WindowsChanged.
+void DomicileHost::MemoryShort(const Vector<String>& windows,
+                               MemoryShortCallback handled) {
+  const AtomicString& type = domicile_event_names::Browsermemoryshort();
+  if (!HasEventListeners(type)) {
+    std::move(handled).Run(false);
+    return;
+  }
+  auto ids = std::make_unique<JSONArray>();
+  for (const String& id : windows) {
+    ids->PushString(id);
+  }
+  MessageEvent* event = MessageEvent::Create();
+  event->initMessageEvent(type, /*bubbles=*/false, /*cancelable=*/false,
+                          ids->ToJSONString(), /*origin=*/nullptr,
+                          /*last_event_id=*/String(), /*source=*/nullptr,
+                          /*ports=*/nullptr);
+  DispatchEvent(*event);
+  std::move(handled).Run(true);
+}
+
 void DomicileHost::ProfilesChanged(
     Vector<domicile::mojom::blink::BrowserProfilePtr> profiles,
     const String& default_profile,
@@ -3302,6 +3438,17 @@ void DomicileHost::CompositorReplaced() {
 void DomicileHost::PortalRequests(const String& message) {
   portal_requests_ = message;
   DispatchPortalRequests();
+}
+
+// A MessageEvent, as System() builds one. An answer rather than state, so a
+// listener added later hears only the answers after it.
+void DomicileHost::ConfigOverrides(const String& message) {
+  MessageEvent* event = MessageEvent::Create();
+  event->initMessageEvent(domicile_event_names::Configoverrides(),
+                          /*bubbles=*/false, /*cancelable=*/false, message,
+                          /*origin=*/nullptr, /*last_event_id=*/String(),
+                          /*source=*/nullptr, /*ports=*/nullptr);
+  DispatchEvent(*event);
 }
 
 // A MessageEvent, as System() builds one.

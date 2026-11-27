@@ -1,6 +1,9 @@
 // Opens each crowded bar popover from the built Storybook, in Chromium through
-// Playwright, on a small screen. Fails a popover that runs off the screen, or
-// whose last row can't be scrolled into view. See the package README.
+// Playwright, on a small screen. Fails a popover that runs off the screen,
+// covers the bar or stands taller than {@link SCREEN_SHARE} of the screen, whose last row can't be scrolled into view, that scrolls sideways, whose
+// buttons are too narrow for their labels, whose drawer's height jumps as it
+// opens or shuts, or that moves when put in another state and back. See the
+// package README.
 //
 //   bun src/harness.ts [--chromium <path>] [<crowd>...]
 
@@ -18,8 +21,20 @@ const SCREEN = { height: 600, width: 1024 };
 /** The desk: the laptop beside a 2560x1440 monitor. */
 const DESK = { height: 1440, width: SCREEN.width + 2560 };
 
+/** The most of the screen's height a panel may take. */
+const SCREEN_SHARE = 0.6;
+
 /** Longer than any panel takes to open. */
 const SETTLE_TIMEOUT_MS = 10_000;
+
+/** Longer than a row takes to arrive. */
+const ARRIVE_MS = 1500;
+
+/** Longer than every row takes to leave a panel and its height to follow. */
+const SHRINK_MS = 4000;
+
+/** Longer than a drawer takes to open or shut. */
+const DRAWER_MS = 1500;
 
 const STORYBOOK = resolve(import.meta.dir, "../storybook-static");
 
@@ -95,19 +110,36 @@ const checked = async (
   const page = await browser.newPage({ viewport: DESK });
   await page.goto(url);
   await page.locator("[data-crowd-scene]").waitFor();
-  for (const name of crowd.presses) {
-    await page.getByRole("button", { exact: true, name }).first().click();
-    await settled(page);
-  }
+  await pressed(page, crowd.presses);
   const panel = page.locator("[role=dialog][data-open]").last();
   const problems = [
     ...offScreen("the panel", await boxOf(panel)),
+    ...tooTall(await boxOf(panel)),
+    ...coversBar(
+      await boxOf(panel),
+      await boxOf(page.locator("[data-crowd-bar]")),
+    ),
+    ...(crowd.drawer === undefined
+      ? []
+      : await drawerProblems(panel, crowd.drawer)),
+    ...(crowd.toggle === undefined
+      ? []
+      : await toggleProblems(page, panel, crowd.toggle)),
+    ...(crowd.arrive === undefined
+      ? []
+      : await arriveProblems(page, panel, crowd.arrive)),
     ...(await lastRowProblems(page, panel, crowd.last)),
+    ...(await sidewaysProblems(panel)),
+    ...(await squeezedButtons(panel)),
+    // Last: it empties the panel.
+    ...(crowd.shrink === undefined
+      ? []
+      : await shrinkProblems(panel, crowd.shrink)),
   ];
   await page.close();
   if (problems.length === 0) {
     said(
-      `PASS: ${crowd.id}: fits a ${describe(SCREEN)} screen beside a taller one, and scrolls`,
+      `PASS: ${crowd.id}: fits ${percent(SCREEN_SHARE)} of a ${describe(SCREEN)} screen beside a taller one, and scrolls${crowd.drawer === undefined ? "" : `; its ${crowd.drawer} drawer grows and shrinks`}${crowd.toggle === undefined ? "" : "; it holds still when toggled"}${crowd.arrive === undefined ? "" : "; a row arriving moves the rows below smoothly"}${crowd.shrink === undefined ? "" : `; it shrinks when pressing ${crowd.shrink}`}`,
     );
     return true;
   } else {
@@ -117,6 +149,72 @@ const checked = async (
     return false;
   }
 };
+
+/** Presses each button or menu item named in `names`, in turn. */
+const pressed = async (page: Page, names: readonly string[]) => {
+  for (const name of names) {
+    await page
+      .getByRole("button", { exact: true, name })
+      .or(page.getByRole("menuitem", { exact: true, name }))
+      .first()
+      .click();
+    await settled(page);
+  }
+};
+
+/**
+ * What in `panel` moves when `toggle` puts it in another state, and then back:
+ * the panel and each of its headings must keep their places.
+ */
+const toggleProblems = async (
+  page: Page,
+  panel: Locator,
+  { off, on }: NonNullable<Crowd["toggle"]>,
+): Promise<string[]> => {
+  const before = await layoutOf(panel);
+  await pressed(page, on);
+  const toggled = await layoutOf(panel);
+  await pressed(page, off);
+  const after = await layoutOf(panel);
+  return [
+    ...moved(`pressing ${on.join(", ")}`, before, toggled),
+    ...moved(`pressing ${off.join(", ")}`, toggled, after),
+  ];
+};
+
+/**
+ * Where `panel` and each heading in it are, by name, to the pixel. A heading's
+ * width is left out: it stretches to the controls beside it, which may change.
+ */
+const layoutOf = async (panel: Locator): Promise<Map<string, string>> => {
+  const headings = await Promise.all(
+    (await panel.getByRole("heading").all()).map(async (heading) => {
+      const { height, x, y } = await boxOf(heading);
+      return [
+        `"${await heading.innerText()}"`,
+        `${px(height)} high at ${px(x)},${px(y)}`,
+      ] as const;
+    }),
+  );
+  const { height, width, x, y } = await boxOf(panel);
+  return new Map([
+    ["the panel", `${px(width)}x${px(height)} at ${px(x)},${px(y)}`],
+    ...headings,
+  ]);
+};
+
+/** What moved or changed size between `before` and `after`, on `what`. */
+const moved = (
+  what: string,
+  before: Map<string, string>,
+  after: Map<string, string>,
+): string[] =>
+  [...before].flatMap(([name, place]) => {
+    const now = after.get(name);
+    return now === place
+      ? []
+      : [`${what} moves ${name} from ${place} to ${now ?? "nowhere"}`];
+  });
 
 /** Waits until every animation on `page` has ended. */
 const settled = (page: Page) =>
@@ -148,6 +246,23 @@ const offScreen = (what: string, box: Box): string[] => [
 ];
 
 /**
+ * Whether the panel at `box` stands taller than {@link SCREEN_SHARE} of the
+ * screen. A pixel over is rounding.
+ */
+const tooTall = (box: Box): string[] =>
+  box.height > SCREEN.height * SCREEN_SHARE + 1
+    ? [
+        `the panel is ${px(box.height)} high, over ${percent(SCREEN_SHARE)} of the screen's ${px(SCREEN.height)}`,
+      ]
+    : [];
+
+/** Whether the panel at `panel` covers the bar at `bar`, below it. */
+const coversBar = (panel: Box, bar: Box): string[] =>
+  panel.y < bar.y + bar.height
+    ? [`the panel covers ${px(bar.y + bar.height - panel.y)} of the bar`]
+    : [];
+
+/**
  * Why the row holding `text` is out of reach: scrolled to, it must be on the
  * screen and inside `panel`.
  */
@@ -168,6 +283,253 @@ const lastRowProblems = async (
     ...(inside ? [] : [`"${text}" is outside the panel`]),
   ];
 };
+
+/** Each part of `panel` that scrolls sideways, which a panel never does. */
+const sidewaysProblems = (panel: Locator): Promise<string[]> =>
+  panel.evaluate((root) =>
+    [root, ...root.querySelectorAll("*")]
+      .filter(
+        (element) =>
+          ["auto", "scroll"].includes(getComputedStyle(element).overflowX) &&
+          element.scrollWidth > element.clientWidth,
+      )
+      .map(
+        (element) =>
+          `the panel scrolls sideways: <${element.tagName.toLowerCase()}> holds ${(element.scrollWidth - element.clientWidth).toString()}px more than its width`,
+      ),
+  );
+
+/**
+ * Each button in `panel` whose label runs past its edges, such as one that
+ * wraps, by its name. A pixel over is rounding, not a squeezed label.
+ */
+const squeezedButtons = async (panel: Locator): Promise<string[]> => {
+  const squeezed = await panel
+    .getByRole("button")
+    .evaluateAll((buttons) =>
+      buttons
+        .filter(
+          (button) =>
+            button.scrollHeight > button.clientHeight + 1 ||
+            button.scrollWidth > button.clientWidth + 1,
+        )
+        .map(
+          (button) =>
+            button.getAttribute("aria-label") ??
+            (button as HTMLElement).innerText,
+        ),
+    );
+  return squeezed.map(
+    (name) => `the "${name}" button is too narrow for its label`,
+  );
+};
+
+/**
+ * Why the drawer behind `panel`'s `name` disclosure doesn't grow and shrink:
+ * pressed open and then shut, its height must pass between nothing and its
+ * full height each way, not jump.
+ */
+const drawerProblems = async (
+  panel: Locator,
+  name: string,
+): Promise<string[]> => {
+  const trigger = panel.getByRole("button", { exact: true, name });
+  const opening = await heightsAfterPressing(trigger, undefined);
+  const full = opening.at(-1);
+  // base-ui names the drawer on its trigger only while it is open.
+  const drawer = await trigger.getAttribute("aria-controls");
+  if (full === undefined || full <= 1 || drawer === null) {
+    return [`the ${name} drawer did not open`];
+  } else {
+    const closing = await heightsAfterPressing(trigger, drawer);
+    const shut = closing.at(-1);
+    return [
+      ...(passesBetween(opening, full)
+        ? []
+        : [`the ${name} drawer jumped to ${px(full)} as it opened`]),
+      ...(passesBetween(closing, full)
+        ? []
+        : [`the ${name} drawer jumped from ${px(full)} as it shut`]),
+      ...(shut === undefined || shut > 1
+        ? [`the ${name} drawer did not shut`]
+        : []),
+    ];
+  }
+};
+
+/**
+ * Why the row holding `text` in `panel` doesn't move down smoothly as a row
+ * arrives above it: it must pass through places between where it was and
+ * where it ends, never moving more than half the way in one frame.
+ */
+const arriveProblems = async (
+  page: Page,
+  panel: Locator,
+  text: string,
+): Promise<string[]> => {
+  const places = await panel
+    .getByText(text, { exact: true })
+    .evaluate(async (row, lengthMs) => {
+      const frame = () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      const places = [row.getBoundingClientRect().y];
+      window.dispatchEvent(new Event("crowd:arrive"));
+      const start = performance.now();
+      while (performance.now() - start < lengthMs) {
+        await frame();
+        places.push(row.getBoundingClientRect().y);
+      }
+      return places;
+    }, ARRIVE_MS);
+  await settled(page);
+  const first = places[0] ?? 0;
+  const last = places.at(-1) ?? 0;
+  const steepest = Math.max(
+    ...places.slice(1).map((place, index) => place - (places[index] ?? 0)),
+  );
+  if (last - first <= 1) {
+    return [`a row arriving above "${text}" did not move it down`];
+  } else if (steepest > (last - first) / 2) {
+    return [
+      `a row arriving above "${text}" moves it ${px(steepest)} in one frame, from ${px(first)} to ${px(last)}`,
+    ];
+  } else {
+    return [];
+  }
+};
+
+/**
+ * Why `panel` doesn't follow its rows as pressing `name` takes them out: its
+ * height must shrink, never by more than half the way in one frame, and it
+ * must never scroll sideways as they go.
+ */
+const shrinkProblems = async (
+  panel: Locator,
+  name: string,
+): Promise<string[]> => {
+  const { heights, sideways } = await panel.evaluate(
+    async (root, { lengthMs, name }) => {
+      const button = [...root.querySelectorAll("button")].find(
+        (found) => found.innerText.trim() === name,
+      );
+      if (button === undefined) {
+        throw new Error(`popover-harness: no ${name} button in the panel`);
+      }
+      const heights: number[] = [root.getBoundingClientRect().height];
+      // Observed after the popover's own observer, as each frame is drawn: what
+      // it shows, with any easing the popover started.
+      const observer = new ResizeObserver(() => {
+        heights.push(root.getBoundingClientRect().height);
+      });
+      // The most each part held past its width, by its tag.
+      const sideways = new Map<Element, number>();
+      const frame = () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      observer.observe(root);
+      button.click();
+      const start = performance.now();
+      while (performance.now() - start < lengthMs) {
+        await frame();
+        for (const element of [root, ...root.querySelectorAll("*")]) {
+          const over = element.scrollWidth - element.clientWidth;
+          if (
+            ["auto", "scroll"].includes(getComputedStyle(element).overflowX) &&
+            over > (sideways.get(element) ?? 0)
+          ) {
+            sideways.set(element, over);
+          }
+        }
+      }
+      observer.disconnect();
+      return {
+        heights,
+        sideways: [...sideways].map(
+          ([element, over]) =>
+            `<${element.tagName.toLowerCase()}> holds up to ${over.toString()}px more than its width`,
+        ),
+      };
+    },
+    { lengthMs: SHRINK_MS, name },
+  );
+  const first = heights[0] ?? 0;
+  const last = heights.at(-1) ?? 0;
+  const steepest = Math.max(
+    ...heights.slice(1).map((height, index) => (heights[index] ?? 0) - height),
+  );
+  return [
+    ...sideways.map(
+      (problem) => `pressing ${name} scrolls the panel sideways: ${problem}`,
+    ),
+    ...heightProblems(name, first, last, steepest),
+  ];
+};
+
+/**
+ * Why a panel's height going from `first` to `last`, by at most `steepest` in
+ * a frame, after pressing `name`, is no shrink.
+ */
+const heightProblems = (
+  name: string,
+  first: number,
+  last: number,
+  steepest: number,
+): string[] => {
+  if (first - last <= 1) {
+    return [`pressing ${name} did not shrink the panel from ${px(first)}`];
+  } else if (steepest > (first - last) / 2) {
+    return [
+      `pressing ${name} drops the panel's height ${px(steepest)} in one frame, from ${px(first)} to ${px(last)}`,
+    ];
+  } else {
+    return [];
+  }
+};
+
+/** Whether any of `heights` is clearly between nothing and `full`. */
+const passesBetween = (heights: readonly number[], full: number) =>
+  heights.some((height) => height > 1 && height < full - 1);
+
+/**
+ * Presses `trigger` and reads the height of `drawer`, or of the drawer it
+ * names once pressed, on every frame for {@link DRAWER_MS}: 0 while there is
+ * none.
+ */
+const heightsAfterPressing = (
+  trigger: Locator,
+  drawer: string | undefined,
+): Promise<number[]> =>
+  trigger.evaluate(
+    async (button, { drawer, lengthMs }) => {
+      const frame = () =>
+        new Promise<number>((resolve) => {
+          requestAnimationFrame(resolve);
+        });
+      const height = () => {
+        const id = drawer ?? button.getAttribute("aria-controls");
+        const found = id === null ? null : document.getElementById(id);
+        return found === null ? 0 : found.getBoundingClientRect().height;
+      };
+      const heights: number[] = [];
+      const start = performance.now();
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      while (performance.now() - start < lengthMs) {
+        await frame();
+        heights.push(height());
+      }
+      return heights;
+    },
+    { drawer, lengthMs: DRAWER_MS },
+  );
+
+const percent = (share: number) => `${Math.round(share * 100).toString()}%`;
 
 const px = (value: number) => `${Math.round(value).toString()}px`;
 

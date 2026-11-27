@@ -799,12 +799,16 @@ from the agent.
 
 If focus follows the pointer, a keyboard focus change can be undone at once:
 the old window is still under the pointer. Move the pointer with
-`domicile.pointer.warp(x, y)`, in page coordinates (`clientX`/`clientY`).
+`domicile.pointer.warp(x, y, onlyOver, unlessOver)`, in page coordinates
+(`clientX`/`clientY`).
 
+- The pointer moves only while it is over one of the `onlyOver` boxes and not
+  over the `unlessOver` box. The engine checks, since the page cannot see the
+  pointer over a browser window's page.
 - Points outside the page are clamped.
 - In a nested run inside another compositor, nothing moves.
 - `shell-manganese` warps on its own focus changes (keyboard-driven, or a new
-  window taking focus) when the pointer is not already over the window.
+  window taking focus) only when the pointer is over another window.
 
 ### Window scale on several monitors
 
@@ -913,9 +917,21 @@ bindKeys(
   every page bound. `send-shell` fails with the `Err`, or when no page answers
   within a second. A page that cannot listen calls `report`, which logs by
   default.
+- `onWindowCommand(args, window)` runs a command on a given window rather than
+  the user's focus: `send-shell --window`, and every agent's `send_shell`,
+  on the agent's own window. `window` is an app id or a browser window's engine id, as
+  seats name windows. Run only what makes sense on that window, and `Err` the
+  rest. Without it, the page never hears such a command.
 - `commands` describes what `onCommand` runs: `domicile list-shell-commands`
   (and `send-shell --help`) prints it. `domicile list-bindings` prints your
   keybindings, which `bindKeys` describes for you.
+- Tab completion of `send-shell` reads each `usage`: `a|b` is a choice,
+  `[...]` optional, `<name>` a value. Call a window id `<window>` and a
+  display `<display>` to have them completed.
+  [`domicile completions`](CLI.md#domicile-completions-bashzshfishnushellelvishpowershell)
+- `onComplete(args)` returns the words that can follow `args`, for any other
+  placeholder: manganese returns its workspace names for `workspace`.
+  Without it, the page never hears words to complete.
 - It returns `{ setMode, unbind }`. `setMode` keeps one mode across a desktop
   of several pages.
 - Command meanings are yours. Describe them in `commands`, and in your README,

@@ -188,6 +188,10 @@ class CORE_EXPORT HTMLWebViewElement final
   void ReplaceMisspelling(const DomicileContextMenuEvent& menu,
                           const String& word,
                           ExceptionState&);
+  // Runs `menu`'s extension entry `item`. Throws as RunContextMenuAction.
+  void RunContextMenuExtensionItem(const DomicileContextMenuEvent& menu,
+                                   int32_t item,
+                                   ExceptionState&);
 
   // Releases a dispatched file chooser event once answered. See
   // `waiting_choosers_`.
@@ -200,6 +204,17 @@ class CORE_EXPORT HTMLWebViewElement final
   void setSitePermission(const String& permission,
                          const String& setting,
                          ExceptionState&);
+  // How the page blocks ads and trackers, from SitePrivacyChanged. Empty
+  // strings and 0 for a page that is not a website.
+  const String& privacySite() const { return privacy_site_; }
+  const String& blockAdsAndTrackers() const { return block_ads_and_trackers_; }
+  const String& blockAdsAndTrackersSetFor() const {
+    return block_ads_and_trackers_set_for_;
+  }
+  int32_t blockedCount() const { return blocked_count_; }
+  void setBlockAdsAndTrackers(const String& mode,
+                              const String& scope,
+                              ExceptionState&);
   ScriptPromise<DomicileMediaDevices> mediaDevices(ScriptState*,
                                                    ExceptionState&);
   ScriptPromise<IDLUndefined> setMediaDevice(ScriptState*,
@@ -281,6 +296,8 @@ class CORE_EXPORT HTMLWebViewElement final
   void DispatchSuppressedFocus(mojom::blink::FocusType);
 
   LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
+  void AttachLayoutTree(AttachContext&) override;
+  void DidRecalcStyle(const StyleRecalcChange) override;
 
   // `src` never reaches HTMLFrameElementBase, which would navigate the
   // placeholder frame. Everything else does.
@@ -296,9 +313,17 @@ class CORE_EXPORT HTMLWebViewElement final
   // `insertBefore` does) asks for it again from its new frame.
   void RemovedFrom(ContainerNode& insertion_point) override;
 
+  // Shows the window's unloaded page if this is rendered. See
+  // `shows_when_rendered_`.
+  void ShowIfRendered();
+  void ShowSoonIfUnloaded();
+
+  // Whether it is laid out and not `visibility: hidden`.
+  bool IsRendered() const;
+
   // Requests a guest for the placeholder frame. Does nothing if there already
   // is one or there is no placeholder yet.
-  void RequestGuest();
+  void RequestGuest(bool rendered);
 
   // Sends the current `src` to the guest. Safe before the attach finishes.
   void NavigateGuest();
@@ -337,9 +362,9 @@ class CORE_EXPORT HTMLWebViewElement final
   // KeyboardEvent on this element. See UnhandledModifierUp in
   // components/domicile/mojom/web_view_guest.mojom.
   void UnhandledModifierUp(const String& key, const String& code) override;
-  // The window this shows has a new page, in another browser profile: shows
-  // it in a new placeholder. See WebViewGuestClient.Replaced.
-  void Replaced() override;
+  // The window this shows has a new page: shows it in a new placeholder, an
+  // unloaded one only once this is rendered. See WebViewGuestClient.Replaced.
+  void Replaced(bool unloaded) override;
 
   // Dispatches `domicile-key-delivered`, which names no key. See KeyDelivered
   // in components/domicile/mojom/web_view_guest.mojom.
@@ -392,6 +417,9 @@ class CORE_EXPORT HTMLWebViewElement final
   void SitePermissionsChanged(
       Vector<domicile::mojom::blink::WebViewSitePermissionPtr> permissions)
       override;
+
+  void SitePrivacyChanged(
+      domicile::mojom::blink::WebViewSitePrivacyPtr privacy) override;
 
   // Dispatches `domicile-device-request`. If no listener calls
   // `preventDefault()`, the request is canceled after dispatch. See
@@ -504,6 +532,10 @@ class CORE_EXPORT HTMLWebViewElement final
                    HTMLWebViewElement>
       client_receiver_;
 
+  // Whether the window's page was unloaded while this was not rendered.
+  // Showing a page loads it, so this has no frame until it is rendered.
+  bool shows_when_rendered_ = false;
+
   // The browser's last reports. Defaults match a fresh guest, for which the
   // browser sends nothing. `security_` is empty, not "neutral", until the
   // browser reports one.
@@ -579,6 +611,12 @@ class CORE_EXPORT HTMLWebViewElement final
 
   // See sitePermissions().
   Vector<std::pair<String, String>> site_permissions_;
+
+  // See privacySite().
+  String privacy_site_ = g_empty_string;
+  String block_ads_and_trackers_ = g_empty_string;
+  String block_ads_and_trackers_set_for_ = g_empty_string;
+  int32_t blocked_count_ = 0;
 };
 
 }  // namespace blink

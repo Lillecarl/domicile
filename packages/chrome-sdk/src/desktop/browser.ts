@@ -1,6 +1,7 @@
 // The desk's browser windows, which the browser holds and a shell draws with
 // `<webview window="id">`, and fetches with the browser's cookies.
 
+import { z } from "zod";
 import type {
   DomicileBrowserProfile,
   DomicileBrowserWindow,
@@ -8,11 +9,16 @@ import type {
   DomicileFetchResponse,
   DomicileHost,
 } from "../domicile-host";
+import type { ConfigNamespace } from "./config";
+import { changedExtensions, resetInConfig, switchInConfig } from "./config";
 import type { Defined } from "./defined";
 import { defined } from "./defined";
 import { memoizeLast } from "./memoize-last";
 import type { On } from "./subscribe";
 import { hostEvent, on } from "./subscribe";
+
+// `browsermemoryshort`'s `data`: window ids, hidden longest first.
+const memoryShortSchema = z.array(z.string());
 
 export type BrowserWindow = Defined<DomicileBrowserWindow>;
 
@@ -92,6 +98,13 @@ export type BrowserListeners = {
    * in one.
    */
   profilesChange: () => void;
+  /**
+   * The computer is short of memory, every few seconds while it is. `ids` are
+   * the windows whose pages may be unloaded, the one hidden longest first.
+   * The engine unloads the first one's page, unless the shell listens: the
+   * shell then decides what to `discard`.
+   */
+  memoryShort: (ids: readonly string[]) => void;
 };
 
 export type Browser = {
@@ -139,16 +152,26 @@ export type Browser = {
    */
   pin: (site: string, profile: string) => Promise<void>;
   /**
-   * Switch extension `id` on or off in browser profile `profile`, kept
-   * across restarts; it keeps its data while off. Rejects with an
-   * `OperationError` for one in the profile's
-   * {@link BrowserProfile.lockedExtensions}, which only the config switches.
+   * Switch extension `id` on or off in browser profile `profile`; it keeps
+   * its data while off. One in the profile's
+   * {@link BrowserProfile.lockedExtensions}, which the config switches, is
+   * switched by a temporary change to the config's list, until the desktop
+   * restarts or the config changes the list ({@link Browser.changedExtensions});
+   * any other is kept across restarts. Rejects for a profile not listed or
+   * still loading, or an extension it does not have.
    */
   setExtensionEnabled: (
     profile: string,
     id: string,
     enabled: boolean,
   ) => Promise<void>;
+  /**
+   * The extensions a temporary change switches in browser profile `profile`
+   * apart from the config, sorted.
+   */
+  changedExtensions: (profile: string) => Promise<readonly string[]>;
+  /** Puts extension `id` in `profile` back as the config switches it. */
+  resetExtension: (profile: string, id: string) => Promise<void>;
   /** Open a browser window, in the profile its site opens in by default. */
   open: (url: string, options?: BrowserWindowOptions) => void;
   /** Open a window in the default private profile. */
@@ -182,6 +205,15 @@ export type Browser = {
   clickMatch: (id: string, selector: string) => Promise<boolean>;
   /** Close window `id`. Its page may ask to stay. */
   close: (id: string) => void;
+  /**
+   * Unload window `id`'s page to free its memory. Its history and scroll
+   * stay, and it loads again when a `<webview>` next shows the window; what
+   * was typed into it is not kept. A mounted `<webview>` that is not rendered
+   * (`display: none`) does not show it. A window a `<webview>` shows, an
+   * extension's popup window, a DevTools window, and an app module's or
+   * Electron app's stay loaded.
+   */
+  discard: (id: string) => void;
   /**
    * The user clicked entry `command` (its `id`) of window `id`'s menu bar;
    * its Electron app runs the entry.
@@ -231,6 +263,7 @@ export type BrowserHost = Pick<
   | "clickBrowserWindowMenu"
   | "closeBrowserWindow"
   | "countBrowserWindowMatches"
+  | "discardBrowserWindow"
   | "fetchWithCookies"
   | "openAppWindow"
   | "openBrowserWindow"
@@ -249,7 +282,10 @@ export type WindowStateReport = {
   readonly fullscreen: boolean;
 };
 
-export const browser = (host: BrowserHost): Browser => {
+export const browser = (
+  host: BrowserHost,
+  config: ConfigNamespace,
+): Browser => {
   const windowsOf = memoizeLast(
     (list: readonly DomicileBrowserWindow[] | null) =>
       list?.filter(({ parent }) => parent === null).map(defined),
@@ -264,6 +300,8 @@ export const browser = (host: BrowserHost): Browser => {
     answerPopupMenu: (id, command) => {
       host.answerBrowserWindowPopupMenu(id, command);
     },
+    changedExtensions: async (profile) =>
+      changedExtensions(await config.overrides(), profile),
     clickMatch: (id, selector) => host.clickBrowserWindowMatch(id, selector),
     clickMenu: (id, command) => {
       host.clickBrowserWindowMenu(id, command);
@@ -273,6 +311,9 @@ export const browser = (host: BrowserHost): Browser => {
     },
     countMatches: (id, selector) =>
       host.countBrowserWindowMatches(id, selector),
+    discard: (id) => {
+      host.discardBrowserWindow(id);
+    },
     fetch: (
       url,
       {
@@ -294,6 +335,10 @@ export const browser = (host: BrowserHost): Browser => {
     on: on<BrowserListeners>({
       change: (listener) =>
         hostEvent(host, "browserwindowschanged", () => listener()),
+      memoryShort: (listener) =>
+        hostEvent(host, "browsermemoryshort", (event) =>
+          listener(memoryShortSchema.parse(JSON.parse(event.data))),
+        ),
       profilesChange: (listener) =>
         hostEvent(host, "browserprofileschanged", () => listener()),
     }),
@@ -314,8 +359,19 @@ export const browser = (host: BrowserHost): Browser => {
     reopen: (id, profile) => {
       host.reopenBrowserWindow(id, profile);
     },
-    setExtensionEnabled: (profile, id, enabled) =>
-      host.setBrowserProfileExtensionEnabled(profile, id, enabled),
+    resetExtension: async (profile, id) => {
+      await resetInConfig(config, profile, id);
+    },
+    setExtensionEnabled: async (profile, id, enabled) => {
+      const switches = host.browserProfiles?.find(
+        (each) => each.id === profile,
+      );
+      if (switches?.lockedExtensions.includes(id) === true) {
+        await switchInConfig(config, switches, id, enabled);
+      } else {
+        await host.setBrowserProfileExtensionEnabled(profile, id, enabled);
+      }
+    },
     setWindowState: (id, { fullscreen, maximized, minimized }) => {
       host.setBrowserWindowState(id, maximized, minimized, fullscreen);
     },

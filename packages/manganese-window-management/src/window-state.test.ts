@@ -20,6 +20,8 @@ import {
   screenOfApp,
   shutIdsOf,
   WindowAction,
+  windowActedOn,
+  windowNamed,
   workspaceHere,
   workspaceNamed,
   workspaceOn,
@@ -52,12 +54,14 @@ const listed = (
     width: 0,
   },
 ) => ({
+  agent: undefined,
   appId: "",
   height: popup.height,
   id,
   ignoresPointer: false,
   isApp: false,
   isCaptured: false,
+  isDiscarded: false,
   isHidden: false,
   isPrivate: false,
   menu: undefined,
@@ -1022,6 +1026,80 @@ describe("the workspaces", () => {
       APP("browser"),
     ]);
     expect(activeIdOf(state)).toBe(APP("kitty"));
+  });
+
+  it("opens a window an agent holds in a group of its own beside the user's", () => {
+    // Not a tab behind the user's, where nobody could watch the agent.
+    const state = reduce(
+      desktop("kitty"),
+      WindowAction.AppAppeared("browser", "browser", undefined, true),
+    );
+
+    expect(workspaceHere(state).tiling.root).toMatchObject({
+      children: [
+        { children: [{ id: APP("kitty") }], layout: Layout.Tabbed },
+        { children: [{ id: APP("browser") }], layout: Layout.Tabbed },
+      ],
+      layout: Layout.SplitH,
+    });
+  });
+
+  it("leaves the user's floating window whole when an agent's window opens", () => {
+    const before = reduce(
+      desktop("kitty"),
+      WindowAction.ContainerSplit(Axis.Vertical),
+      WindowAction.AppAppeared("notes", "notes"),
+      WindowAction.ParentFocused(),
+      // The tab group floats, so a new window tabs into it.
+      WindowAction.FloatToggled(),
+    );
+
+    const state = reduce(
+      before,
+      WindowAction.AppAppeared("browser", "browser", undefined, true),
+    );
+
+    // It tabs into the float, whose box stays as the user left it.
+    const [float] = workspaceHere(state).floats;
+    expect(float?.root).toMatchObject({ layout: Layout.Tabbed });
+    expect(float?.width).toBe(workspaceHere(before).floats[0]?.width);
+    expect(activeIdOf(state)).toBe(APP("notes"));
+  });
+
+  it("opens a browser window an agent opened beside the user's, keeping their focus", () => {
+    const state = reduce(
+      desktop("kitty"),
+      WindowAction.BrowserWindowsListed([
+        { ...listed("1", "https://example.com/"), agent: "agent-3" },
+      ]),
+    );
+
+    expect(workspaceHere(state).tiling.root).toMatchObject({
+      children: [
+        { children: [{ id: APP("kitty") }] },
+        { children: [{ id: BROWSER("1") }] },
+      ],
+      layout: Layout.SplitH,
+    });
+    expect(activeIdOf(state)).toBe(APP("kitty"));
+  });
+
+  it("keeps the user's focus when an agent's browser window is listed again", () => {
+    const opened = reduce(
+      desktop("kitty"),
+      WindowAction.BrowserWindowsListed([
+        { ...listed("1", "https://example.com/"), agent: "agent-3" },
+      ]),
+    );
+
+    const state = reduce(
+      opened,
+      WindowAction.BrowserWindowsListed([
+        { ...listed("1", "https://example.com/a"), agent: "agent-3" },
+      ]),
+    );
+
+    expect(workspaceHere(state).tiling).toEqual(workspaceHere(opened).tiling);
   });
 
   it("opens a floating window an agent holds without taking the user's focus", () => {
@@ -3044,11 +3122,83 @@ describe("the overview", () => {
     expect(reduce(before, action)).toBe(before);
   });
 
+  it("moves a window beside the focused one without moving the focus", () => {
+    // An agent's window, sent off while the user works in theirs.
+    const state = reduce(
+      desktop("editor", "kitty", "notes"),
+      WindowAction.WindowSelected(APP("editor")),
+      WindowAction.WindowMovedToWorkspace(APP("kitty"), "3"),
+    );
+
+    expect(windowsOn(workspaceNamed(state, "3"))).toStrictEqual([APP("kitty")]);
+    expect(activeIdOf(state)).toBe(APP("editor"));
+    expect(currentHere(state)).toBe("1");
+  });
+
+  it("finds a window on a workspace by the name seats give it", () => {
+    const state = reduce(
+      desktop("app-3"),
+      WindowAction.BrowserWindowsListed([listed("7", "https://example.com")]),
+    );
+
+    expect(windowNamed(state, "app-3")).toBe(APP("app-3"));
+    expect(windowNamed(state, "7")).toBe(BROWSER("7"));
+    expect(windowNamed(state, "app-9")).toBeUndefined();
+  });
+
   it("leaves a window dropped back on its own workspace", () => {
     const before = reduce(onOneAndThree(), WindowAction.OverviewToggled());
 
     expect(
       reduce(before, WindowAction.WindowMovedToWorkspace(APP("kitty"), "1")),
+    ).toBe(before);
+  });
+});
+
+describe("a command on a named window", () => {
+  it("floats the window it names, keeping the user's focus", () => {
+    const state = reduce(
+      desktop("editor", "kitty"),
+      WindowAction.WindowSelected(APP("editor")),
+      windowActedOn(APP("kitty"), WindowAction.FloatToggled()),
+    );
+
+    expect(
+      workspaceHere(state).floats.flatMap(({ root }) => windowsIn(root)),
+    ).toStrictEqual([APP("kitty")]);
+    expect(activeIdOf(state)).toBe(APP("editor"));
+  });
+
+  it("acts on a window on a hidden workspace without showing it", () => {
+    // kitty on 1, foot on 3, which the user is on.
+    const state = reduce(
+      desktop("kitty"),
+      WindowAction.WorkspaceSelected("3"),
+      WindowAction.AppAppeared("foot", "foot"),
+      windowActedOn(APP("kitty"), WindowAction.WindowSentToWorkspace("5")),
+    );
+
+    expect(windowsOn(workspaceNamed(state, "5"))).toStrictEqual([APP("kitty")]);
+    expect(currentHere(state)).toBe("3");
+    expect(activeIdOf(state)).toBe(APP("foot"));
+  });
+
+  it("does nothing for a window on no workspace", () => {
+    const before = desktop("editor");
+
+    expect(
+      reduce(before, windowActedOn(APP("gone"), WindowAction.FloatToggled())),
+    ).toBe(before);
+  });
+
+  it("runs only a command on the focused window", () => {
+    const before = desktop("editor", "kitty");
+
+    expect(
+      reduce(
+        before,
+        windowActedOn(APP("kitty"), WindowAction.WorkspaceSelected("2")),
+      ),
     ).toBe(before);
   });
 });

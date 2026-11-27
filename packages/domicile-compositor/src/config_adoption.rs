@@ -9,12 +9,13 @@ use std::time::Instant;
 use tracing::{debug, error, warn};
 
 use domicile_config::{
-    BrowserConfig, ExtensionsConfig, IdleConfig, KeyRepeat, KeyboardConfig, Keymap, LockConfig,
-    Omit, ThemeMode,
+    BrowserConfig, Config, ExtensionsConfig, IdleConfig, KeyRepeat, KeyboardConfig, Keymap,
+    LockConfig, Omit, ThemeMode,
 };
 use domicile_host::keymaps::Listed;
 use domicile_host::Host;
 use domicile_protocol::{KeymapChoice, Theme};
+use smithay::reexports::wayland_server::DisplayHandle;
 
 use crate::file_indexing::Heard;
 use crate::idle::Idle;
@@ -67,11 +68,29 @@ pub fn hand_over_the_browser_profiles(host: &mut Host, browser: &BrowserConfig) 
                 color: String::from(profile.color),
                 private: profile.private,
                 extensions: profile.extensions.clone(),
+                protections: domicile_protocol::BrowserProtections {
+                    block_third_party_cookies: profile.protections.block_third_party_cookies,
+                    global_privacy_control: profile.protections.global_privacy_control,
+                    hide_local_ip_address: profile.protections.hide_local_ip_address,
+                    remove_tracking_from_links: profile.protections.remove_tracking_from_links,
+                    hide_device_details: profile.protections.hide_device_details,
+                    block_ads_and_trackers: match profile.ad_blocking() {
+                        domicile_config::AdBlocking::Standard => {
+                            domicile_protocol::AdBlocking::Standard
+                        }
+                        domicile_config::AdBlocking::Strict => {
+                            domicile_protocol::AdBlocking::Strict
+                        }
+                        domicile_config::AdBlocking::Off => domicile_protocol::AdBlocking::Off,
+                    },
+                },
             })
             .collect(),
         browser.default_profile.clone(),
         browser.default_private_profile.clone(),
         browser.sites.clone(),
+        browser.block_lists.clone(),
+        browser.block_rules.clone(),
     );
 }
 
@@ -101,6 +120,43 @@ pub fn hand_over_the_shell_config(host: &mut Host, keys: BTreeMap<String, u32>, 
 }
 
 impl DomicileCompositor {
+    /// Takes up the live config after it changed from `was`: a reload of the
+    /// file, or a temporary change ([`crate::config_overrides`]).
+    pub fn take_up_the_changed_config(&mut self, dh: &DisplayHandle, was: &Config) {
+        // A reload may have ended some; the watchers hear either way.
+        *self.hub.config_overrides.lock().unwrap() = self.overrides_on_the_wire();
+        self.hub.outbound.watched();
+        // Processes started after the change get the new terminal.
+        domicile_host::desk_terminal::set(self.config.current().terminal.clone());
+        let restated = Restatement::between(was, self.config.current());
+        let rebuilt = self.output_settings().and_then(|output| {
+            self.screens.reloaded_into(
+                &output,
+                &self.engine_displays,
+                &self.vendors,
+                &self.virtual_displays,
+            )
+        });
+        match rebuilt {
+            // No change: an undescribed config with no monitors read. The
+            // window controls the desktop, and rebuilding would undo its
+            // negotiated density.
+            Ok(None) => {}
+            Ok(Some(screens)) => self.adopt_the_desktop(dh, screens),
+            // A profile matches the plugged-in monitors but cannot be applied.
+            // The config is accepted; the current desktop stays.
+            Err(err) => error!(
+                %err,
+                "keeping the desktop that is up; the reloaded profile does not describe one \
+                 these monitors can make"
+            ),
+        }
+        // Then the rest of the config, after the desktop so scale is
+        // advertised against the settled outputs. Always runs: even a failed
+        // profile may come with keyboard changes.
+        self.adopt_the_rest_of_the_config(&restated);
+    }
+
     /// Apply everything in a reloaded config except the display list.
     ///
     /// [`Restatement`] computes what changed beforehand, so an unrelated edit

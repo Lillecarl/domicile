@@ -129,6 +129,11 @@ struct WebViewContextMenu {
   // suggestions for it, best first. See ReplaceMisspelling.
   string misspelled_word;
   array<string> spelling_suggestions;
+
+  // The items extensions add to this menu (chrome.contextMenus): a JSON array,
+  // as an Electron app's menu is (BrowserWindow.menu). See
+  // RunContextMenuExtensionItem.
+  string extension_items;
 };
 
 // What a shell's context menu can ask the browser to do.
@@ -210,6 +215,37 @@ enum WebViewPermissionAnswer {
 struct WebViewSitePermission {
   WebViewPermission permission;
   WebViewPermissionSetting setting;
+};
+
+// How a page's requests are checked for ads and trackers. See
+// docs/architecture/AD-BLOCKING.md.
+enum WebViewAdBlocking {
+  // Other sites' ads and trackers.
+  kStandard,
+  // The site's own too.
+  kStrict,
+  kOff,
+};
+
+// Where a page's ad blocking comes from.
+enum WebViewAdBlockingSetFor {
+  // Its profile's, from the config.
+  kProfile,
+  // Its site's, kept in the profile (SetAdBlockingForSite).
+  kSite,
+  // Its window's, until the window closes (SetAdBlockingForWindow).
+  kWindow,
+};
+
+// How the page blocks ads and trackers, for a shield in the address bar.
+struct WebViewSitePrivacy {
+  // The site a setting is kept for: the page's registrable domain, or its
+  // host when it has none.
+  string site;
+  WebViewAdBlocking block_ads_and_trackers;
+  WebViewAdBlockingSetFor set_for;
+  // Requests blocked since the page was committed.
+  int32 blocked;
 };
 
 // The kind of dialog a page in a <webview> opened with `alert()`, `confirm()`
@@ -529,6 +565,10 @@ interface WebViewGuestHost {
   // owned by the element. An unknown window, or one another element shows, is
   // refused: the pipes close and the browser logs why.
   //
+  // `rendered` is whether the element is. A window whose page is unloaded is
+  // not given to one that is not, as showing a page loads it: the client hears
+  // Replaced(true) and the pipes close. Ignored without `window`.
+  //
   // `extension_popup` is the element's `extensionpopup` attribute. The guest
   // is then an extension action popup, as in Chrome: popup view type, no tab
   // id, no window. Extensions that lay out differently in a popup (e.g.
@@ -553,6 +593,7 @@ interface WebViewGuestHost {
               pending_receiver<WebViewGuest> guest,
               pending_remote<WebViewGuestClient> client,
               string? window,
+              bool rendered,
               bool extension_popup,
               bool private_browsing,
               string profile,
@@ -598,7 +639,7 @@ interface WebViewGuestClient {
   PageChanged(url.mojom.Url url, WebViewSecurity security);
 
   // A key with Ctrl, Alt or Meta that the page did not handle, for browser
-  // shortcuts.
+  // shortcuts. Not one bound to an extension's command, which neither gets.
   //
   // Unhandled guest keys stop at the guest's WebContentsDelegate, so the shell
   // cannot see them otherwise. Comes from HandleKeyboardEvent, which runs only
@@ -858,6 +899,13 @@ interface WebViewGuestClient {
   // nothing until its first commit.
   SitePermissionsChanged(array<WebViewSitePermission> permissions);
 
+  // How the page blocks ads and trackers, or null for a page that is not http
+  // or https, which is never blocked.
+  //
+  // Sent when the page, its mode or its count changes; the count at most
+  // every quarter second. A fresh guest sends nothing until its first commit.
+  SitePrivacyChanged(WebViewSitePrivacy? privacy);
+
   // The page's renderer went away, or a new one replaced it, as after a
   // reload. `exit_code` is Chromium's code for the process: its wait status,
   // or the browser's own code when the browser ended it. 0 while running.
@@ -899,10 +947,12 @@ interface WebViewGuestClient {
 
   // The browser window this element shows was given a new page in its
   // place, in another browser profile (BrowserWindows.Reopen, or a link to
-  // another profile's site), and this pipe is closed. The element asks for
-  // the window again, in a new placeholder frame, and shows the new page.
-  // Whatever the old page asked the shell is withdrawn.
-  Replaced();
+  // another profile's site) or `unloaded` (BrowserWindows.Discard), and this
+  // pipe is closed. The element asks for the window again, in a new
+  // placeholder frame, and shows the new page: an unloaded one once the
+  // element is rendered, which loads it. Whatever the old page asked the shell
+  // is withdrawn.
+  Replaced(bool unloaded);
 };
 
 // One guest, for the life of the element that requested it.
@@ -998,6 +1048,11 @@ interface WebViewGuest {
   // first.
   ReplaceMisspelling(int32 menu, string word);
 
+  // Runs extension entry `item` of context menu `menu`'s `extension_items`.
+  // Ids as RunContextMenuAction's. An entry the menu does not have, or one
+  // that is gone or disabled since, is dropped.
+  RunContextMenuExtensionItem(int32 menu, int32 item);
+
   // Opens DevTools for the page in a new browser window. If DevTools is
   // already open, its window's element gets FocusRequested instead. See
   // //chrome/browser/domicile/domicile_devtools.h.
@@ -1027,6 +1082,16 @@ interface WebViewGuest {
   // page has no site, which happens when it navigates as the shell sends.
   SetSitePermission(WebViewPermission permission,
                     WebViewPermissionSetting setting);
+
+  // Sets how the page's site blocks ads and trackers, kept in its profile, or
+  // with null goes back to the profile's. Applies from the next request, so a
+  // shell reloads to see it. Dropped, and logged, when the page has no site,
+  // as SetSitePermission is.
+  SetAdBlockingForSite(WebViewAdBlocking? mode);
+
+  // As SetAdBlockingForSite, for this guest's pages only, until it closes.
+  // Over the site's. Null goes back to the site's or the profile's.
+  SetAdBlockingForWindow(WebViewAdBlocking? mode);
 
   // The cameras and microphones, ranked by the profile's preference. The
   // preference is the profile's, not the site's, so every guest lists the

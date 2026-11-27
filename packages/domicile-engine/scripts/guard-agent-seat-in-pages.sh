@@ -10,12 +10,18 @@
 # (guard-agent-seat-in-pages-compositor.py) sends the browser what the
 # compositor sends for an agent seat over the pages: `agent_input` with a
 # pointer at a desk point in the window, a press and release, and the keys
-# `a` and `b`. It asserts:
+# that type `a` and `b` on the desk's keymap, which swaps qwerty's. It
+# asserts:
 #
 #   reached     the browser answered each ask with the window's id
-#   typed       the page's field has "ab"
+#   typed       the page's field has "ab": the keys typed what the desk's
+#               keymap says, not the engine's own layout engine, which a
+#               nested engine has the host seat's keymap in
 #   kept        the user's field is still the shell's activeElement
 #   untouched   nothing was typed into the user's field
+#   unheard     the window's <webview> never heard the agent's keys as the
+#               user's (`domicile-key-delivered`), which a shell raises and
+#               focuses the window on
 #   shell       a press at a point in the shell's strip is refused, since
 #               agents act on the shell by ref
 #
@@ -71,10 +77,12 @@ STRIP_HEIGHT="${STRIP_HEIGHT:-64}"
 DESK_X=40
 DESK_Y=$((STRIP_HEIGHT + 40))
 SEAT="agent-guard"
-# evdev codes, from linux/input-event-codes.h.
+# evdev codes, from linux/input-event-codes.h. The desk's keymap
+# (guard-agent-seat-in-pages-compositor.py) types a on qwerty's b key and b on
+# its a key.
 BTN_LEFT=272
-KEY_A=30
-KEY_B=48
+DESK_A=48
+DESK_B=30
 
 STARTED=()
 cleanup() {
@@ -190,10 +198,10 @@ BARRED="[]"
 POINTED="$(agent "{\"kind\":\"pointer\",\"x\":$DESK_X,\"y\":$DESK_Y}" "$BARRED")"
 PRESSED="$(agent "{\"kind\":\"button\",\"button\":$BTN_LEFT,\"pressed\":true}" "$BARRED")"
 agent "{\"kind\":\"button\",\"button\":$BTN_LEFT,\"pressed\":false}" "$BARRED" >/dev/null
-TYPED_A="$(agent "{\"kind\":\"key\",\"keycode\":$KEY_A,\"pressed\":true}" "$BARRED")"
-agent "{\"kind\":\"key\",\"keycode\":$KEY_A,\"pressed\":false}" "$BARRED" >/dev/null
-TYPED_B="$(agent "{\"kind\":\"key\",\"keycode\":$KEY_B,\"pressed\":true}" "$BARRED")"
-agent "{\"kind\":\"key\",\"keycode\":$KEY_B,\"pressed\":false}" "$BARRED" >/dev/null
+TYPED_A="$(agent "{\"kind\":\"key\",\"keycode\":$DESK_A,\"pressed\":true}" "$BARRED")"
+agent "{\"kind\":\"key\",\"keycode\":$DESK_A,\"pressed\":false}" "$BARRED" >/dev/null
+TYPED_B="$(agent "{\"kind\":\"key\",\"keycode\":$DESK_B,\"pressed\":true}" "$BARRED")"
+agent "{\"kind\":\"key\",\"keycode\":$DESK_B,\"pressed\":false}" "$BARRED" >/dev/null
 
 # The answers come before the page handles the events. The positive run waits
 # for its text; the control gives text, which must not come, time to show.
@@ -237,6 +245,7 @@ SAW_TYPED=$(saw "GUARD guest-input value=ab")
 SAW_ANY_TYPED=$(saw "GUARD guest-input")
 SAW_USER_INPUT=$(saw "GUARD user-input")
 SAW_REACHED=$(saw "GUARD window-reached")
+SAW_DELIVERED=$(saw "GUARD key-delivered")
 REACHED_ALL=0
 [ "$(reached "$POINTED")$(reached "$PRESSED")$(reached "$TYPED_A")$(reached "$TYPED_B")" = "1111" ] && REACHED_ALL=1
 BARRED_ALL=0
@@ -255,7 +264,7 @@ echo "typed: $TYPED_A $TYPED_B"
 echo "at the shell: $SHELL_POINTED / $SHELL_PRESSED"
 echo "shell's activeElement: ${ACTIVE:0:200}"
 echo "shell=$SAW_SHELL page=$SAW_PAGE press=$SAW_PRESS typed=$SAW_TYPED any-typed=$SAW_ANY_TYPED"
-echo "the shell heard: reached=$SAW_REACHED user-input=$SAW_USER_INPUT kept=$KEPT"
+echo "the shell heard: reached=$SAW_REACHED key-delivered=$SAW_DELIVERED user-input=$SAW_USER_INPUT kept=$KEPT"
 grep -F "GUARD guest-input" "$ENGINE_LOG" | tail -3
 
 FAILURE=""
@@ -276,16 +285,20 @@ elif [ "$REACHED_ALL" != "1" ]; then
   FAILURE="the browser did not answer each ask with window $WINDOW: pointed $POINTED, pressed $PRESSED, typed $TYPED_A $TYPED_B"
 elif [ "$SAW_PRESS" != "1" ]; then
   FAILURE="the agent's press at desk ($DESK_X, $DESK_Y) never reached the browser window's page: the desk point was not hit tested into the guest, or not converted to its coordinates"
+elif [ "$(saw "GUARD guest-input value=ba")" = "1" ]; then
+  FAILURE="THE AGENT'S KEYS TYPED ON THE ENGINE'S OWN KEYMAP, NOT THE DESK'S: the page's field has \"ba\". Nested, that keymap is the host seat's, and an agent's text comes out as other characters, or none"
 elif [ "$SAW_TYPED" != "1" ]; then
-  FAILURE="the agent's keys a and b did not reach the page's field as \"ab\": the key widget was wrong, or the evdev codes did not map to characters"
+  FAILURE="the agent's keys a and b did not reach the page's field as \"ab\": the key widget was wrong, or the evdev codes did not map to characters on the desk's keymap"
 elif [ "$SAW_USER_INPUT" = "1" ]; then
   FAILURE="THE AGENT TYPED INTO THE USER'S FIELD"
 elif [ "$SAW_REACHED" = "1" ] || [ "$KEPT" != "1" ]; then
   FAILURE="THE AGENT'S PRESS MOVED THE USER'S FOCUS: reached=$SAW_REACHED, the shell's activeElement is ${ACTIVE:0:120}"
+elif [ "$SAW_DELIVERED" = "1" ]; then
+  FAILURE="THE SHELL HEARD THE AGENT'S KEYS AS THE USER'S: the window's <webview> fired domicile-key-delivered, on which a shell raises and focuses the window, taking the user's keyboard"
 elif [ "$SHELL_REFUSED" != "1" ]; then
   FAILURE="THE AGENT'S PRESS REACHED THE SHELL: a press in the strip was answered $SHELL_PRESSED, not refused"
 else
-  PASSED="the agent seat pressed and typed in a browser window at a desk position, the user's field kept the focus and got nothing, and a press on the shell was refused"
+  PASSED="the agent seat pressed and typed in a browser window at a desk position, the user's field kept the focus and got nothing, the shell never heard the keys as the user's, and a press on the shell was refused"
 fi
 
 if [ -n "$PASSED" ]; then

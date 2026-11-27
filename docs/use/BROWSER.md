@@ -117,10 +117,17 @@ programs.domicile.webApps.Music = {
 Chrome extensions work in every browser window. Their buttons sit in the top
 bar's tray; a click opens the extension's popup under it.
 
+An extension is installed in every profile, with its own data in each, and is
+on only in the profiles you choose. The tray's menu switches it on or off in
+the profile of the page you're on.
+
 <!-- tab: Settings app -->
 
-Open **Settings**, then **Extensions**. Switch each one on or off, open its
-options, or **Load unpacked folder** to add one from a folder.
+Open **Settings**, then **Extensions** to see which profiles each one is on
+in, change what it can reach, open its options, or **Load unpacked folder** to
+add one from a folder; it asks which profiles to turn it on in. **Choose
+profiles** opens **Profiles**, where each profile has a switch for each
+extension.
 
 <!-- tab: Config file -->
 
@@ -162,6 +169,90 @@ programs.domicile.settings.spellcheck.languages = ["en-US" "de-DE"];
 Set `enabled` to `false` to turn it off. Dictionaries come with the desktop,
 and your words are never sent anywhere to be checked.
 
+## Privacy
+
+Every profile keeps these from the sites you visit, unless you turn one off:
+
+- **Block ads and trackers.** Ads, and the trackers that follow you from site
+  to site, never load, and the boxes they would have filled are hidden.
+  Standard blocks what other sites put on a page; Strict also blocks a site's
+  own, which can break some sites. Private windows use Strict.
+- **Hide your device's details.** Sites see slightly different graphics,
+  audio and processor details on each start, and each site different ones, so
+  they can't recognize you by them.
+- **Remove tracking from links.** A link from one site to another loses what
+  tells the next site where you clicked it (`fbclid`, `gclid` and the like),
+  and with Strict ad blocking its campaign tags (`utm_`) too.
+- **Block cookies from other sites.** A page's ads, buttons and embeds from
+  other sites can't keep cookies that follow you from site to site. Sign-ins
+  that open in their own window still work.
+- **Ask sites not to sell or share your data.** Pages are sent Global Privacy
+  Control, which some places' laws make sites honor.
+- **Hide your local network address.** Video calls and other sites see the
+  address your network shows the internet, not the one on your home or office
+  network.
+
+Ads are blocked with the lists uBlock Origin uses by default: EasyList,
+EasyPrivacy and uBlock Origin's own. They're kept up to date by themselves,
+and kept on your computer, so blocking works before you're online.
+
+### When a site doesn't work
+
+The shield at the end of the address field shows how many ads and trackers
+were blocked on the page. If a site breaks, open it and turn **Protections**
+off. It asks how long:
+
+- **This window only** turns them off until you close the window.
+- **Always on this site** keeps them off for that site in this profile.
+
+Either way the page reloads. Turn the switch back on to block again. The shield
+is outlined while protections are off. You can also pick Strict for one site
+there.
+
+<!-- tab: Settings app -->
+
+Open **Settings**, then **Privacy**. **Website protections** has a choice of
+Standard, Strict or Off for ads and trackers, and a switch for each of the
+rest, for the profile you choose.
+**Sites you changed** lists the sites you turned protections off for, or set
+to Strict, from the shield. **Turn back on** or **Remove** undoes one.
+
+<!-- tab: Config file -->
+
+```json
+{
+  "browser": {
+    "profiles": {
+      "default": { "name": "Default", "color": "#0d9488" },
+      "work": {
+        "name": "Work",
+        "color": "#d97706",
+        "protections": {
+          "block_ads_and_trackers": "off",
+          "block_third_party_cookies": false
+        }
+      },
+      "private": { "name": "Private", "color": "#a78bfa", "private": true }
+    },
+    "block_rules": ["||ads.example.com^", "@@||example.org/ads.js"]
+  }
+}
+```
+
+`protections` takes `block_ads_and_trackers`, which is `"standard"`,
+`"strict"` or `"off"`, and `block_third_party_cookies`,
+`global_privacy_control`, `hide_local_ip_address`,
+`remove_tracking_from_links` and `hide_device_details`, each `true` unless
+set.
+
+`browser.block_lists` replaces the lists: each is an `https:` address or a
+file's absolute path, in the syntax uBlock Origin and Adblock Plus read.
+`browser.block_rules` adds rules of your own in the same syntax, in every
+profile that blocks ads: a rule that starts with `@@` lets something load that
+a list blocks.
+
+<!-- /tabs -->
+
 ## Differences from Chrome
 
 The browser is Chromium, with the desktop in place of Chrome's own window and
@@ -178,8 +269,7 @@ menus. So:
   the desktop's print dialog.
 - **Manifest V3 extensions only.** uBlock Origin Lite works; uBlock Origin
   does not.
-- **Some extension features are missing,** such as items in the right-click
-  menu, extension shortcuts and moving tabs.
+- **Some extension features are missing,** such as moving tabs.
 
 Sites are told the browser is Google Chrome, as some sign-ins require.
 

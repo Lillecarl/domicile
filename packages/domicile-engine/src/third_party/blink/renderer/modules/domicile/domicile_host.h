@@ -172,6 +172,7 @@ class MODULES_EXPORT DomicileHost final
                            uint32_t id,
                            const String& answer,
                            ExceptionState&);
+  void changeConfig(ScriptState*, const String& request, ExceptionState&);
   void copyClipboardEntry(ScriptState*, uint32_t entry, ExceptionState&);
   void removeClipboardEntry(ScriptState*, uint32_t entry, ExceptionState&);
   void activateTrayItem(ScriptState*,
@@ -195,6 +196,7 @@ class MODULES_EXPORT DomicileHost final
   void warpPointer(ScriptState*,
                    double x,
                    double y,
+                   const HeapVector<Member<DOMRectReadOnly>>& only_over,
                    DOMRectReadOnly* unless_over,
                    ExceptionState&);
   void closeApp(ScriptState*, const String& app_id, ExceptionState&);
@@ -255,6 +257,17 @@ class MODULES_EXPORT DomicileHost final
   void setExtensionsProfile(ScriptState*,
                             const String& profile,
                             ExceptionState&);
+  void reserveExtensionKeys(ScriptState*,
+                            const Vector<String>& keys,
+                            ExceptionState&);
+  void runExtensionCommand(ScriptState*,
+                           const String& id,
+                           const String& name,
+                           ExceptionState&);
+  ScriptPromise<IDLString> extensionMenu(ScriptState*,
+                                         const String& id,
+                                         ExceptionState&);
+  void runExtensionMenuItem(ScriptState*, int32_t item, ExceptionState&);
   ScriptPromise<IDLUndefined> setExtensionEnabled(ScriptState*,
                                                   const String& id,
                                                   bool enabled,
@@ -323,6 +336,7 @@ class MODULES_EXPORT DomicileHost final
                                                     const String& selector,
                                                     ExceptionState&);
   void closeBrowserWindow(ScriptState*, const String& id, ExceptionState&);
+  void discardBrowserWindow(ScriptState*, const String& id, ExceptionState&);
   void reopenBrowserWindow(ScriptState*,
                            const String& id,
                            const String& profile,
@@ -447,6 +461,8 @@ class MODULES_EXPORT DomicileHost final
   const FrozenArray<DomicileTrayItem>* tray() const;
   const FrozenArray<DomicileNotification>* notifications() const;
   const FrozenArray<DomicileExtension>* extensions() const;
+  // Null until the browser says.
+  const String& extensionCommands() const { return extension_commands_; }
   const FrozenArray<DomicileInstalledExtension>* installedExtensions() const;
   std::optional<bool> idle() const;
   std::optional<bool> locked() const;
@@ -535,6 +551,7 @@ class MODULES_EXPORT DomicileHost final
   void FocusRequested(const String& app_id) override;
   void System(const String& message) override;
   void PortalRequests(const String& message) override;
+  void ConfigOverrides(const String& message) override;
   void CompositorReplaced() override;
   void Displays(
       Vector<domicile::mojom::blink::DisplayInfoPtr> displays) override;
@@ -542,6 +559,11 @@ class MODULES_EXPORT DomicileHost final
   // domicile::mojom::blink::ExtensionTrayClient:
   void ExtensionsChanged(
       Vector<domicile::mojom::blink::TrayExtensionPtr> extensions) override;
+  void CommandsChanged(const String& commands) override;
+  void CommandPressed(const String& id,
+                      const String& name,
+                      const String& profile,
+                      CommandPressedCallback handled) override;
   void InstalledChanged(
       Vector<domicile::mojom::blink::InstalledExtensionPtr> extensions)
       override;
@@ -556,6 +578,8 @@ class MODULES_EXPORT DomicileHost final
       Vector<domicile::mojom::blink::BrowserProfilePtr> profiles,
       const String& default_profile,
       const String& default_private_profile) override;
+  void MemoryShort(const Vector<String>& windows,
+                   MemoryShortCallback handled) override;
 
   // domicile::mojom::blink::CastSinksClient:
   void SinksChanged(
@@ -753,6 +777,7 @@ class MODULES_EXPORT DomicileHost final
   Member<FrozenArray<DomicileTrayItem>> tray_items_;
   Member<FrozenArray<DomicileNotification>> notifications_;
   Member<FrozenArray<DomicileExtension>> extensions_;
+  String extension_commands_;
   Member<FrozenArray<DomicileInstalledExtension>> installed_extensions_;
   std::optional<bool> idle_;
   std::optional<bool> locked_;

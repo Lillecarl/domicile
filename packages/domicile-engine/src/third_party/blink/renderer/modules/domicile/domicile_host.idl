@@ -51,6 +51,17 @@
   [CallWith=ScriptState, RaisesException] undefined answerPortalRequest(
       unsigned long id, DOMString answer);
 
+  // A temporary change to the desk's config, until the desktop restarts or
+  // the config file changes that setting. `request` is JSON: a
+  // `set_config_override` with a `path` and the `value` as JSON text, a
+  // `reset_config_overrides` with `paths`, or a `which_config_overrides`.
+  // One of another type is dropped in the browser; the compositor checks the
+  // rest. Each is answered, in order, with a `configoverrides` event. See
+  // docs/SETTINGS.md#temporary-changes and the SDK's `config` module, which
+  // is the way to call this.
+  [CallWith=ScriptState, RaisesException] undefined changeConfig(
+      DOMString request);
+
   // Put a row of the clipboard's history back on the clipboard.
   //
   // `entry` is an id `clipboard` lists. The compositor holds each row's full
@@ -116,11 +127,12 @@
   // coordinate outside this page is clamped to its own box -- what a page may
   // move is the pointer over itself -- and NaN throws.
   //
-  // `unlessOver`, a box in the same coordinates, skips the warp while the
-  // pointer is over it. The page cannot see the pointer over a browser
-  // window's page; the browser process can.
+  // The warp happens only while the pointer is over one of `onlyOver`, boxes
+  // in the same coordinates, and not over `unlessOver`. The page cannot see
+  // the pointer over a browser window's page; the browser process can.
   [CallWith=ScriptState, RaisesException] undefined warpPointer(
-      double x, double y, optional DOMRectReadOnly? unlessOver = null);
+      double x, double y, sequence<DOMRectReadOnly> onlyOver,
+      optional DOMRectReadOnly? unlessOver = null);
 
   // Ask a client to close. Not a kill -- the client decides, which is why a
   // window can refuse and show a save dialog instead.
@@ -273,6 +285,36 @@
   [CallWith=ScriptState, RaisesException] undefined activateExtension(
       DOMString id);
 
+  // Keep `keys`, each as `Ctrl+T`, from extensions, in place of those given
+  // before: a command bound to one has no keys, and the page gets them, then
+  // the shell. None are kept by default. Over the tray's pipe, as
+  // activateExtension().
+  [CallWith=ScriptState, RaisesException] undefined reserveExtensionKeys(
+      sequence<DOMString> keys);
+
+  // Run command `name` of extension `id`, one of `extensionCommands`, as its
+  // keys do in Chrome: the extension is granted activeTab on the active tab
+  // and hears `commands.onCommand`. The action's own command,
+  // `_execute_action`, runs the action, and is `extensionpopuprequested`
+  // when the action has a popup. A command that is gone does nothing; an
+  // empty id or name throws. Over the tray's pipe, as activateExtension().
+  [CallWith=ScriptState, RaisesException] undefined runExtensionCommand(
+      DOMString id,
+      DOMString name);
+
+  // The items extension `id` adds to its action's menu (chrome.contextMenus),
+  // matched now, as JSON: an array of entries as DomicileBrowserWindow.menu's,
+  // `[]` for none. Over the tray's pipe, as activateExtension(). An empty id
+  // throws.
+  [CallWith=ScriptState, RaisesException] Promise<DOMString> extensionMenu(
+      DOMString id);
+
+  // Run entry `item`, the `id` of one in the newest extensionMenu(), on the
+  // active tab: its extension is granted activeTab there and hears
+  // `contextMenus.onClicked`. An entry of an older menu does nothing.
+  [CallWith=ScriptState, RaisesException] undefined runExtensionMenuItem(
+      long item);
+
   // Show the actions of browser profile `profile`'s extensions in
   // `extensions`, and have activateExtension() click them there, on the
   // active tab of its pages: as Chrome's toolbar shows its window's
@@ -382,6 +424,18 @@
   // opens a clicked action's. Not held for a late listener: a popup the user
   // did not see asked for is not one to open later.
   attribute EventHandler onextensionpopuprequested;
+  // Every extension with commands (chrome.commands), as JSON: an array of its
+  // `id`, `name`, `profile` and `commands`, each with its `name`,
+  // `description`, `keys` (`Ctrl+Shift+L`, or empty for none) and whether
+  // they are `global`. Those of the profile setExtensionsProfile() named.
+  // Null until the browser says.
+  readonly attribute DOMString? extensionCommands;
+  attribute EventHandler onextensioncommandschanged;
+  // The keys of an extension's command were pressed in a page: a MessageEvent
+  // whose `data` is the extension's `id`, the command's `name` and the page's
+  // `profile`, as JSON. The engine runs the command on that page, unless this
+  // has a listener: the shell then does, by runExtensionCommand().
+  attribute EventHandler onextensioncommandpressed;
   // Every extension installed in the shell's profile, switched on or off,
   // with its settings, for a menu that manages them. Null until the browser
   // lists them, which it does as soon as this page listens. No [SameObject],
@@ -435,6 +489,13 @@
   // Fires when a window opens, closes, navigates or changes title. Read
   // `browserWindows` for the current list.
   attribute EventHandler onbrowserwindowschanged;
+
+  // A MessageEvent whose `data` is the ids of the windows whose pages may be
+  // unloaded, hidden longest first, as a JSON array. Fires every few seconds
+  // while the computer is short of memory. The engine unloads the first one's
+  // page, unless this has a listener: the shell then decides, by
+  // discardBrowserWindow().
+  attribute EventHandler onbrowsermemoryshort;
 
   // The desk's browser profiles, in the config's order: sets of sign-ins,
   // site data and extensions, as the config's `browser.profiles` names them.
@@ -509,6 +570,14 @@
   // with a `beforeunload` handler may first ask to stay, as a `domicile-dialog`
   // on its <webview>; Cancel keeps the window. An unknown id does nothing.
   [CallWith=ScriptState, RaisesException] undefined closeBrowserWindow(
+      DOMString id);
+
+  // Unloads window `id`'s page to free its memory. Its history and scroll
+  // stay, and it loads again when a <webview> next shows the window; what was
+  // typed into it is not kept. Throws TypeError for an empty id. An unknown
+  // window, one a <webview> shows, an extension's popup window, a DevTools
+  // window, and an app module's or Electron app's do nothing.
+  [CallWith=ScriptState, RaisesException] undefined discardBrowserWindow(
       DOMString id);
 
   // Moves window `id`'s page to browser profile `profile`, one of
@@ -733,6 +802,11 @@
   // added later is sent the latest line, so a shell that listens late still
   // sees pending dialogs.
   attribute EventHandler onportalrequests;
+
+  // An answer to changeConfig(), as a MessageEvent whose `data` is the
+  // compositor's `config_overrides` line: every temporary change after it,
+  // and why it was refused if it was.
+  attribute EventHandler onconfigoverrides;
 
   // The compositor exited and a new one took over. Fired after every window
   // of the old one has closed and every system call it had has ended with

@@ -157,22 +157,29 @@ fn a_command_reaches_the_desktop_and_the_answer_comes_back() {
                         module: PathBuf::from("shell.js"),
                         root: PathBuf::from("/desktops/mine"),
                     },
-                    open: &|_, _| panic!("a question about this desktop reaches no engine"),
+                    open: &|_, _, _| panic!("a question about this desktop reaches no engine"),
                     open_app: &|_, _, _, _| {
                         panic!("a question about this desktop reaches no engine")
                     },
                     run_app: &|_, _| panic!("a question about this desktop reaches no engine"),
                     launch: &|_, _| panic!("a question about this desktop reaches no compositor"),
                     open_link: &|_| panic!("a question about this desktop reaches no compositor"),
-                    send: &|_| panic!("a question about this desktop reaches no compositor"),
+                    send: &|_, _, _| panic!("a question about this desktop reaches no compositor"),
                     power_displays: &|_, _| {
                         panic!("a question about this desktop reaches no compositor")
                     },
                     monitors: &|| panic!("a question about this desktop reaches no compositor"),
+                    config_overrides: &|_| {
+                        panic!("a question about this desktop reaches no compositor")
+                    },
                     displays: &|| panic!("a question about this desktop reaches no compositor"),
                     windows: &|| panic!("a question about this desktop reaches no compositor"),
+                    browser_layouts: &|| panic!("a question about this desktop reaches no engine"),
                     status: &|| panic!("a question about this desktop reaches no compositor"),
                     shell_commands: &|| {
+                        panic!("a question about this desktop reaches no compositor")
+                    },
+                    complete_shell: &|_| {
                         panic!("a question about this desktop reaches no compositor")
                     },
                     shell_bindings: &|| {
@@ -193,7 +200,9 @@ fn a_command_reaches_the_desktop_and_the_answer_comes_back() {
                         panic!("a question about this desktop reaches no compositor")
                     },
                     emulate: &|_, _| panic!("a question about this desktop reaches no compositor"),
-                    devtools: &|_, _, _| panic!("a question about this desktop reaches no engine"),
+                    devtools: &|_, _, _, _| {
+                        panic!("a question about this desktop reaches no engine")
+                    },
                     configure_display: &|_, _| {
                         panic!("a question about this desktop reaches no compositor")
                     },
@@ -206,6 +215,10 @@ fn a_command_reaches_the_desktop_and_the_answer_comes_back() {
                     logs: &|| panic!("a question about this desktop reads no logs"),
                     permissions: &|| panic!("a question about this desktop reaches no engine"),
                     set_permission: &|_| panic!("a question about this desktop reaches no engine"),
+                    site_privacy: &|| panic!("a question about this desktop reaches no engine"),
+                    set_site_privacy: &|_| {
+                        panic!("a question about this desktop reaches no engine")
+                    },
                     load_unpacked: &|_| panic!("a question about this desktop reaches no engine"),
                     uninstall_extension: &|_| {
                         panic!("a question about this desktop reaches no engine")

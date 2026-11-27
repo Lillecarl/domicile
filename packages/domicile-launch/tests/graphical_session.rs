@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -10,13 +11,49 @@ use domicile_launch::notification::connected;
 enum Heard {
     SetEnvironment(Vec<String>),
     UnsetEnvironment(Vec<String>),
+    UnsetAndSetEnvironment(Vec<String>, Vec<String>),
     StartUnit(String, String),
     StopUnit(String, String),
+    TryRestartUnit(String, String),
+    UpdateActivationEnvironment(BTreeMap<String, String>),
+}
+
+#[derive(Debug, zbus::DBusError)]
+#[zbus(prefix = "org.freedesktop.systemd1")]
+enum Refused {
+    #[zbus(error)]
+    ZBus(zbus::Error),
+    NoSuchUnit(String),
+    JobTypeNotApplicable(String),
+}
+
+/// What the manager says to restarting the portal frontend.
+#[derive(Clone, Copy)]
+enum Frontend {
+    Restarts,
+    NotInstalled,
+    Refuses,
 }
 
 struct Manager {
     heard: Arc<Mutex<Vec<Heard>>>,
     environment: Vec<String>,
+    frontend: Frontend,
+}
+
+/// The bus daemon, which keeps an activation environment of its own.
+struct Daemon {
+    heard: Arc<Mutex<Vec<Heard>>>,
+}
+
+#[zbus::interface(name = "org.freedesktop.DBus")]
+impl Daemon {
+    fn update_activation_environment(&self, environment: BTreeMap<String, String>) {
+        self.heard
+            .lock()
+            .unwrap()
+            .push(Heard::UpdateActivationEnvironment(environment));
+    }
 }
 
 #[zbus::interface(name = "org.freedesktop.systemd1.Manager")]
@@ -35,17 +72,42 @@ impl Manager {
             .push(Heard::UnsetEnvironment(names));
     }
 
-    fn start_unit(&self, name: String, mode: String) -> zbus::zvariant::OwnedObjectPath {
+    fn unset_and_set_environment(&self, names: Vec<String>, assignments: Vec<String>) {
+        self.heard
+            .lock()
+            .unwrap()
+            .push(Heard::UnsetAndSetEnvironment(names, assignments));
+    }
+
+    fn start_unit(&self, name: String, mode: String) -> zbus::OwnedObjectPath {
         self.heard
             .lock()
             .unwrap()
             .push(Heard::StartUnit(name, mode));
-        zbus::zvariant::OwnedObjectPath::try_from("/org/freedesktop/systemd1/job/1").unwrap()
+        zbus::OwnedObjectPath::try_from("/org/freedesktop/systemd1/job/1").unwrap()
     }
 
-    fn stop_unit(&self, name: String, mode: String) -> zbus::zvariant::OwnedObjectPath {
+    fn stop_unit(&self, name: String, mode: String) -> zbus::OwnedObjectPath {
         self.heard.lock().unwrap().push(Heard::StopUnit(name, mode));
-        zbus::zvariant::OwnedObjectPath::try_from("/org/freedesktop/systemd1/job/2").unwrap()
+        zbus::OwnedObjectPath::try_from("/org/freedesktop/systemd1/job/2").unwrap()
+    }
+
+    fn try_restart_unit(
+        &self,
+        name: String,
+        mode: String,
+    ) -> Result<zbus::OwnedObjectPath, Refused> {
+        self.heard
+            .lock()
+            .unwrap()
+            .push(Heard::TryRestartUnit(name.clone(), mode));
+        match self.frontend {
+            Frontend::Restarts => {
+                Ok(zbus::OwnedObjectPath::try_from("/org/freedesktop/systemd1/job/3").unwrap())
+            }
+            Frontend::NotInstalled => Err(Refused::NoSuchUnit(name)),
+            Frontend::Refuses => Err(Refused::JobTypeNotApplicable(name)),
+        }
     }
 
     #[zbus(property)]
@@ -55,22 +117,22 @@ impl Manager {
 }
 
 /// A fake user manager and a client, connected peer-to-peer over a socket pair.
-fn paired() -> (
-    zbus::blocking::Connection,
-    zbus::blocking::Connection,
-    Arc<Mutex<Vec<Heard>>>,
-) {
+fn paired() -> (zbus::Connection, zbus::Connection, Arc<Mutex<Vec<Heard>>>) {
     paired_with(&[])
 }
 
 /// The same, with the manager holding `environment`.
 fn paired_with(
     environment: &[&str],
-) -> (
-    zbus::blocking::Connection,
-    zbus::blocking::Connection,
-    Arc<Mutex<Vec<Heard>>>,
-) {
+) -> (zbus::Connection, zbus::Connection, Arc<Mutex<Vec<Heard>>>) {
+    paired_with_frontend(environment, Frontend::Restarts)
+}
+
+/// The same, with the manager answering for the portal frontend as `frontend`.
+fn paired_with_frontend(
+    environment: &[&str],
+    frontend: Frontend,
+) -> (zbus::Connection, zbus::Connection, Arc<Mutex<Vec<Heard>>>) {
     let (theirs, ours) = UnixStream::pair().unwrap();
     let heard = Arc::new(Mutex::new(Vec::new()));
     let environment = environment.iter().map(|line| line.to_string()).collect();
@@ -78,18 +140,30 @@ fn paired_with(
     let server = std::thread::spawn({
         let heard = Arc::clone(&heard);
         move || {
-            zbus::blocking::connection::Builder::async_io_unix_stream(theirs)
-                .server(guid)
-                .unwrap()
-                .p2p()
-                .serve_at("/org/freedesktop/systemd1", Manager { heard, environment })
-                .unwrap()
-                .build()
-                .unwrap()
+            zbus::block_on(
+                zbus::connection::Builder::unix_stream(theirs)
+                    .server(guid)
+                    .p2p()
+                    .serve_at(
+                        "/org/freedesktop/DBus",
+                        Daemon {
+                            heard: Arc::clone(&heard),
+                        },
+                    )
+                    .serve_at(
+                        "/org/freedesktop/systemd1",
+                        Manager {
+                            heard,
+                            environment,
+                            frontend,
+                        },
+                    )
+                    .build(),
+            )
+            .unwrap()
         }
     });
-    let client =
-        connected(zbus::blocking::connection::Builder::async_io_unix_stream(ours).p2p()).unwrap();
+    let client = connected(zbus::connection::Builder::unix_stream(ours).p2p()).unwrap();
     (server.join().unwrap(), client, heard)
 }
 
@@ -109,6 +183,26 @@ fn a_desk_names_its_desktop_before_anything_can_start_the_portal() {
     );
 }
 
+/// The variables niri sets on `display`.
+fn niri(display: &str) -> Vec<String> {
+    vec![
+        "XDG_CURRENT_DESKTOP=niri".into(),
+        format!("WAYLAND_DISPLAY={display}"),
+        "XDG_SESSION_TYPE=wayland".into(),
+    ]
+}
+
+#[test]
+fn a_desk_keeps_the_variables_its_name_replaces() {
+    // Naming the desktop overwrites `XDG_CURRENT_DESKTOP`, so the session to
+    // hand back is read before that.
+    let held = niri("wayland-1");
+    let mut environment: Vec<&str> = held.iter().map(String::as_str).collect();
+    environment.push("PATH=/bin");
+    let (_server, client, _heard) = paired_with(&environment);
+    assert_eq!(name(&client).unwrap(), held);
+}
+
 #[test]
 fn a_desk_that_is_the_session_is_said_before_the_session_starts() {
     // Services bound to `graphical-session.target`, such as the portal, read
@@ -119,6 +213,7 @@ fn a_desk_that_is_the_session_is_said_before_the_session_starts() {
         &client,
         "wayland-1",
         Path::new("/run/d/domicile-ipc.4242.sock"),
+        &[],
     )
     .unwrap();
     assert_eq!(
@@ -181,27 +276,30 @@ fn said(display: &str, control: &Path) -> Vec<String> {
 #[test]
 fn a_desk_remembers_the_session_it_takes_over() {
     // A second login session on another tty, so it can hand the session back.
-    let earlier = said("wayland-1", Path::new("/run/d/domicile-ipc.1.sock"));
-    let mut environment: Vec<&str> = earlier.iter().map(String::as_str).collect();
-    environment.push("PATH=/bin");
-    let (_server, client, _heard) = paired_with(&environment);
-    let taken = begin(
-        &client,
-        "wayland-2",
-        Path::new("/run/d/domicile-ipc.2.sock"),
-    )
-    .unwrap();
-    assert_eq!(taken, earlier);
+    // The session is the one `name` replaced: by then the user manager holds
+    // this desktop's name.
+    let (_server, client, _heard) = paired();
+    for earlier in [
+        said("wayland-1", Path::new("/run/d/domicile-ipc.1.sock")),
+        niri("wayland-1"),
+    ] {
+        let taken = begin(
+            &client,
+            "wayland-2",
+            Path::new("/run/d/domicile-ipc.2.sock"),
+            &earlier,
+        )
+        .unwrap();
+        assert_eq!(taken, earlier);
+    }
 }
 
 #[test]
 fn a_desk_restarting_takes_over_no_session() {
     let ours = Path::new("/run/d/domicile-ipc.2.sock");
-    let before = said("wayland-1", ours);
-    let environment: Vec<&str> = before.iter().map(String::as_str).collect();
-    let (_server, client, _heard) = paired_with(&environment);
+    let (_server, client, _heard) = paired();
     assert_eq!(
-        begin(&client, "wayland-2", ours).unwrap(),
+        begin(&client, "wayland-2", ours, &said("wayland-1", ours)).unwrap(),
         Vec::<String>::new()
     );
 }
@@ -219,7 +317,100 @@ fn a_desk_that_ends_hands_the_session_back_to_the_desk_it_took_it_from() {
     let (_server, client, heard) = paired_with(&environment);
     let earlier = said("wayland-1", &first);
     end(&client, &ours, &earlier).unwrap();
-    assert_eq!(*heard.lock().unwrap(), [Heard::SetEnvironment(earlier)]);
+    assert_eq!(
+        *heard.lock().unwrap(),
+        [Heard::UnsetAndSetEnvironment(vec![], earlier)]
+    );
+}
+
+#[test]
+fn a_desk_that_ends_hands_the_session_back_to_another_compositor() {
+    // niri on tty1, this desk on tty2. niri's unit binds to
+    // `graphical-session.target`, so the shutdown target would stop niri too.
+    // A relative `WAYLAND_DISPLAY` is in `XDG_RUNTIME_DIR`, beside the control
+    // socket. An absolute one can be anywhere.
+    let directory = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let absolute = elsewhere.path().join("wayland-9");
+    for (display, socket) in [
+        ("wayland-1", directory.path().join("wayland-1")),
+        (absolute.to_str().unwrap(), absolute.clone()),
+    ] {
+        let _serving = std::os::unix::net::UnixListener::bind(socket).unwrap();
+        let ours = directory.path().join("domicile-ipc.2.sock");
+        let now = said("wayland-2", &ours);
+        let environment: Vec<&str> = now.iter().map(String::as_str).collect();
+        let (_server, client, heard) = paired_with(&environment);
+        end(&client, &ours, &niri(display)).unwrap();
+        assert_eq!(
+            *heard.lock().unwrap(),
+            [
+                Heard::UnsetAndSetEnvironment(vec!["DOMICILE_SOCK".into()], niri(display)),
+                Heard::StopUnit(TARGET.into(), "replace".into()),
+                // The compositor names the desktop to the bus daemon too, and
+                // a running portal frontend keeps the name it started under.
+                Heard::UpdateActivationEnvironment(BTreeMap::from([
+                    ("XDG_CURRENT_DESKTOP".into(), "niri".into()),
+                    ("WAYLAND_DISPLAY".into(), display.into()),
+                    ("XDG_SESSION_TYPE".into(), "wayland".into()),
+                ])),
+                Heard::TryRestartUnit("xdg-desktop-portal.service".into(), "replace".into()),
+            ]
+        );
+    }
+}
+
+#[test]
+fn a_killed_desks_control_socket_does_not_hide_the_compositor_that_runs() {
+    // A killed launcher leaves its variables in the user manager. niri then
+    // sets its own over them, which leaves the dead control socket.
+    let directory = tempfile::tempdir().unwrap();
+    let _serving =
+        std::os::unix::net::UnixListener::bind(directory.path().join("wayland-1")).unwrap();
+    let ours = directory.path().join("domicile-ipc.2.sock");
+    let (_server, client, heard) = paired();
+    let mut earlier = niri("wayland-1");
+    earlier.push(format!(
+        "DOMICILE_SOCK={}",
+        directory.path().join("domicile-ipc.1.sock").display()
+    ));
+    end(&client, &ours, &earlier).unwrap();
+    assert_eq!(
+        heard.lock().unwrap().first(),
+        Some(&Heard::UnsetAndSetEnvironment(
+            vec!["DOMICILE_SOCK".into()],
+            niri("wayland-1")
+        ))
+    );
+}
+
+#[test]
+fn a_session_handed_back_needs_no_portal_frontend_but_reports_one_not_restarted() {
+    let directory = tempfile::tempdir().unwrap();
+    let _serving =
+        std::os::unix::net::UnixListener::bind(directory.path().join("wayland-1")).unwrap();
+    let ours = directory.path().join("domicile-ipc.2.sock");
+    for (frontend, handed_back) in [(Frontend::NotInstalled, true), (Frontend::Refuses, false)] {
+        let (_server, client, _heard) = paired_with_frontend(&[], frontend);
+        assert_eq!(end(&client, &ours, &niri("wayland-1")).is_ok(), handed_back);
+    }
+}
+
+#[test]
+fn a_desk_that_ends_after_its_compositor_exited_ends_the_session() {
+    let directory = tempfile::tempdir().unwrap();
+    let ours = directory.path().join("domicile-ipc.2.sock");
+    let now = said("wayland-2", &ours);
+    let environment: Vec<&str> = now.iter().map(String::as_str).collect();
+    let (_server, client, heard) = paired_with(&environment);
+    end(&client, &ours, &niri("wayland-1")).unwrap();
+    assert_eq!(
+        heard.lock().unwrap().first(),
+        Some(&Heard::StartUnit(
+            SHUTDOWN.into(),
+            "replace-irreversibly".into()
+        ))
+    );
 }
 
 #[test]

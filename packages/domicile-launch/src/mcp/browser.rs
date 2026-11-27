@@ -25,11 +25,12 @@ pub(super) enum Browser {
     Key,
     Navigate,
     Screenshot,
+    ChooseFiles,
 }
 
 /// The window the browser tools name to reach the shell's own page: its
 /// bars, panels and dialogs.
-const SHELL: &str = crate::control::SHELL_WINDOW;
+pub(super) const SHELL: &str = crate::control::SHELL_WINDOW;
 
 /// The longest name or value a snapshot shows of one element, in characters.
 const LONGEST: usize = 200;
@@ -37,7 +38,7 @@ const LONGEST: usize = 200;
 /// A browser tool's description, its arguments' JSON schemas and which are
 /// required.
 pub(super) fn described(tool: Browser) -> (&'static str, Value, Vec<&'static str>) {
-    let window = json!({"type": "string", "description": "A browser window's id, from list_windows, or \"shell\" for the shell's own bars, panels and dialogs."});
+    let window = json!({"type": "string", "description": "A browser window's id, from list_windows, or \"shell\" for the shell's own bars, panels and dialogs. Left out, the window your keyboard is in."});
     let element =
         json!({"type": "string", "description": "An element's ref, from browser_snapshot."});
     let view = json!({"type": "string", "description": "One of the window's views, from browser_snapshot or list_windows. Left out, the window's own page."});
@@ -46,7 +47,7 @@ pub(super) fn described(tool: Browser) -> (&'static str, Value, Vec<&'static str
         Browser::Snapshot => (
             "Read a browser window's page, then each view it holds, as accessibility trees: one element a line, with the ref the other browser tools take. An Electron app such as Claude or Slack draws its page in views. Works on hidden windows; private ones are refused.",
             json!({"window": window}),
-            vec!["window"],
+            vec![],
         ),
         Browser::Click => (
             "Click an element of a browser window's page or view by its ref, scrolling it into view first, or at a point `at` of the page, for a canvas or anything else with no ref. The user's pointer and focus stay where they are. Answers what it changed in the window.",
@@ -58,37 +59,47 @@ pub(super) fn described(tool: Browser) -> (&'static str, Value, Vec<&'static str
                 "button": {"type": "string", "enum": ["left", "right", "middle"], "description": "Left out, the left one."},
                 "count": {"type": "integer", "enum": [1, 2], "description": "2 double-clicks. Left out, 1."},
             }),
-            vec!["window"],
+            vec![],
         ),
         Browser::Drag => (
             "Press the left button at point `from` of a browser window's page or view, move to `to` and let go, as on a canvas. The user's pointer and focus stay where they are. Answers what it changed in the window.",
             json!({"window": window, "view": view, "from": at.clone(), "to": at.clone()}),
-            vec!["window", "from", "to"],
+            vec!["from", "to"],
         ),
         Browser::Scroll => (
             "Scroll a browser window's page or view with the wheel at point `at`, by `by`, [right, down], in the same pixels. The user's pointer stays where it is. Answers what it changed in the window.",
             json!({"window": window, "view": view, "at": at.clone(), "by": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2, "description": "[right, down]; negative goes left or up."}}),
-            vec!["window", "at", "by"],
+            vec!["at", "by"],
         ),
         Browser::Type => (
             "Type text into a browser window's page or view: into the element with ref, focusing it first, or where its focus is. Never into the window the user is typing in. Answers what it changed in the window.",
             json!({"window": window, "ref": element, "view": view, "text": {"type": "string"}}),
-            vec!["window", "text"],
+            vec!["text"],
         ),
         Browser::Key => (
             "Press and release a key in a browser window's page or view. Answers what it changed in the window.",
             json!({"window": window, "view": view, "key": {"type": "string", "enum": KEYS.iter().map(|key| key.0).collect::<Vec<_>>()}}),
-            vec!["window", "key"],
+            vec!["key"],
         ),
         Browser::Navigate => (
             "Load an http or https address in a browser window. Answers what it changed in the window.",
             json!({"window": window, "url": {"type": "string"}}),
-            vec!["window", "url"],
+            vec!["url"],
         ),
         Browser::Screenshot => (
             "Take a WebP of a browser window's page or view as it draws, hidden or not.",
             json!({"window": window, "view": view}),
-            vec!["window"],
+            vec![],
+        ),
+        Browser::ChooseFiles => (
+            "Answer the file chooser your click or key opened in a browser window's page or view, such as an upload button's: give it `paths`, absolute, or `cancel`. The acts say when a page waits on one; the user never sees it. Answers what it changed in the window.",
+            json!({
+                "window": window,
+                "view": view,
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "Absolute paths: files to open, a folder, or where to save, as the chooser asks."},
+                "cancel": {"type": "boolean", "description": "true cancels the chooser instead."},
+            }),
+            vec![],
         ),
     }
 }
@@ -96,10 +107,13 @@ pub(super) fn described(tool: Browser) -> (&'static str, Value, Vec<&'static str
 /// `tools/call`'s result for browser tool `tool` with `arguments`. A read
 /// keeps the window's outline in `read`; an act answers what it changed,
 /// unless `quiet`, for a batch that reads the window once at its end. Each
-/// read notes the title of the page the window shows in `titles`.
+/// read notes the title of the page the window shows in `titles`. Its methods
+/// are sent for agent session `seat`, so a page it drives copies to and pastes
+/// from that agent's own clipboard.
 pub(super) fn called(
     tool: Browser,
     arguments: &Map<String, Value>,
+    seat: u32,
     domicile: &mut impl FnMut(&[String]) -> io::Result<Ran>,
     read: &mut HashMap<String, String>,
     titles: &mut HashMap<String, String>,
@@ -116,6 +130,7 @@ pub(super) fn called(
     };
     let mut page = Page {
         window,
+        agent: Some(seat),
         view,
         domicile,
         title: None,
@@ -141,6 +156,13 @@ pub(super) fn called(
         .as_str()
         .expect("a browser tool answers text");
     std::thread::sleep(SETTLE);
+    let did = match presses(tool) {
+        true => match chooser_note(&page.window, page.view.clone(), page.domicile)? {
+            Some(note) => format!("{did}\n{note}"),
+            None => did.to_string(),
+        },
+        false => did.to_string(),
+    };
     let changes = read_again(&page.window, page.domicile, read, titles)?;
     Ok(said(true, format!("{did}\n{changes}")))
 }
@@ -154,8 +176,40 @@ pub(super) fn acts(tool: Browser) -> bool {
         | Browser::Scroll
         | Browser::Type
         | Browser::Key
-        | Browser::Navigate => true,
+        | Browser::Navigate
+        | Browser::ChooseFiles => true,
     }
+}
+
+/// Whether `tool` presses or keys in a page, the only acts that let it open
+/// a file chooser.
+pub(super) fn presses(tool: Browser) -> bool {
+    matches!(
+        tool,
+        Browser::Click | Browser::Drag | Browser::Key | Browser::ChooseFiles
+    )
+}
+
+/// That browser window `window`'s page, or its view `view`, waits on a file
+/// chooser, or that whether it does could not be read, if either.
+pub(super) fn chooser_note(
+    window: &str,
+    view: Option<String>,
+    domicile: &mut impl FnMut(&[String]) -> io::Result<Ran>,
+) -> io::Result<Option<String>> {
+    let mut page = Page {
+        window: window.to_string(),
+        agent: None,
+        view,
+        domicile,
+        title: None,
+    };
+    Ok(match waiting_chooser(&mut page)? {
+        Ok(chooser) => chooser,
+        Err(why) => Some(format!(
+            "Whether it opened a file chooser could not be read: {why}"
+        )),
+    })
 }
 
 /// What changed in browser window `window` since it was last read, reading
@@ -168,6 +222,7 @@ pub(super) fn read_again(
 ) -> io::Result<String> {
     let mut page = Page {
         window: window.to_string(),
+        agent: None,
         view: None,
         domicile,
         title: None,
@@ -192,6 +247,9 @@ pub(super) fn read_again(
 /// sends methods to.
 struct Page<'a, D> {
     window: String,
+    /// The agent session its input methods are sent for, for an act; none
+    /// for a read.
+    agent: Option<u32>,
     view: Option<String>,
     domicile: &'a mut D,
     /// The title of the window's page as last read, if it was.
@@ -201,14 +259,23 @@ struct Page<'a, D> {
 impl<D: FnMut(&[String]) -> io::Result<Ran>> Page<'_, D> {
     /// `method`'s result, or why there is none.
     fn send(&mut self, method: &str, params: Value) -> io::Result<Result<Value, String>> {
+        // Only input says who drove the page, which is what the engine keys
+        // the page's clipboard on.
+        let agent = self
+            .agent
+            .filter(|_| method.starts_with("Input."))
+            .into_iter()
+            .flat_map(|agent| ["--agent".to_string(), agent.to_string()]);
         let view = self
             .view
             .iter()
             .flat_map(|view| ["--view".to_string(), view.clone()]);
         let ran = (self.domicile)(
             &std::iter::once("devtools".to_string())
+                .chain(agent)
+                .chain(["--window".to_string(), self.window.clone()])
                 .chain(view)
-                .chain([self.window.clone(), method.to_string(), params.to_string()])
+                .chain([method.to_string(), params.to_string()])
                 .collect::<Vec<_>>(),
         )?;
         if !ran.success {
@@ -277,6 +344,57 @@ macro_rules! sent {
             Err(why) => return Ok(Err(why)),
         }
     };
+}
+
+/// The file chooser the page or view waits on for the agent, said for the
+/// agent, or nothing when none waits. The shell's own page asks no agent.
+fn waiting_chooser<D: FnMut(&[String]) -> io::Result<Ran>>(
+    page: &mut Page<'_, D>,
+) -> io::Result<Result<Option<String>, String>> {
+    if page.window == SHELL {
+        return Ok(Ok(None));
+    }
+    let answer = sent!(page, "Domicile.fileChooser", json!({}));
+    let chooser = &answer["chooser"];
+    if chooser.is_null() {
+        return Ok(Ok(None));
+    }
+    let asks = match chooser["mode"].as_str() {
+        Some("open") => "a file",
+        Some("open-multiple") => "one or more files",
+        Some("open-folder") => "a folder",
+        Some("save") => "where to save",
+        _ => {
+            return Ok(Err(format!(
+                "the engine described a chooser it can't: {chooser}"
+            )))
+        }
+    };
+    let Some(accept) = chooser["accept"].as_array().and_then(|accept| {
+        accept
+            .iter()
+            .map(|extension| extension.as_str().map(|extension| format!(".{extension}")))
+            .collect::<Option<Vec<_>>>()
+    }) else {
+        return Ok(Err(format!(
+            "the engine described a chooser it can't: {chooser}"
+        )));
+    };
+    let mut said = format!("The page waits on a file chooser for {asks}");
+    if !accept.is_empty() {
+        said.push_str(&format!(", accepting {}", accept.join(", ")));
+    }
+    match chooser["suggestedName"].as_str() {
+        Some("") => {}
+        Some(name) => said.push_str(&format!(", suggesting {name}")),
+        None => {
+            return Ok(Err(format!(
+                "the engine described a chooser it can't: {chooser}"
+            )))
+        }
+    }
+    said.push_str(": answer it with browser_choose_files.");
+    Ok(Ok(Some(said)))
 }
 
 /// The window's page, then each view it holds, as outlines, or why they
@@ -475,6 +593,41 @@ fn carried_out<D: FnMut(&[String]) -> io::Result<Ran>>(
                 _ => Ok(Ok(said(true, format!("loading {url}")))),
             }
         }
+        Browser::ChooseFiles => {
+            let cancel = match arguments.get("cancel") {
+                None => false,
+                Some(Value::Bool(cancel)) => *cancel,
+                Some(other) => return Ok(Err(format!("cancel is true or false, not {other}"))),
+            };
+            let paths = match arguments.get("paths") {
+                None => None,
+                Some(Value::Array(paths)) => match paths
+                    .iter()
+                    .map(|path| path.as_str().filter(|path| path.starts_with('/')))
+                    .collect::<Option<Vec<_>>>()
+                {
+                    Some(paths) => Some(paths),
+                    None => return Ok(Err("paths are absolute paths, as strings".to_string())),
+                },
+                Some(other) => return Ok(Err(format!("paths is a list of paths, not {other}"))),
+            };
+            match (paths, cancel) {
+                (Some(paths), false) => {
+                    sent!(page, "Domicile.chooseFiles", json!({"files": paths}));
+                    Ok(Ok(said(
+                        true,
+                        format!("gave the page {} path(s)", paths.len()),
+                    )))
+                }
+                (None, true) => {
+                    sent!(page, "Domicile.chooseFiles", json!({"cancel": true}));
+                    Ok(Ok(said(true, "canceled the file chooser".to_string())))
+                }
+                _ => Ok(Err(
+                    "browser_choose_files takes paths, or cancel: true".to_string()
+                )),
+            }
+        }
         Browser::Screenshot => {
             let shot = sent!(
                 page,
@@ -548,7 +701,9 @@ const KEYS: [(&str, &str, u32, Option<&str>); 14] = [
 /// The view a tool acts in and the element argument `ref` names, if given.
 /// A ref from a view, `<view>:<element>`, names its view; argument `view`
 /// names one for a tool given no ref.
-fn aimed(arguments: &Map<String, Value>) -> Result<(Option<String>, Option<u64>), String> {
+pub(super) fn aimed(
+    arguments: &Map<String, Value>,
+) -> Result<(Option<String>, Option<u64>), String> {
     let view = string(arguments, "view")?;
     let not_a_ref =
         |element: &Value| format!("ref is an element's ref from browser_snapshot, not {element}");

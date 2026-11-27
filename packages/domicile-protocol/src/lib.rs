@@ -99,6 +99,39 @@ pub struct BrowserProfile {
     /// The extension ids it turns on; `None` turns on all of them, or none
     /// for a private profile.
     pub extensions: Option<Vec<String>>,
+    pub protections: BrowserProtections,
+}
+
+/// What a [`BrowserProfile`] keeps sites from learning: the config's
+/// `browser.profiles.<id>.protections`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrowserProtections {
+    /// Blocks cookies a page's embedded sites set or read.
+    pub block_third_party_cookies: bool,
+    /// Sends `Sec-GPC: 1` and sets `navigator.globalPrivacyControl`.
+    pub global_privacy_control: bool,
+    /// Keeps WebRTC from telling sites the local network address.
+    pub hide_local_ip_address: bool,
+    /// Takes the click ids out of links to other sites.
+    pub remove_tracking_from_links: bool,
+    /// Farbles what pages read of the device.
+    pub hide_device_details: bool,
+    /// How its pages block ads and trackers.
+    pub block_ads_and_trackers: AdBlocking,
+}
+
+/// How a profile's pages block ads and trackers, in
+/// [`BrowserProtections`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AdBlocking {
+    /// Blocks other sites' ads and trackers; a site's own only for an
+    /// `$important` rule.
+    Standard,
+    /// Blocks a site's own ads and trackers too.
+    Strict,
+    /// Blocks nothing.
+    Off,
 }
 
 /// One extension's chrome://extensions settings, in
@@ -224,6 +257,25 @@ pub struct SurfaceRect {
     pub y: i32,
     pub width: i32,
     pub height: i32,
+}
+
+/// One step from the top of the config down to a value: a key, or an index
+/// into a list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ConfigKey {
+    Index(usize),
+    Name(String),
+}
+
+/// A temporary change to the config: `value`, JSON text, in place of what the
+/// config file has at `path`, which is `written` (`null` where it has
+/// nothing). See [`ChromeMessage::SetConfigOverride`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigOverride {
+    pub path: Vec<ConfigKey>,
+    pub value: String,
+    pub written: String,
 }
 
 /// Messages sent from the chrome (in-page client) to the host.
@@ -543,6 +595,22 @@ pub enum ChromeMessage {
     /// Answered with [`HostMessage::LogLevelsSet`] on this connection only.
     /// Sent by `domicile set-log-level`.
     SetLogLevels { levels: LogLevels },
+
+    /// Lay `value`, JSON text, over the config at `path` until the desktop
+    /// stops, the config file changes what it has there, or
+    /// [`ChromeMessage::ResetConfigOverrides`]. `null` takes the setting back
+    /// to its default. Refused, changing nothing, when the config would refuse
+    /// the result. Answered with [`HostMessage::ConfigOverrides`] on this
+    /// connection only. Sent by `domicile-app-host` for Settings.
+    SetConfigOverride { path: Vec<ConfigKey>, value: String },
+
+    /// End the temporary changes at or under each of `paths`. Answered with
+    /// [`HostMessage::ConfigOverrides`] on this connection only.
+    ResetConfigOverrides { paths: Vec<Vec<ConfigKey>> },
+
+    /// Report the temporary changes. Answered with
+    /// [`HostMessage::ConfigOverrides`] on this connection only.
+    WhichConfigOverrides,
 
     /// This page has captured its old frame for `theme`; the windows may now
     /// switch.
@@ -1051,6 +1119,17 @@ pub enum HostMessage {
         refused: Option<String>,
     },
 
+    /// Answers [`ChromeMessage::SetConfigOverride`],
+    /// [`ChromeMessage::ResetConfigOverrides`] and
+    /// [`ChromeMessage::WhichConfigOverrides`] on the asking connection only:
+    /// the temporary changes after the request, in the order they were made,
+    /// and why it was refused, if it was.
+    ConfigOverrides {
+        overrides: Vec<ConfigOverride>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        refused: Option<String>,
+    },
+
     /// Answers [`ChromeMessage::SetLogLevels`] on the asking connection only:
     /// why they were not set, or nothing.
     LogLevelsSet {
@@ -1153,6 +1232,11 @@ pub enum HostMessage {
         default_private_profile: String,
         /// Profile ids by site: a host, `*.host`, or a host and path.
         sites: BTreeMap<String, String>,
+        /// The filter lists ads and trackers are blocked with: `https:`
+        /// addresses and absolute paths.
+        block_lists: Vec<String>,
+        /// Filter rules of the user's own, on top of `block_lists`.
+        block_rules: Vec<String>,
     },
 
     /// The config's `spellcheck`: whether the browser checks spelling in
@@ -2662,18 +2746,43 @@ pub enum SystemRequest {
     /// `commands` describes what the page runs, for
     /// `domicile list-shell-commands`, and `bindings` the keys and gestures
     /// that run them, for `domicile list-bindings`, while it listens.
+    /// `on_a_window` says it runs commands on a window they name; a page
+    /// without it never hears one. `completes` says it also completes
+    /// commands: it hears a [`SystemEvent::CompleteShellCommand`] per
+    /// [`SystemRequest::CompleteShell`].
     ShellCommands {
         #[serde(default)]
         commands: Vec<ShellCommandHelp>,
         #[serde(default)]
         bindings: Vec<ShellBinding>,
+        #[serde(default)]
+        on_a_window: bool,
+        #[serde(default)]
+        completes: bool,
     },
     /// Send `command` to every page listening with
     /// [`SystemRequest::ShellCommands`], as a `send-shell` keybinding would
     /// run it. Answered with [`SystemReply::Sent`] once a page ran it, or a
     /// failure when every page refused it or none answered in time.
     /// `domicile send-shell` sends this.
-    SendShell { command: Vec<String> },
+    ///
+    /// With `window`, by its `list-windows` id or the shell's, the command
+    /// acts on that window rather than the user's focus, and goes only to
+    /// pages listening `on_a_window`. With `agent` too, it is agent session
+    /// `agent`'s, refused unless that agent's seat holds the window.
+    SendShell {
+        command: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<u32>,
+    },
+    /// Ask the pages that complete commands what can follow `command`, the
+    /// words typed so far, for values only the shell knows, such as its
+    /// workspace names. Answered with [`SystemReply::Sent`] whose `output` is
+    /// a JSON list of words, from the first page that answers.
+    /// `domicile completions --complete` sends this.
+    CompleteShell { command: Vec<String> },
     /// Open links of `schemes` for the desktop: report each one
     /// [`SystemRequest::OpenLink`] hands over. `domicile open`, and so
     /// `xdg-open` and applications' links, and the Email portal hand them
@@ -3036,8 +3145,20 @@ pub enum SystemEvent {
     /// `path` is absolute.
     Changed { path: String },
     /// A command sent with [`SystemRequest::SendShell`], numbered `sent` for
-    /// [`SystemRequest::AnswerShellCommand`].
-    ShellCommand { command: Vec<String>, sent: u64 },
+    /// [`SystemRequest::AnswerShellCommand`]. With `window`, it acts on that
+    /// window, by its app id or a browser window's engine id, not the
+    /// user's focus.
+    ShellCommand {
+        command: Vec<String>,
+        sent: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window: Option<String>,
+    },
+    /// Words typed so far, sent with [`SystemRequest::CompleteShell`],
+    /// numbered `sent` for [`SystemRequest::AnswerShellCommand`]. The page
+    /// answers with the words that can follow as a JSON list in `output`,
+    /// and runs nothing.
+    CompleteShellCommand { command: Vec<String>, sent: u64 },
     /// A link handed over with [`SystemRequest::OpenLink`], for the page to
     /// open. `app_id` is the asking application's desktop file id, when
     /// known.
@@ -3420,10 +3541,11 @@ pub struct ListedWindow {
     pub app: Option<String>,
     /// A native window's process.
     pub pid: Option<i32>,
-    /// A native window's size, logical.
+    /// A native window's size, logical, or a browser window's page's in CSS
+    /// pixels while the shell draws it.
     pub size: Option<[f64; 2]>,
-    /// It has the keyboard. Only a native window can: the shell's page holds
-    /// the keyboard for browser windows.
+    /// It has the user's keyboard: a native window, or the browser window
+    /// whose page the shell's page focused while no native window has it.
     pub focused: bool,
     /// It asked for the keyboard and was refused.
     pub urgent: bool,
@@ -3431,6 +3553,10 @@ pub struct ListedWindow {
     /// absent when it is the user's. See [`HostMessage::Seats`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub held_by: Option<String>,
+    /// The agent seat whose keyboard is in it (`agent-<session>`): the
+    /// window that agent's commands act on when they name none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focused_by: Option<String>,
     /// A browser window's address, or the one it is opening.
     pub url: Option<String>,
     /// A browser window in the off-the-record profile.
@@ -3514,6 +3640,9 @@ pub enum WatchTopic {
     Inputs,
     /// [`HostMessage::Status`].
     Status,
+    /// [`HostMessage::ConfigOverrides`], for the Settings app to show a
+    /// temporary change another chrome made.
+    ConfigOverrides,
 }
 
 /// An input device as `domicile list-inputs` prints it. See
@@ -3913,6 +4042,25 @@ mod wire_names {
             serde_json::from_str::<ChromeMessage>(sent).expect("the SDK's own wire form"),
             ChromeMessage::SetTheme {
                 theme: Theme::Light
+            }
+        );
+    }
+
+    /// Settings' temporary change, as `domicile-app-host` sends it: keys and
+    /// indexes in the path, the value as JSON text.
+    #[test]
+    fn a_temporary_change_parses() {
+        let sent =
+            r#"{"type":"set_config_override","path":["browser","order",0],"value":"\"work\""}"#;
+        assert_eq!(
+            serde_json::from_str::<ChromeMessage>(sent).expect("the host's wire form"),
+            ChromeMessage::SetConfigOverride {
+                path: vec![
+                    ConfigKey::Name("browser".to_string()),
+                    ConfigKey::Name("order".to_string()),
+                    ConfigKey::Index(0)
+                ],
+                value: "\"work\"".to_string(),
             }
         );
     }

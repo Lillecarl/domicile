@@ -5,10 +5,12 @@
 #define COMPONENTS_DOMICILE_AD_BLOCKING_AD_BLOCKER_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "base/time/time.h"
 #include "services/network/public/mojom/fetch_api.mojom-shared.h"
 
 class GURL;
@@ -18,6 +20,11 @@ namespace domicile {
 // adblock-rust's name for a request's type, as filter options such as
 // `$script` and `$image` name it, from what the request fetches.
 std::string_view AdBlockRequestType(network::mojom::RequestDestination);
+
+// How long a filter list says to keep it before it is fetched again, by its
+// `! Expires:` (`4 days`, `12 hours`), or nothing when it names none or one
+// adblock-rust does not read. `text` is valid UTF-8.
+std::optional<base::TimeDelta> BlockListExpiry(std::string_view text);
 
 // Blocks ads and trackers as Brave does, with Brave's filter engine
 // (adblock-rust) over filter lists in Adblock Plus and uBlock Origin syntax.

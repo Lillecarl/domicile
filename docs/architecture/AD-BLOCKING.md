@@ -81,7 +81,8 @@ An `https:` list is fetched through the system's network context, with no
 profile's cookies, and kept in the user data directory's
 `domicile-block-lists`, by the sha256 of its address. A start builds from
 what it kept, so blocking is up before the network is, then fetches any list
-kept for a day or more; a timer checks every hour. A path is read again at
+kept longer than its `! Expires:` says (`BlockListExpiry`; EasyList's is 4
+days), or a day when it names none; a timer checks every hour. A path is read again at
 each change of the config. A list that can't be read, or isn't UTF-8, is
 left out, and an error names it.
 

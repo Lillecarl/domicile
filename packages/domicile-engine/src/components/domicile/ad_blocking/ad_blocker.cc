@@ -96,6 +96,15 @@ std::string_view AdBlockRequestType(RequestDestination destination) {
   }
 }
 
+std::optional<base::TimeDelta> BlockListExpiry(std::string_view text) {
+  CHECK(base::IsStringUTF8(text));
+  const uint32_t hours = ad_blocking::list_expires_hours(Str(text));
+  if (hours == 0) {
+    return std::nullopt;
+  }
+  return base::Hours(hours);
+}
+
 struct AdBlocker::Engines {
   rust::Box<ad_blocking::FilterEngine> lists;
   rust::Box<ad_blocking::FilterEngine> rules;

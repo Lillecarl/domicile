@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 
-use adblock::lists::{FilterSet, ParseOptions, RuleTypes};
+use adblock::lists::{ExpiresInterval, FilterSet, ParseOptions, RuleTypes};
 use adblock::request::Request;
 use adblock::url_parser::{set_domain_resolver, ResolvesDomain};
 use adblock::Engine;
@@ -57,6 +57,9 @@ mod ffi {
         /// The engine for every list added. Slow: a few hundred milliseconds
         /// for EasyList and EasyPrivacy.
         fn build(builder: Box<FilterSetBuilder>) -> Box<FilterEngine>;
+        /// How long a list says to keep it, by its `! Expires:`, in hours: 0
+        /// when it names none.
+        fn list_expires_hours(text: &str) -> u32;
 
         /// Checks a request for `url`, at host `hostname`, of adblock-rust's
         /// type `request_type`, from the page at `page_hostname`.
@@ -119,6 +122,14 @@ impl FilterSetBuilder {
 
 fn build(builder: Box<FilterSetBuilder>) -> Box<FilterEngine> {
     Box::new(FilterEngine(Engine::new_with_filter_set(builder.0)))
+}
+
+fn list_expires_hours(text: &str) -> u32 {
+    match adblock::lists::read_list_metadata(text).expires {
+        Some(ExpiresInterval::Hours(hours)) => hours.into(),
+        Some(ExpiresInterval::Days(days)) => u32::from(days) * 24,
+        None => 0,
+    }
 }
 
 impl FilterEngine {

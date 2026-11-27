@@ -34,6 +34,19 @@ class AdBlockerTest : public testing::Test {
   std::unique_ptr<AdBlocker> blocker_;
 };
 
+TEST(BlockListExpiryTest, ReadsTheListsExpires) {
+  EXPECT_EQ(BlockListExpiry("! Title: A\n! Expires: 4 days\n||ads.example^\n"),
+            base::Days(4));
+  EXPECT_EQ(BlockListExpiry("! Expires: 12 hours (update frequency)\n"),
+            base::Hours(12));
+}
+
+TEST(BlockListExpiryTest, IsNothingWithoutOne) {
+  EXPECT_EQ(BlockListExpiry("! Title: A\n||ads.example^\n"), std::nullopt);
+  EXPECT_EQ(BlockListExpiry("! Expires: soon\n"), std::nullopt);
+  EXPECT_EQ(BlockListExpiry(""), std::nullopt);
+}
+
 TEST_F(AdBlockerTest, BlocksAnotherSitesRequestAListNames) {
   Build({"/ads/*\n"}, {});
   EXPECT_TRUE(Blocks("https://cdn.example/ads/a.js", "https://news.example/"));

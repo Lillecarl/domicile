@@ -69,7 +69,8 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
           "EasyList, to block ads and trackers with."
         trigger:
           "The desktop starts, or the config names a list, with no copy kept "
-          "or one kept for a day or more."
+          "or one kept longer than its `! Expires:` says, or a day when it "
+          "names none."
         data: "None. The request carries no cookies."
         destination: OTHER
       }
@@ -81,8 +82,9 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
         policy_exception_justification: "Not a Chrome feature."
       })");
 
-// How long a fetched list is kept before it is fetched again, and how often
-// that is checked.
+// How long a fetched list is kept before it is fetched again when it names no
+// `! Expires:`, and how often that is checked. A list that names one sooner
+// than kCheckEvery is fetched at the next check.
 constexpr base::TimeDelta kKeepFor = base::Days(1);
 constexpr base::TimeDelta kCheckEvery = base::Hours(1);
 // The most `DownloadToString` takes (5 MB): it CHECKs the bound. EasyList,
@@ -209,6 +211,10 @@ void AdBlocking::Started(int generation, Read read) {
   }
   texts_ = std::move(read.texts);
   kept_ = std::move(read.kept);
+  keep_for_.clear();
+  for (const auto& [list, text] : texts_) {
+    KeepFor(list, text);
+  }
   Rebuild();
   FetchStale();
 }
@@ -257,14 +263,27 @@ void AdBlocking::Built(int build, std::unique_ptr<AdBlocker> blocker) {
   }
 }
 
+void AdBlocking::KeepFor(const std::string& list, const std::string& text) {
+  if (!IsFetched(list)) {
+    return;
+  }
+  const std::optional<base::TimeDelta> expiry = BlockListExpiry(text);
+  keep_for_[list] = expiry.value_or(kKeepFor);
+  VLOG(1) << "domicile: ad blocking: " << list << " is fetched again after "
+          << keep_for_[list] << (expiry ? ", as it says" : "");
+}
+
 void AdBlocking::FetchStale() {
   const base::Time now = base::Time::Now();
   for (const std::string& list : lists_) {
     if (!IsFetched(list) || fetching_.contains(list)) {
       continue;
     }
+    const auto keep_for = keep_for_.find(list);
     if (auto kept = kept_.find(list);
-        kept != kept_.end() && now - kept->second < kKeepFor) {
+        kept != kept_.end() &&
+        now - kept->second <
+            (keep_for == keep_for_.end() ? kKeepFor : keep_for->second)) {
       continue;
     }
     VLOG(1) << "domicile: ad blocking: fetching " << list;
@@ -309,6 +328,7 @@ void AdBlocking::Fetched(const std::string& list,
   VLOG(1) << "domicile: ad blocking: fetched " << list << ", "
           << text->size() << " bytes";
   kept_[list] = base::Time::Now();
+  KeepFor(list, *text);
   base::ThreadPool::PostTask(
       FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(

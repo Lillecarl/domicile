@@ -6,16 +6,29 @@
 #include <utility>
 
 #include "base/functional/bind.h"
+#include "base/json/json_writer.h"
 #include "base/logging.h"
+#include "base/strings/stringprintf.h"
 #include "base/time/time.h"
+#include "base/values.h"
 #include "components/domicile/renderer/cosmetic_stylesheet.h"
+#include "components/domicile/renderer/procedural_filters/procedural_filters_script.h"
 #include "content/public/renderer/render_frame.h"
+#include "gin/converter.h"
+#include "gin/function_template.h"
+#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
+#include "third_party/blink/public/platform/scheduler/web_agent_group_scheduler.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/web/web_css_origin.h"
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_element.h"
 #include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_script_source.h"
+#include "url/gurl.h"
+#include "v8/include/v8-context.h"
+#include "v8/include/v8-function.h"
+#include "v8/include/v8-object.h"
 
 namespace domicile {
 
@@ -31,6 +44,60 @@ constexpr int kGathersAfterLoad = 15;
 // thousands of generated class names costs the browser one bounded lookup.
 constexpr size_t kMostPerAsk = 2000;
 
+// Brave's kCosmeticFilteringInitScript, set so content_cosmetic.ts does
+// only the procedural filters: `generichide`, as the generic class and id
+// rules are this class's, and `hide1pContent`, as a page hides the same in
+// Standard and Strict and gets nothing back over its own content.
+constexpr char kFlagsScript[] = R"((() => {
+  window.content_cosmetic = window.content_cosmetic || {};
+  const CC = window.content_cosmetic;
+  CC.hide1pContent = true;
+  CC.generichide = true;
+})();)";
+
+// Brave's kProceduralActionsScript: a filter that is one selector with a
+// style becomes a stylesheet rule, and content_cosmetic.ts applies the rest.
+constexpr char kProceduralScript[] = R"((() => {
+  const CC = window.content_cosmetic;
+  let stylesheet = '';
+  CC.proceduralActionFilters = %s.map((f) => JSON.parse(f)).filter((f) => {
+    if (f.selector.length === 1 && f.selector[0].type === 'css-selector' &&
+        f.action && f.action.type === 'style') {
+      stylesheet += f.selector[0].arg + '{' + f.action.arg + '}\n';
+      return false;
+    }
+    return true;
+  });
+  CC.hasProceduralActions = CC.proceduralActionFilters.length > 0;
+  if (stylesheet !== '') {
+    cf_worker.injectStylesheet(stylesheet);
+  }
+})();)";
+
+std::string Json(const std::vector<std::string>& strings) {
+  base::ListValue list;
+  for (const std::string& string : strings) {
+    list.Append(string);
+  }
+  // A list of strings always writes.
+  return base::WriteJson(list).value();
+}
+
+// Sets `object[name]` to a function that runs `callback`.
+template <typename Signature>
+void SetFunction(v8::Isolate* isolate,
+                 v8::Local<v8::Context> context,
+                 v8::Local<v8::Object> object,
+                 std::string_view name,
+                 base::RepeatingCallback<Signature> callback) {
+  object
+      ->Set(context, gin::StringToSymbol(isolate, name),
+            gin::CreateFunctionTemplate(isolate, std::move(callback))
+                ->GetFunction(context)
+                .ToLocalChecked())
+      .Check();
+}
+
 }  // namespace
 
 CosmeticFilters::Next::Next() = default;
@@ -43,8 +110,17 @@ void CosmeticFilters::Attach(content::RenderFrame* frame) {
   new CosmeticFilters(frame);
 }
 
+// static
+void CosmeticFilters::RunAtDocumentStart(content::RenderFrame* frame,
+                                         int32_t world_id) {
+  if (CosmeticFilters* filters = Get(frame)) {
+    filters->RunScripts(world_id);
+  }
+}
+
 CosmeticFilters::CosmeticFilters(content::RenderFrame* frame)
-    : content::RenderFrameObserver(frame) {
+    : content::RenderFrameObserver(frame),
+      content::RenderFrameObserverTracker<CosmeticFilters>(frame) {
   frame->GetAssociatedInterfaceRegistry()
       ->AddInterface<mojom::CosmeticFilters>(base::BindRepeating(
           &CosmeticFilters::Bind, weak_factory_.GetWeakPtr()));
@@ -61,10 +137,14 @@ void CosmeticFilters::Bind(
 
 void CosmeticFilters::Hide(
     const std::vector<std::string>& selectors,
-    mojo::PendingAssociatedRemote<mojom::CosmeticFiltersHost> host) {
+    mojo::PendingAssociatedRemote<mojom::CosmeticFiltersHost> host,
+    const std::string& scriptlets,
+    const std::vector<std::string>& procedural_filters) {
   Next next;
   next.selectors = selectors;
   next.host = std::move(host);
+  next.scriptlets = scriptlets;
+  next.procedural_filters = procedural_filters;
   next_ = std::move(next);
 }
 
@@ -74,12 +154,16 @@ void CosmeticFilters::ReadyToCommitNavigation(
   // sent nothing for (a page in a mode that hides nothing) hides nothing.
   ++document_;
   pending_.clear();
+  scriptlets_.clear();
+  procedural_filters_.clear();
   host_.reset();
   asked_.clear();
   again_.Stop();
   gathers_left_ = 0;
   if (next_.has_value()) {
     pending_ = std::move(next_->selectors);
+    scriptlets_ = std::move(next_->scriptlets);
+    procedural_filters_ = std::move(next_->procedural_filters);
     if (next_->host.is_valid()) {
       host_.Bind(std::move(next_->host));
     }
@@ -92,6 +176,71 @@ void CosmeticFilters::DidCreateDocumentElement() {
     Insert(pending_);
     pending_.clear();
   }
+}
+
+void CosmeticFilters::DidCreateScriptContext(v8::Local<v8::Context> context,
+                                             int32_t world_id) {
+  if (world_id_ != world_id) {
+    return;
+  }
+  v8::Isolate* isolate =
+      render_frame()->GetWebFrame()->GetAgentGroupScheduler()->Isolate();
+  v8::HandleScope handle_scope(isolate);
+  v8::Context::Scope context_scope(context);
+  v8::Local<v8::Object> worker = v8::Object::New(isolate);
+  SetFunction(isolate, context, worker, "injectStylesheet",
+              base::BindRepeating(&CosmeticFilters::InjectStylesheet,
+                                  base::Unretained(this)));
+  SetFunction(isolate, context, worker, "isFirstPartyUrl",
+              base::BindRepeating(&CosmeticFilters::IsFirstPartyUrl,
+                                  base::Unretained(this)));
+  // Asked only without `generichide`, which kFlagsScript sets.
+  SetFunction(isolate, context, worker, "hiddenClassIdSelectors",
+              base::BindRepeating([](const std::string&) {}));
+  context->Global()
+      ->Set(context, gin::StringToSymbol(isolate, "cf_worker"), worker)
+      .Check();
+}
+
+void CosmeticFilters::RunScripts(int32_t world_id) {
+  blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
+  if (!scriptlets_.empty()) {
+    // In the page's world, as Brave runs them: scriptlets wrap the page's
+    // own globals. From here a page's CSP does not stop them.
+    frame->ExecuteScript(
+        blink::WebScriptSource(blink::WebString::FromUtf8(scriptlets_)));
+    scriptlets_.clear();
+  }
+  if (procedural_filters_.empty()) {
+    return;
+  }
+  world_id_ = world_id;
+  const auto run = [&](const std::string& script) {
+    frame->ExecuteScriptInIsolatedWorld(
+        world_id, blink::WebScriptSource(blink::WebString::FromUtf8(script)),
+        blink::BackForwardCacheAware::kAllow);
+  };
+  // The first script in the world makes its context, which gets cf_worker.
+  run(kFlagsScript);
+  run(base::StringPrintf(kProceduralScript,
+                         Json(procedural_filters_).c_str()));
+  run(kProceduralFiltersScript);
+  procedural_filters_.clear();
+}
+
+void CosmeticFilters::InjectStylesheet(const std::string& css) {
+  if (css.empty()) {
+    return;
+  }
+  // A user stylesheet, which beats the page's own `!important` rules.
+  render_frame()->GetWebFrame()->GetDocument().InsertStyleSheet(
+      blink::WebString::FromUtf8(css), nullptr, blink::WebCssOrigin::kUser);
+}
+
+bool CosmeticFilters::IsFirstPartyUrl(const std::string& url) {
+  return net::registry_controlled_domains::SameDomainOrHost(
+      GURL(url), GURL(render_frame()->GetWebFrame()->GetDocument().Url()),
+      net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
 }
 
 void CosmeticFilters::DidDispatchDOMContentLoadedEvent() {

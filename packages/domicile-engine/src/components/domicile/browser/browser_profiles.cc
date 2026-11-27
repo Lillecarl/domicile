@@ -201,8 +201,12 @@ std::optional<BrowserProfiles> ParseBrowserProfiles(
   const base::DictValue* sites = message.FindDict("sites");
   const base::ListValue* block_lists = message.FindList("block_lists");
   const base::ListValue* block_rules = message.FindList("block_rules");
+  const std::string* block_resources = message.FindString("block_resources");
+  const std::optional<bool> block_in_electron_apps =
+      message.FindBool("block_in_electron_apps");
   if (list == nullptr || fallback == nullptr || fallback_private == nullptr ||
-      sites == nullptr || block_lists == nullptr || block_rules == nullptr) {
+      sites == nullptr || block_lists == nullptr || block_rules == nullptr ||
+      block_resources == nullptr || !block_in_electron_apps.has_value()) {
     return std::nullopt;
   }
   BrowserProfiles profiles;
@@ -226,6 +230,8 @@ std::optional<BrowserProfiles> ParseBrowserProfiles(
   }
   profiles.block_lists = *std::move(lists);
   profiles.block_rules = *std::move(rules);
+  profiles.block_resources = *block_resources;
+  profiles.block_in_electron_apps = *block_in_electron_apps;
   profiles.default_profile = *fallback;
   profiles.default_private_profile = *fallback_private;
   if (!Consistent(profiles)) {

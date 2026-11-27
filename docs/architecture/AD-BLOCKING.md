@@ -15,6 +15,15 @@ does; the engine has neither limit.
   `[]` fetches none.
 - **`browser.block_rules`**: rules of the user's own, in the same syntax,
   which apply on top of the lists.
+- **`browser.block_in_electron_apps`**: also blocks in an Electron app's
+  web pages (an `https:` page an app shows), in Standard, as an app's page
+  is in no profile and has no shield. Off unless set: an app can break in
+  ways no shield fixes.
+- **`browser.block_resources`**: the scriptlets and stand-in files that
+  `##+js()` and `$redirect` rules name, as adblock-rust's JSON, fetched,
+  kept and read as a list is. Unset: Brave's
+  [adblock-resources](https://github.com/brave/adblock-resources)
+  (`DEFAULT_BLOCK_RESOURCES`). `""` names none, and such rules only block.
 - **A profile's `protections.block_ads_and_trackers`**: `standard`, `strict`
   or `off`. Unset: `standard`, or `strict` in a private profile.
 
@@ -81,7 +90,8 @@ An `https:` list is fetched through the system's network context, with no
 profile's cookies, and kept in the user data directory's
 `domicile-block-lists`, by the sha256 of its address. A start builds from
 what it kept, so blocking is up before the network is, then fetches any list
-kept for a day or more; a timer checks every hour. A path is read again at
+kept longer than its `! Expires:` says (`BlockListExpiry`; EasyList's is 4
+days), or a day when it names none; a timer checks every hour. A path is read again at
 each change of the config. A list that can't be read, or isn't UTF-8, is
 left out, and an error names it.
 
@@ -98,12 +108,41 @@ fetches and WebSockets, whose page is the frame's tab's main page. Not:
 
 - a navigation of the page itself (`document`), which the user asked for;
 - a worker's own loads, which have no frame;
-- an Electron app's pages, the shell's, `domicile:` and `chrome-extension:`
-  pages;
+- an Electron app's pages, unless `browser.block_in_electron_apps`; the
+  shell's, `domicile:` and `chrome-extension:` pages;
 - a request that isn't `http(s)` or `ws(s)`.
 
 A blocked request fails with `ERR_BLOCKED_BY_CLIENT`, which a page sees as a
 network error. `--vmodule=domicile_ad_blocking=1` logs each one.
+
+Each checked request goes through an `AdBlockingLoader`, which acts on
+`AdBlocker::Decide`:
+
+- **`$redirect`**: a blocked request whose rule names a resource is answered
+  with that stand-in (`noop.js`, a 1×1 GIF) from `browser.block_resources`,
+  as Brave's `MakeStubResponse` does, so a page that waits for the script
+  still runs. It counts as blocked. Without resources it is only blocked.
+- **`$removeparam`**: an allowed GET or HEAD whose rules remove parameters is
+  redirected to the address without them before the network sees it, as an
+  extension's webRequest redirect is. A list's applies where a list's block
+  would (another site's request, or any in Strict); the user's everywhere.
+  As in uBlock Origin, an untyped `$removeparam` is for documents, frames and
+  fetches.
+- **`$csp`**: a document's or frame's response gets the `Content-Security-Policy`
+  the lists' and the user's rules add, in Standard and Strict, as Brave adds
+  it; a frame tree's own navigation is checked in the mode of the page it
+  goes to.
+- **A server's redirect** is checked as a new request: one to a blocked
+  address fails.
+- **CNAME uncloaking**: a request nothing blocked, that the lists could
+  block (another site's, or any in Strict), is checked again under the
+  canonical name its host resolves to, as Brave does, so a tracker a site
+  serves from a subdomain of its own (`metrics.news.example` →
+  `news.example.tracker.example`) is blocked. The name is asked of the
+  frame's network context, keyed as the frame's own requests are. Not
+  behind a proxy, where the name here is not the one the request reaches
+  and a lookup would tell the DNS server what the proxy hides, and not for
+  an address that is an IP.
 
 `guard-ad-blocking.sh` checks what a page loads and hides in each mode.
 
@@ -150,7 +189,8 @@ keeps everything. It leaves alone a link within one site, whose parameters
 may be its own, a frame's navigation, a POST, back, forward and reload, and
 an Electron app's page. `--vmodule=link_tracking_throttle=1` logs each one.
 
-Not yet: the lists' `$removeparam` rules.
+The lists' `$removeparam` rules apply to a page's requests ([What is
+checked](#what-is-checked)), not to its navigation.
 
 ## Device details
 
@@ -184,8 +224,30 @@ Not yet: workers (their `hardwareConcurrency` and `OffscreenCanvas`), WebGL's
 readings, an `AudioContext` played rather than rendered offline, and fonts and
 the screen's size.
 
-Not yet: procedural filters (`:has-text()`, `:upward()`) and scriptlets
-(`##+js()`), which need a script in the page's world.
+## Scriptlets and procedural filters
+
+The lists also run code in a page: a scriptlet (`example.com##+js(set, ads, false)`)
+defuses a site's own anti-adblock or tracking script, and a procedural filter
+(`##div:has-text(Sponsored)`, `:upward(2)`, `:remove()`) hides what no CSS
+selector can name. Both come with a page's cosmetic filters
+(`AdBlocker::CosmeticsFor`, `mojom::CosmeticFilters.Hide`), in Standard and
+Strict.
+
+- **Scriptlets** need `browser.block_resources`, which holds their code.
+  `CosmeticFilters::RunAtDocumentStart`, from
+  `ChromeContentRendererClient::RunScriptsAtDocumentStart` (patch 0296), runs
+  them as one script in the page's world, after an Electron app's preload and
+  before the page's own scripts, as Brave does. From there a page's CSP does
+  not stop them.
+- **Procedural filters** are applied by Brave's `content_cosmetic.ts` and
+  `procedural_filters.ts`, unchanged, from their own isolated world
+  (`ISOLATED_WORLD_ID_DOMICILE_PROCEDURAL_FILTERS`), as the page changes. Its
+  `cf_worker` is bound into each new context of that world. Its flags leave
+  it only the procedural filters: the class and id rules are
+  `CosmeticFilters`' own, and nothing is shown again over a site's own
+  content. `renderer/procedural_filters/bundle.sh` bundles the two scripts
+  from a pinned brave-core revision, checked by sha256; only the bundle is
+  checked in, as a string constant at build time (`embed_script.py`).
 
 ## Key decisions
 
@@ -224,6 +286,8 @@ Not yet: procedural filters (`:has-text()`, `:upward()`) and scriptlets
 - [x] Settings lists the sites with their own mode (`site_privacy`)
 - [x] cosmetic filters: what the lists hide by a page's elements
 - [x] tracking taken out of links to other sites
-- [ ] scriptlets and procedural filters, cookie banners, `$removeparam`
+- [x] `$redirect`, `$removeparam` and `$csp`, with Brave's resources
+- [x] scriptlets and procedural filters
+- [ ] cookie banners
 - [x] fingerprinting protection: canvas, audio and processor count farbled
 - [ ] farbling in workers, WebGL, fonts and the screen

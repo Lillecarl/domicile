@@ -34,7 +34,9 @@ constexpr char kProtections[] =
 // The block lists and rules every message carries.
 constexpr char kBlocking[] =
     R"("block_lists":["https://easylist.to/easylist/easylist.txt"],)"
-    R"("block_rules":["||ads.example^"],)";
+    R"("block_rules":["||ads.example^"],)"
+    R"("block_resources":"https://example.com/resources.json",)"
+    R"("block_in_electron_apps":true,)";
 
 // A message with these sites and a Personal, Work and Private profile. Work
 // lets third-party cookies through and blocks no ads.
@@ -126,6 +128,21 @@ TEST(BrowserProfilesTest, AMessageReadsTheBlockListsAndRules) {
   EXPECT_EQ(read->block_lists, std::vector<std::string>{
                                    "https://easylist.to/easylist/easylist.txt"});
   EXPECT_EQ(read->block_rules, std::vector<std::string>{"||ads.example^"});
+  EXPECT_EQ(read->block_resources, "https://example.com/resources.json");
+  EXPECT_TRUE(read->block_in_electron_apps);
+}
+
+TEST(BrowserProfilesTest, AMessageWithoutTheBlockResourcesIsRefused) {
+  constexpr const char* kLeftOut[] = {
+      R"("block_resources":"https://example.com/resources.json",)",
+      R"("block_in_electron_apps":true,)"};
+  for (const char* left_out : kLeftOut) {
+    std::string message = Message("{}");
+    const size_t at = message.find(left_out);
+    ASSERT_NE(at, std::string::npos) << left_out;
+    message.erase(at, std::string_view(left_out).size());
+    EXPECT_FALSE(ParseBrowserProfiles(Dict(message)).has_value()) << left_out;
+  }
 }
 
 TEST(BrowserProfilesTest, AnAdBlockingModeTheEngineDoesNotKnowIsRefused) {

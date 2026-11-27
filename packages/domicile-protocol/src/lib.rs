@@ -1237,6 +1237,12 @@ pub enum HostMessage {
         block_lists: Vec<String>,
         /// Filter rules of the user's own, on top of `block_lists`.
         block_rules: Vec<String>,
+        /// The scriptlets and stand-in files the rules name, as
+        /// adblock-rust's JSON: an `https:` address or an absolute path, or
+        /// empty for none.
+        block_resources: String,
+        /// Whether Electron apps' web pages are blocked in too.
+        block_in_electron_apps: bool,
     },
 
     /// The config's `spellcheck`: whether the browser checks spelling in

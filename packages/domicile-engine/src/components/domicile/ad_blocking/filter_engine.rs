@@ -6,8 +6,9 @@
 
 use std::collections::HashSet;
 
-use adblock::lists::{FilterSet, ParseOptions, RuleTypes};
+use adblock::lists::{ExpiresInterval, FilterSet, ParseOptions, RuleTypes};
 use adblock::request::Request;
+use adblock::resources::Resource;
 use adblock::url_parser::{set_domain_resolver, ResolvesDomain};
 use adblock::Engine;
 
@@ -21,6 +22,11 @@ mod ffi {
         important: bool,
         /// An exception rule (`@@`) matched.
         exception: bool,
+        /// The `data:` URL a `$redirect` rule answers with instead, or empty.
+        redirect: String,
+        /// The URL less what `$removeparam` rules remove, or empty when they
+        /// remove nothing.
+        rewritten_url: String,
     }
 
     /// What one engine hides on a page at one address, before the page's
@@ -34,6 +40,12 @@ mod ffi {
         exceptions: Vec<String>,
         /// A `$generichide` exception matched: no generic rule applies.
         generichide: bool,
+        /// The page's scriptlets (`##+js()`), as one script, or empty.
+        /// Needs the resources.
+        injected_script: String,
+        /// The page's procedural filters (`:has-text()`, `:upward()`,
+        /// `:remove()`), each as adblock-rust's JSON.
+        procedural_actions: Vec<String>,
     }
 
     unsafe extern "C++" {
@@ -57,6 +69,14 @@ mod ffi {
         /// The engine for every list added. Slow: a few hundred milliseconds
         /// for EasyList and EasyPrivacy.
         fn build(builder: Box<FilterSetBuilder>) -> Box<FilterEngine>;
+        /// How long a list says to keep it, by its `! Expires:`, in hours: 0
+        /// when it names none.
+        fn list_expires_hours(text: &str) -> u32;
+        /// Gives the engine the scriptlets and stand-in files `##+js()` and
+        /// `$redirect` rules name: `json` is adblock-rust's resource list,
+        /// as Brave's adblock-resources builds it. False when it is not one,
+        /// and then the engine has none.
+        fn use_resources(self: &mut FilterEngine, json: &str) -> bool;
 
         /// Checks a request for `url`, at host `hostname`, of adblock-rust's
         /// type `request_type`, from the page at `page_hostname`.
@@ -72,6 +92,18 @@ mod ffi {
             third_party: bool,
             method: &str,
         ) -> Verdict;
+
+        /// The `Content-Security-Policy` the engine's `$csp` rules add to a
+        /// document or frame's response, or empty for none.
+        fn csp_directives(
+            self: &FilterEngine,
+            url: &str,
+            hostname: &str,
+            page_hostname: &str,
+            request_type: &str,
+            third_party: bool,
+            method: &str,
+        ) -> String;
 
         /// What the engine hides on the page at `url`.
         fn cosmetics(self: &FilterEngine, url: &str) -> Cosmetics;
@@ -121,6 +153,14 @@ fn build(builder: Box<FilterSetBuilder>) -> Box<FilterEngine> {
     Box::new(FilterEngine(Engine::new_with_filter_set(builder.0)))
 }
 
+fn list_expires_hours(text: &str) -> u32 {
+    match adblock::lists::read_list_metadata(text).expires {
+        Some(ExpiresInterval::Hours(hours)) => hours.into(),
+        Some(ExpiresInterval::Days(days)) => u32::from(days) * 24,
+        None => 0,
+    }
+}
+
 impl FilterEngine {
     fn check(
         &self,
@@ -138,17 +178,52 @@ impl FilterEngine {
             matched: result.filter.is_some(),
             important: result.important,
             exception: result.exception.is_some(),
+            redirect: result.redirect.unwrap_or_default(),
+            rewritten_url: result.rewritten_url.unwrap_or_default(),
         }
+    }
+
+    fn use_resources(&mut self, json: &str) -> bool {
+        match serde_json::from_str::<Vec<Resource>>(json) {
+            Ok(resources) => {
+                self.0.use_resources(resources);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    fn csp_directives(
+        &self,
+        url: &str,
+        hostname: &str,
+        page_hostname: &str,
+        request_type: &str,
+        third_party: bool,
+        method: &str,
+    ) -> String {
+        let request =
+            Request::preparsed(url, hostname, page_hostname, request_type, third_party, method);
+        self.0.get_csp_directives(&request).unwrap_or_default()
     }
 
     fn cosmetics(&self, url: &str) -> ffi::Cosmetics {
         let resources = self.0.url_cosmetic_resources(url);
         let mut hide_selectors: Vec<String> = resources.hide_selectors.into_iter().collect();
         let mut exceptions: Vec<String> = resources.exceptions.into_iter().collect();
+        let mut procedural_actions: Vec<String> =
+            resources.procedural_actions.into_iter().collect();
         // In order, so a page gets the same stylesheet each time.
         hide_selectors.sort_unstable();
         exceptions.sort_unstable();
-        ffi::Cosmetics { hide_selectors, exceptions, generichide: resources.generichide }
+        procedural_actions.sort_unstable();
+        ffi::Cosmetics {
+            hide_selectors,
+            exceptions,
+            generichide: resources.generichide,
+            injected_script: resources.injected_script,
+            procedural_actions,
+        }
     }
 
     fn hidden_class_id_selectors(

@@ -15,9 +15,14 @@ interface CosmeticFilters {
   // Hide `selectors` in the document about to commit, from its first style.
   // With `host`, also ask it about the document's classes and ids as they
   // appear: none when a `$generichide` exception keeps the generic rules
-  // off the page.
+  // off the page. At document start, run `scriptlets` (`##+js()`, as one
+  // script) in the page's world, and apply `procedural_filters`
+  // (`:has-text()`, `:upward()`; adblock-rust's JSON, one per filter) from
+  // a world of their own.
   Hide(array<string> selectors,
-       pending_associated_remote<CosmeticFiltersHost>? host);
+       pending_associated_remote<CosmeticFiltersHost>? host,
+       string scriptlets,
+       array<string> procedural_filters);
 };
 
 // The browser's end, for one document.

@@ -43,6 +43,13 @@ void AddAll(std::set<std::string>& into,
   }
 }
 
+// Whether `url` is another site's than `page`'s, by registrable domain, as
+// cookies count sites.
+bool IsThirdParty(const GURL& url, const GURL& page) {
+  return !net::registry_controlled_domains::SameDomainOrHost(
+      url, page, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
+}
+
 rust::Box<ad_blocking::FilterEngine> EngineOf(
     const std::vector<std::string>& texts) {
   rust::Box<ad_blocking::FilterSetBuilder> builder =
@@ -96,6 +103,15 @@ std::string_view AdBlockRequestType(RequestDestination destination) {
   }
 }
 
+std::optional<base::TimeDelta> BlockListExpiry(std::string_view text) {
+  CHECK(base::IsStringUTF8(text));
+  const uint32_t hours = ad_blocking::list_expires_hours(Str(text));
+  if (hours == 0) {
+    return std::nullopt;
+  }
+  return base::Hours(hours);
+}
+
 struct AdBlocker::Engines {
   rust::Box<ad_blocking::FilterEngine> lists;
   rust::Box<ad_blocking::FilterEngine> rules;
@@ -104,14 +120,22 @@ struct AdBlocker::Engines {
 // static
 std::unique_ptr<AdBlocker> AdBlocker::Build(
     const std::vector<std::string>& lists,
-    const std::vector<std::string>& rules) {
+    const std::vector<std::string>& rules,
+    std::string_view resources) {
   std::string own;
   for (const std::string& rule : rules) {
     own += rule;
     own += '\n';
   }
-  return base::WrapUnique(new AdBlocker(std::make_unique<Engines>(
-      Engines{.lists = EngineOf(lists), .rules = EngineOf({own})})));
+  auto engines = std::make_unique<Engines>(
+      Engines{.lists = EngineOf(lists), .rules = EngineOf({own})});
+  // Each engine keeps its own copy: adblock-rust has no way to share one.
+  // Not UTF-8 is not adblock-rust's JSON either.
+  const bool has_resources =
+      !resources.empty() && base::IsStringUTF8(resources) &&
+      engines->lists->use_resources(Str(resources)) &&
+      engines->rules->use_resources(Str(resources));
+  return base::WrapUnique(new AdBlocker(std::move(engines), has_resources));
 }
 
 AdBlocker::Cosmetics::Cosmetics() = default;
@@ -119,8 +143,8 @@ AdBlocker::Cosmetics::Cosmetics(Cosmetics&&) = default;
 AdBlocker::Cosmetics& AdBlocker::Cosmetics::operator=(Cosmetics&&) = default;
 AdBlocker::Cosmetics::~Cosmetics() = default;
 
-AdBlocker::AdBlocker(std::unique_ptr<Engines> engines)
-    : engines_(std::move(engines)) {}
+AdBlocker::AdBlocker(std::unique_ptr<Engines> engines, bool has_resources)
+    : engines_(std::move(engines)), has_resources_(has_resources) {}
 
 AdBlocker::~AdBlocker() = default;
 
@@ -129,27 +153,78 @@ bool AdBlocker::ShouldBlock(const GURL& url,
                             std::string_view type,
                             std::string_view method,
                             bool block_first_party) const {
-  const bool third_party =
-      !net::registry_controlled_domains::SameDomainOrHost(
-          url, page,
-          net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
+  return Decide(url, page, type, method, block_first_party).blocks();
+}
+
+AdBlocker::Decision AdBlocker::Decide(const GURL& url,
+                                      const GURL& page,
+                                      std::string_view type,
+                                      std::string_view method,
+                                      bool block_first_party) const {
+  const bool third_party = IsThirdParty(url, page);
   const auto check = [&](const ad_blocking::FilterEngine& engine) {
     return engine.check(Str(url.spec()), Str(url.host()), Str(page.host()),
                         Str(type), third_party, Str(method));
   };
   const ad_blocking::Verdict mine = check(*engines_->rules);
   const ad_blocking::Verdict listed = check(*engines_->lists);
-  if (mine.important || listed.important) {
-    return true;
+  const auto blocked = [](const ad_blocking::Verdict& verdict) {
+    if (verdict.redirect.empty()) {
+      return Decision{.kind = Decision::Kind::kBlock};
+    }
+    return Decision{.kind = Decision::Kind::kRedirect,
+                    .url = GURL(std::string(verdict.redirect))};
+  };
+  const auto rewritten = [&](const ad_blocking::Verdict& verdict) {
+    const GURL to(std::string(verdict.rewritten_url));
+    // A redirect would send a POST's body again, and the network has not
+    // seen the request to know it may.
+    if (verdict.rewritten_url.empty() || !to.is_valid() || to == url ||
+        !(method == "GET" || method == "HEAD")) {
+      return Decision{};
+    }
+    return Decision{.kind = Decision::Kind::kRewrite, .url = to};
+  };
+  if (mine.important) {
+    return blocked(mine);
+  }
+  if (listed.important) {
+    return blocked(listed);
   }
   if (mine.exception) {
-    return false;
+    return rewritten(mine);
   }
   if (mine.matched) {
-    return true;
+    return blocked(mine);
   }
-  return listed.matched && !listed.exception &&
-         (third_party || block_first_party);
+  const bool lists_apply = third_party || block_first_party;
+  if (!lists_apply) {
+    return rewritten(mine);
+  }
+  if (listed.matched && !listed.exception) {
+    return blocked(listed);
+  }
+  const Decision own = rewritten(mine);
+  return own.kind == Decision::Kind::kRewrite ? own : rewritten(listed);
+}
+
+std::string AdBlocker::CspDirectives(const GURL& url,
+                                     const GURL& page,
+                                     std::string_view type,
+                                     std::string_view method) const {
+  const bool third_party = IsThirdParty(url, page);
+  const auto csp = [&](const ad_blocking::FilterEngine& engine) {
+    return std::string(engine.csp_directives(Str(url.spec()), Str(url.host()),
+                                             Str(page.host()), Str(type),
+                                             third_party, Str(method)));
+  };
+  const std::string listed = csp(*engines_->lists);
+  const std::string mine = csp(*engines_->rules);
+  if (listed.empty() || mine.empty()) {
+    return listed + mine;
+  }
+  // Two policies in one header, each enforced, as two headers would be.
+  return listed + "," + mine;
 }
 
 AdBlocker::Cosmetics AdBlocker::CosmeticsFor(const GURL& page) const {
@@ -170,6 +245,13 @@ AdBlocker::Cosmetics AdBlocker::CosmeticsFor(const GURL& page) const {
   cosmetics.hide_selectors.assign(hide.begin(), hide.end());
   cosmetics.exceptions.assign(exceptions.begin(), exceptions.end());
   cosmetics.generichide = mine.generichide || listed.generichide;
+  // The lists' first, so the user's can wrap what they set up.
+  cosmetics.scriptlets =
+      std::string(listed.injected_script) + std::string(mine.injected_script);
+  std::set<std::string> procedural;
+  AddAll(procedural, mine.procedural_actions);
+  AddAll(procedural, listed.procedural_actions);
+  cosmetics.procedural_filters.assign(procedural.begin(), procedural.end());
   return cosmetics;
 }
 

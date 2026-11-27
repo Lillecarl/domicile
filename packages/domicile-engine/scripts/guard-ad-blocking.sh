@@ -68,6 +68,23 @@
 #   off:     S                         the control: its two exports agree,
 #                                      so the others' differences are the
 #                                      farbling's
+#
+# The list also has a rule of each other kind the engine acts on, with
+# resources, a file this guard writes, that hold `noop.js` and a scriptlet
+# that sets a flag: `/stub/*$script,redirect=noop.js`,
+# `||localhost^$xmlhttprequest,removeparam=trk`,
+# `||127.0.0.1^$csp=img-src 'none'`, `127.0.0.1##+js(domicile-guard-flag,
+# ran)` and `127.0.0.1##div:has-text(a procedural ad)`. Asserted
+# separately, as stub rp csp js proc:
+#
+#   default: S D A R H                 the stub ran and was never served;
+#                                      the fetch lost `trk`; the page's image
+#                                      was refused; the scriptlet ran before
+#                                      the page's first script; #proc is
+#                                      hidden
+#   strict:  S D A R H                 the same
+#   off:     L K N N S                 the control: the script came from the
+#                                      server and the rest is untouched
 set -u
 
 SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
@@ -93,6 +110,7 @@ BROKER="${BROKER:-/tmp/domicile-ad-blocking-broker}"
 CONTROL="${CONTROL:-/tmp/domicile-ad-blocking-control}"
 PROFILE="${PROFILE:-/tmp/domicile-ad-blocking-profile}"
 LIST="${LIST:-/tmp/domicile-ad-blocking-list.txt}"
+RESOURCES="${RESOURCES:-/tmp/domicile-ad-blocking-resources.json}"
 ENGINE_LOG="${ENGINE_LOG:-/tmp/domicile-ad-blocking-engine.log}"
 SOCKET_LOG="${SOCKET_LOG:-/tmp/domicile-ad-blocking-socket.log}"
 HTTP_LOG="${HTTP_LOG:-/tmp/domicile-ad-blocking-http.log}"
@@ -108,7 +126,7 @@ cleanup() {
     kill "${STARTED[@]}" 2>/dev/null
   fi
   remove_profile "$PROFILE"
-  rm -f "$LIST"
+  rm -f "$LIST" "$RESOURCES"
 }
 trap cleanup EXIT
 
@@ -133,10 +151,23 @@ wait_for_line() { # $1 tries, $2 pattern, $3 file
   return 1
 }
 
-# 1. The list, as a path: a guard fetches nothing from the internet.
+# 1. The list, as a path: a guard fetches nothing from the internet. Its `$`
+#    is the rules' own, not the shell's.
+# shellcheck disable=SC2016
 printf '%s\n' '! a list for guard-ad-blocking.sh' '/ads/*' '@@/ads/allowed.js' \
   '127.0.0.1##.site-promo' '##.ad-banner' '##div[data-ad]' '##.late-ad' \
-  '##.kept' '127.0.0.1#@#.kept' >"$LIST"
+  '##.kept' '127.0.0.1#@#.kept' \
+  '/stub/*$script,redirect=noop.js' \
+  '||localhost^$xmlhttprequest,removeparam=trk' \
+  "||127.0.0.1^\$csp=img-src 'none'" \
+  '127.0.0.1##+js(domicile-guard-flag, ran)' \
+  '127.0.0.1##div:has-text(a procedural ad)' >"$LIST"
+# The resources, as adblock-rust's JSON: a stand-in script for `$redirect`,
+# and a scriptlet that sets the flag its argument names.
+NOOP="$(printf '%s' '(function() {})();' | base64 -w0)"
+FLAG="$(printf '%s' "window.domicileGuardScriptlet = '{{1}}';" | base64 -w0)"
+printf '[{"name":"noop.js","aliases":["noopjs"],"kind":{"mime":"application/javascript"},"content":"%s"},{"name":"domicile-guard-flag.js","kind":"template","content":"%s"}]\n' \
+  "$NOOP" "$FLAG" >"$RESOURCES"
 
 # 2. The pages, on their own server like every <webview> guard's: `crux`
 #    reaches no arbitrary host.
@@ -165,7 +196,8 @@ PROFILES="{\"profiles\": [\
 {\"id\": \"private\", \"name\": \"Private\", \"color\": \"#a78bfa\", \
 \"private\": true, \"extensions\": null}], \
 \"default_profile\": \"default\", \"default_private_profile\": \"private\", \
-\"sites\": {}, \"block_lists\": [\"$LIST\"], \"block_rules\": [\"/mine/*\"]}"
+\"sites\": {}, \"block_lists\": [\"$LIST\"], \"block_rules\": [\"/mine/*\"], \
+\"block_resources\": \"$RESOURCES\"}"
 rm -f "$SOCKET_LOG"
 python3 "$SCRIPTS/guard-extension-installer-compositor.py" \
   --socket "$CONTROL" --browser-profiles "$PROFILES" >"$SOCKET_LOG" 2>&1 &
@@ -487,9 +519,100 @@ the run did not get as far as reading"
   ;;
 esac
 
-if [ -n "$PASSED" ]; then
-  echo "PASS: $PASSED"
+# The lists' other rules, read and placed apart. `packages/domicile-engine/tests/test-ad-blocking-guard.sh`
+# runs this reading and block directly too.
+READ_EXTRAS="$(awk '
+  match($0, /GUARD extras as=[a-z0-9-]+( [a-z]+=[a-z]+)+/) {
+    n = split(substr($0, RSTART + 13, RLENGTH - 13), f, / /)
+    split(f[1], a, /=/)
+    for (i = 2; i <= n; i++) {
+      split(f[i], kv, /=/)
+      extra[a[2] SUBSEP kv[1]] = kv[2]
+    }
+  }
+  match($0, /^GUARD served as=[a-z0-9-]+ what=stub$/) {
+    split(substr($0, 14), f, /[ =]/)
+    served[f[2]]++
+  }
+  function letters(as,   stub, rp, csp, js, proc) {
+    stub = extra[as SUBSEP "stub"]
+    stub = stub == "blocked" ? "B" : stub != "loaded" ? "?" : served[as] ? "L" : "S"
+    rp = extra[as SUBSEP "rp"]
+    rp = rp == "dropped" ? "D" : rp == "kept" ? "K" : "?"
+    csp = extra[as SUBSEP "csp"]
+    csp = csp == "applied" ? "A" : csp == "none" ? "N" : "?"
+    js = extra[as SUBSEP "js"]
+    js = js == "ran" ? "R" : js == "none" ? "N" : "?"
+    proc = extra[as SUBSEP "proc"]
+    proc = proc == "hidden" ? "H" : proc == "shown" ? "S" : "?"
+    return stub rp csp js proc
+  }
+  END {
+    printf "%s %s %s\n", letters("default"), letters("strict"), letters("off")
+  }' "$ENGINE_LOG" "$HTTP_LOG" 2>/dev/null)"
+
+EXTRAS="$READ_EXTRAS"
+echo "extras: $EXTRAS"
+echo "  (default strict off, each as stub rp csp js proc)"
+
+EXTRA_FAILURE=""
+case "$EXTRAS" in
+"SDARH SDARH LKNNS") ;;
+*"?"*)
+  EXTRA_FAILURE="a page never said what the lists' other rules did: its \
+stub, fetch or image never settled"
+  ;;
+*" "?????" "[!L]???? | *" "?????" "?[!K]??? | *" "?????" "??[!N]?? | \
+  *" "?????" "???[!N]? | *" "?????" "????[!S])
+  EXTRA_FAILURE="off, with blocking off, was changed too, so something other \
+than the blocker did it and the others' results prove nothing"
+  ;;
+B*)
+  EXTRA_FAILURE="THE DEFAULT PROFILE BLOCKED WHAT A \$redirect RULE ANSWERS: \
+the blocker has no resources (block_resources never reached AdBlocking, or \
+use_resources refused the file) or AdBlockingLoader::Stub never answered"
+  ;;
+L*)
+  EXTRA_FAILURE="the default profile loaded the \$redirect rule's script \
+from the server: the blocker did not match it, or the stand-in went to the \
+network"
+  ;;
+?K*)
+  EXTRA_FAILURE="THE DEFAULT PROFILE'S FETCH KEPT WHAT \$removeparam REMOVES: \
+Decide gave no kRewrite, or AdBlockingLoader::RedirectTo was not followed"
+  ;;
+??N*)
+  EXTRA_FAILURE="the default profile's page took an image its \$csp refuses: \
+the policy never reached the document (AdBlockingLoader::OnReceiveResponse, \
+the navigation's loader, PopulateParsedHeaders)"
+  ;;
+???N*)
+  EXTRA_FAILURE="THE DEFAULT PROFILE'S SCRIPTLET NEVER RAN before the page's \
+first script: CosmeticsFor gave no injected script (the resources), Hide \
+never carried it, or CosmeticFilters::RunAtDocumentStart never ran (patch \
+0296)"
+  ;;
+????S*)
+  EXTRA_FAILURE="the default profile showed what a procedural filter hides: \
+the filter never reached the renderer, or content_cosmetic.ts never ran in \
+ISOLATED_WORLD_ID_DOMICILE_PROCEDURAL_FILTERS (its cf_worker)"
+  ;;
+*)
+  EXTRA_FAILURE="strict did other than default with the lists' other rules: \
+they apply the same in both, so the strict profile's page got another's"
+  ;;
+esac
+
+if [ -n "$PASSED" ] && [ -z "$EXTRA_FAILURE" ]; then
+  echo "PASS: $PASSED; and a \$redirect rule's script was a stand-in, a \
+\$removeparam rule took its parameter off a fetch, a \$csp rule's policy \
+refused an image, a scriptlet ran before the page's own script and a \
+procedural filter hid its element, in default and strict, and off changed \
+none of them"
   exit 0
+fi
+if [ -n "$PASSED" ]; then
+  FAILURE="$EXTRA_FAILURE"
 fi
 
 annotate_from "guard-ad-blocking: $FAILURE" "$ENGINE_LOG"

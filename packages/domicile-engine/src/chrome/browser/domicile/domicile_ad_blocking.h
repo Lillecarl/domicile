@@ -40,11 +40,13 @@ class AdBlocker;
 // - An `https:` list is fetched through the system's network context, with
 //   no profile's cookies, and kept in the user data directory's
 //   `domicile-block-lists`. A start reads what it kept, so blocking is up
-//   before the network is, and fetches again a list kept for a day or more,
-//   checking every hour.
+//   before the network is, and fetches again a list kept longer than its
+//   `! Expires:` says, or a day when it names none, checking every hour.
 // - A path is read at each change of the config.
 // - A list that cannot be read, or is not UTF-8 text, is left out, and an
 //   error names it.
+// - The config's resources, the scriptlets and stand-in files the rules
+//   name, are fetched, kept and read as a list is, and given to the blocker.
 //
 // Requests that start while the config's lists are first read and built wait
 // for it, so a page restored at start is blocked like the rest. A rebuild
@@ -58,10 +60,12 @@ class AdBlocking {
   AdBlocking(const AdBlocking&) = delete;
   AdBlocking& operator=(const AdBlocking&) = delete;
 
-  // The config's `browser.block_lists` and `browser.block_rules`. Reads and
-  // builds again when they changed.
+  // The config's `browser.block_lists`, `browser.block_rules` and
+  // `browser.block_resources` (empty for none). Reads and builds again when
+  // they changed.
   void Configure(std::vector<std::string> lists,
-                 std::vector<std::string> rules);
+                 std::vector<std::string> rules,
+                 std::string resources);
 
   // Runs `ready` once the blocker for the config is up: at once, unless the
   // config's lists are being read and built for the first time.
@@ -71,13 +75,18 @@ class AdBlocking {
   // config, and for one with no lists and no rules.
   const AdBlocker* blocker() const { return blocker_.get(); }
 
+  // The config's `browser.block_in_electron_apps`: whether an Electron app's
+  // web pages are blocked in too, in Standard.
+  void set_blocks_electron_apps(bool blocks) { blocks_electron_apps_ = blocks; }
+  bool blocks_electron_apps() const { return blocks_electron_apps_; }
+
  private:
   friend class base::NoDestructor<AdBlocking>;
   AdBlocking();
   ~AdBlocking();
 
-  // What a read of the config's lists found: each list's text, by list, and
-  // when each `https:` one was kept.
+  // What a read of the config's lists and resources found: each one's text,
+  // by its address or path, and when each `https:` one was kept.
   struct Read {
     Read();
     Read(Read&&);
@@ -88,11 +97,16 @@ class AdBlocking {
     std::map<std::string, base::Time> kept;
   };
 
+  // The lists, and the resources when the config names some: what is read,
+  // fetched and kept.
+  std::vector<std::string> Sources() const;
   void Started(int generation, Read read);
   // Builds the blocker from the texts in hand, for `generation`.
   void Rebuild();
   void Built(int build, std::unique_ptr<AdBlocker> blocker);
-  // Fetches each `https:` list kept for a day or more, or not kept.
+  // Records how long the `https:` list `list` with `text` is kept.
+  void KeepFor(const std::string& list, const std::string& text);
+  // Fetches each `https:` list kept longer than KeepFor said, or not kept.
   void FetchStale();
   void Fetched(const std::string& list,
                std::unique_ptr<network::SimpleURLLoader> loader,
@@ -101,6 +115,8 @@ class AdBlocking {
   base::FilePath kept_dir_;
   std::vector<std::string> lists_;
   std::vector<std::string> rules_;
+  std::string resources_;
+  bool blocks_electron_apps_ = false;
   bool configured_ = false;
   // Bumped on each change of the config, so an answer for an older one is
   // dropped.
@@ -115,6 +131,8 @@ class AdBlocking {
   std::vector<base::OnceClosure> waiting_;
   std::map<std::string, std::string> texts_;
   std::map<std::string, base::Time> kept_;
+  // How long each fetched list in `texts_` is kept, from its `! Expires:`.
+  std::map<std::string, base::TimeDelta> keep_for_;
   std::set<std::string> fetching_;
   std::unique_ptr<AdBlocker> blocker_;
   base::RepeatingTimer refresh_;
@@ -124,8 +142,9 @@ class AdBlocking {
 // Puts AdBlocking in front of `frame`'s network loads: a request a website's
 // page makes, in a profile that blocks ads, fails with
 // ERR_BLOCKED_BY_CLIENT when the blocker says so, and any other goes to the
-// network as before. Not for a worker's loads (no frame), an Electron app's
-// pages, or the shell's and extensions' own pages. Called from
+// network as before. Not for a worker's loads (no frame), or the shell's and
+// extensions' own pages; an Electron app's web pages only when the config
+// asks (`browser.block_in_electron_apps`), in Standard. Called from
 // ChromeContentBrowserClient::WillCreateURLLoaderFactory.
 void ProxyAdBlocking(content::RenderFrameHost* frame,
                      network::URLLoaderFactoryBuilder& builder);
@@ -133,8 +152,8 @@ void ProxyAdBlocking(content::RenderFrameHost* frame,
 // Hides what the lists name by its elements in each website page `guest`
 // commits, in its mode (Standard and Strict alike; Off hides nothing): sends
 // the page's frame its cosmetic filters before it commits, for
-// CosmeticFilters in the renderer. Not an Electron app's pages. From
-// AttachTabHelpers.
+// CosmeticFilters in the renderer. An Electron app's web pages only when the
+// config asks, in Standard. From AttachTabHelpers.
 void AttachCosmeticFiltering(content::WebContents& guest);
 
 }  // namespace domicile

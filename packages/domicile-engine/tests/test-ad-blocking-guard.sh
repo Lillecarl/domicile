@@ -13,6 +13,9 @@
 #   - Each profile but off reading the canvas, audio and processor count a
 #     little off, the same way twice, passes; off's must be the truth.
 #   - Each wrong letter names the part of the blocker it points at.
+#   - The lists' other rules: a `$redirect` stand-in the server never served,
+#     a removed parameter, a refused image, a scriptlet and a procedural
+#     filter in default and strict, and none of them in off, passes.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -24,7 +27,9 @@ GUARD="$ROOT/packages/domicile-engine/scripts/guard-ad-blocking.sh"
 
 READING="$(awk '/^READ="\$\(awk/,/"\$HTTP_LOG" 2>\/dev\/null\)"$/' "$GUARD")"
 BLOCK="$(awk '/^FAILURE=""$/,/^esac$/' "$GUARD")"
-[ -n "$READING" ] && [ -n "$BLOCK" ] || {
+EXTRAS_READING="$(awk '/^READ_EXTRAS="\$\(awk/,/"\$HTTP_LOG" 2>\/dev\/null\)"$/' "$GUARD")"
+EXTRAS_BLOCK="$(awk '/^EXTRA_FAILURE=""$/,/^esac$/' "$GUARD")"
+[ -n "$READING" ] && [ -n "$BLOCK" ] && [ -n "$EXTRAS_READING" ] && [ -n "$EXTRAS_BLOCK" ] || {
   echo "no reading or verdict block in $GUARD — its markers moved. Fix this test with it." >&2
   exit 1
 }
@@ -282,6 +287,63 @@ expect "off's canvas varying by itself is a failure" "fail" \
   "$(verdict "1 BLBLL BBBLL LLLLL 0 HHHHSS HHHHSS SSSSSS KDK KDD KKK CCCKS CCCKS V")"
 expect "and names varies on this machine" "yes" \
   "$(says "1 BLBLL BBBLL LLLLL 0 HHHHSS HHHHSS SSSSSS KDK KDD KKK CCCKS CCCKS V" "varies on this machine")"
+
+extras_reads() { # lines...
+  log "$@"
+  (
+    ENGINE_LOG="$WORK/engine.log"
+    HTTP_LOG="$WORK/http.log"
+    eval "$EXTRAS_READING"
+    echo "$READ_EXTRAS"
+  )
+}
+
+extras_says() { # $1 EXTRAS, $2 what the sentence must contain, or "" for a pass
+  (
+    EXTRAS="$1"
+    eval "$EXTRAS_BLOCK"
+    case "$EXTRA_FAILURE" in
+    "") [ -z "$2" ] && echo yes || echo no ;;
+    *"$2"*) [ -n "$2" ] && echo yes || echo no ;;
+    *) echo no ;;
+    esac
+  )
+}
+
+extras() { # $1 as, then stub rp csp js proc
+  echo "extras as=$1 stub=$2 rp=$3 csp=$4 js=$5 proc=$6"
+}
+
+echo
+echo "the lists' other rules"
+expect "the three profiles as configured" "SDARH SDARH LKNNS" \
+  "$(extras_reads \
+    "$(extras default loaded dropped applied ran hidden)" \
+    "$(extras strict loaded dropped applied ran hidden)" \
+    "$(extras off loaded kept none none shown)" \
+    served=off:stub)"
+expect "a stub the server served is the server's script" "LDARH ????? ?????" \
+  "$(extras_reads "$(extras default loaded dropped applied ran hidden)" \
+    served=default:stub)"
+expect "a page that never reported" "????? ????? ?????" "$(extras_reads)"
+expect "the three profiles as configured is the pass" "yes" \
+  "$(extras_says "SDARH SDARH LKNNS" "")"
+expect "a missing report is a failure" "yes" \
+  "$(extras_says "SDARH ????? LKNNS" "never said")"
+expect "off changed is a failure that proves nothing" "yes" \
+  "$(extras_says "SDARH SDARH LKNRS" "prove nothing")"
+expect "a blocked stub names the resources" "yes" \
+  "$(extras_says "BDARH SDARH LKNNS" "no resources")"
+expect "a kept parameter names the rewrite" "yes" \
+  "$(extras_says "SKARH SDARH LKNNS" "kRewrite")"
+expect "a refused-nothing image names the policy" "yes" \
+  "$(extras_says "SDNRH SDARH LKNNS" "PopulateParsedHeaders")"
+expect "a scriptlet that never ran names patch 0296" "yes" \
+  "$(extras_says "SDANH SDARH LKNNS" "0296")"
+expect "a procedural filter that hid nothing names its world" "yes" \
+  "$(extras_says "SDARS SDARH LKNNS" "PROCEDURAL_FILTERS")"
+expect "strict unlike default is a failure" "yes" \
+  "$(extras_says "SDARH SDANH LKNNS" "strict did other")"
 
 echo
 if [ "$FAILED" -eq 0 ]; then

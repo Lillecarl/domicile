@@ -35,6 +35,21 @@ each X `hidden` or `shown`:
                            for (127.0.0.1#@#)
   plain    .plain          nothing names it
 
+With the hidden line it also logs what the lists' other rules did:
+
+  GUARD extras as=ID stub=X rp=X csp=X js=X proc=X
+
+  stub  localhost/stub/s.js, which a `$redirect` rule names: `loaded` or
+        `blocked` (whether the server served it is in its log)
+  rp    whether `trk`, which a `$removeparam` rule removes, reached
+        localhost/echo from a fetch: `kept` or `dropped`
+  csp   whether an image from localhost failed under the page's own
+        `$csp=img-src 'none'`: `applied` or `none`
+  js    whether a scriptlet (`##+js()`) set its flag before the page's first
+        script: `ran` or `none`
+  proc  whether a procedural filter (`:has-text()`) hid #proc: `hidden` or
+        `shown`
+
 Then it follows a link to the other site that carries a click id and a
 campaign parameter, `/landing?as=ID&keep=1&fbclid=f&utm_source=u` at
 localhost, which logs what reached it:
@@ -59,6 +74,7 @@ guard.
 """
 
 import argparse
+import json
 import re
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -69,6 +85,11 @@ PAGE = """<!doctype html>
   <head>
     <meta charset="utf-8" />
     <title>a page that loads and shows ads and says which ran</title>
+    <script>
+      // Before anything of the page's: a scriptlet runs earlier still.
+      window.guardScriptlet =
+        window.domicileGuardScriptlet === "ran" ? "ran" : "none";
+    </script>
   </head>
   <body>
     <div class="site-promo" id="site">a site's own ad</div>
@@ -76,6 +97,7 @@ PAGE = """<!doctype html>
     <div data-ad="1" id="complex">an ad by its attribute</div>
     <div class="kept" id="kept">an ad the site keeps</div>
     <div class="plain" id="plain">no ad</div>
+    <div id="proc">a procedural ad</div>
     <script>
       const as = new URLSearchParams(location.search).get("as");
       const port = location.port;
@@ -104,13 +126,34 @@ PAGE = """<!doctype html>
             `mine=${ran.mine} allowed=${ran.allowed} ok=${ran.ok}`,
         );
       });
+      // A script a `$redirect` rule answers with a stand-in, a fetch whose
+      // parameter a `$removeparam` rule removes, and an image the page's
+      // `$csp` refuses.
+      const stub = new Promise((resolve) => {
+        const script = document.createElement("script");
+        script.src = `http://localhost:${port}/stub/s.js?as=${as}`;
+        script.onload = () => resolve("loaded");
+        script.onerror = () => resolve("blocked");
+        document.head.append(script);
+      });
+      const rp = fetch(`http://localhost:${port}/echo?as=${as}&keep=1&trk=1`)
+        .then((response) => response.json())
+        .then((echoed) => (echoed.keys.includes("trk") ? "kept" : "dropped"))
+        .catch(() => "failed");
+      const csp = new Promise((resolve) => {
+        const image = new Image();
+        image.onload = () => resolve("none");
+        image.onerror = () => resolve("applied");
+        image.src = `http://localhost:${port}/pixel.gif?as=${as}`;
+      });
+      const extras = Promise.all([stub, rp, csp]);
       // An ad a page adds after it loaded, as many do, then a look at what
       // is hidden once the engine has had time to gather it again.
       const loaded = new Promise((resolve) => {
         addEventListener("load", resolve);
       });
       const after = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-      Promise.all([...settled, loaded])
+      Promise.all([...settled, loaded, extras])
         .then(() => after(3000))
         .then(() => {
           const late = document.createElement("div");
@@ -120,7 +163,8 @@ PAGE = """<!doctype html>
           document.body.append(late);
           return after(5000);
         })
-        .then(() => {
+        .then(() => extras)
+        .then(([stubbed, removed, refused]) => {
           const how = (id) =>
             getComputedStyle(document.getElementById(id)).display === "none"
               ? "hidden"
@@ -129,6 +173,10 @@ PAGE = """<!doctype html>
             `GUARD hidden as=${as} site=${how("site")} ` +
               `generic=${how("generic")} complex=${how("complex")} ` +
               `late=${how("late")} kept=${how("kept")} plain=${how("plain")}`,
+          );
+          console.log(
+            `GUARD extras as=${as} stub=${stubbed} rp=${removed} ` +
+              `csp=${refused} js=${window.guardScriptlet} proc=${how("proc")}`,
           );
           location.href =
             `http://localhost:${port}/landing?as=${as}&keep=1&fbclid=f&` +
@@ -204,7 +252,14 @@ SCRIPTS = {
     "/mine/own.js": "mine",
     "/ads/allowed.js": "allowed",
     "/ok.js": "ok",
+    "/stub/s.js": "stub",
 }
+
+# A 1×1 transparent GIF.
+PIXEL = bytes.fromhex(
+    "47494638396101000100800000000000ffffff21f90401000000002c"
+    "00000000010001000002024401003b"
+)
 
 # A profile id, as the config allows one. Anything else is not logged as-is.
 ID = re.compile(r"^[a-z0-9-]+$")
@@ -217,7 +272,10 @@ class TwoSites(BaseHTTPRequestHandler):
         url = urlsplit(self.path)
         as_ = parse_qs(url.query).get("as", [""])[0]
         pages = {"/page": PAGE, "/landing": LANDING}
-        if (url.path not in pages and url.path not in SCRIPTS) or not ID.match(as_):
+        others = ("/echo", "/pixel.gif")
+        if (
+            url.path not in pages and url.path not in SCRIPTS and url.path not in others
+        ) or not ID.match(as_):
             self.send_error(
                 404, "this server has /page?as=ID, its scripts and /landing?as=ID"
             )
@@ -226,6 +284,13 @@ class TwoSites(BaseHTTPRequestHandler):
         if url.path in pages:
             body = pages[url.path].encode("utf-8")
             kind = "text/html; charset=utf-8"
+        elif url.path == "/echo":
+            # The parameter names that reached it, for another site's fetch.
+            body = json.dumps({"keys": sorted(parse_qs(url.query))}).encode()
+            kind = "application/json"
+        elif url.path == "/pixel.gif":
+            body = PIXEL
+            kind = "image/gif"
         else:
             print("GUARD served as=%s what=%s" % (as_, SCRIPTS[url.path]), flush=True)
             body = b"// a script that ran\n"
@@ -233,6 +298,7 @@ class TwoSites(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 

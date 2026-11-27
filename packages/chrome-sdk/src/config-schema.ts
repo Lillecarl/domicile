@@ -79,6 +79,11 @@ export const browserConfigSchema = z.strictObject({
       "https://easylist.to/easylist/easyprivacy.txt",
       "https://ublockorigin.github.io/uAssets/filters/filters.txt",
     ]),
+  block_resources: z
+    .string()
+    .prefault(
+      "https://raw.githubusercontent.com/brave/adblock-resources/master/dist/resources.json",
+    ),
   block_rules: z.array(z.string()).prefault([]),
   default_private_profile: z.string().prefault("private"),
   default_profile: z.string().prefault("default"),
@@ -581,6 +586,8 @@ export const configSchema = z.strictObject({
       "https://easylist.to/easylist/easyprivacy.txt",
       "https://ublockorigin.github.io/uAssets/filters/filters.txt",
     ],
+    block_resources:
+      "https://raw.githubusercontent.com/brave/adblock-resources/master/dist/resources.json",
     block_rules: [],
     default_private_profile: "private",
     default_profile: "default",

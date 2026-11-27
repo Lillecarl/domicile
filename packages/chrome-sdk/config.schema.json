@@ -58,6 +58,11 @@
           },
           "type": "array"
         },
+        "block_resources": {
+          "default": "https://raw.githubusercontent.com/brave/adblock-resources/master/dist/resources.json",
+          "description": "The scriptlets and stand-in files the lists' `##+js()` and `$redirect`\nrules name, as adblock-rust's JSON: an `https:` address, which the\nengine fetches and keeps up to date, or an absolute path. Brave's\n`adblock-resources` unless set; `\"\"` names none, and those rules\nonly block.",
+          "type": "string"
+        },
         "block_rules": {
           "default": [],
           "description": "Rules of your own, in the same syntax, which apply on top of\n`block_lists`.",
@@ -1154,6 +1159,7 @@
           "https://easylist.to/easylist/easyprivacy.txt",
           "https://ublockorigin.github.io/uAssets/filters/filters.txt"
         ],
+        "block_resources": "https://raw.githubusercontent.com/brave/adblock-resources/master/dist/resources.json",
         "block_rules": [],
         "default_private_profile": "private",
         "default_profile": "default",

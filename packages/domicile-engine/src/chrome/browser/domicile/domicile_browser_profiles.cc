@@ -167,7 +167,8 @@ void BrowserProfileRegistry::Configure(Profile& shell,
   }
   InstallExtensions();
   Protect();
-  AdBlocking::Get().Configure(config_.block_lists, config_.block_rules);
+  AdBlocking::Get().Configure(config_.block_lists, config_.block_rules,
+                              config_.block_resources);
   if (profiles_ != before) {
     for (Observer& observer : observers_) {
       observer.OnBrowserProfilesChanged();

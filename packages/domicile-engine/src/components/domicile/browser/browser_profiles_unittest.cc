@@ -34,7 +34,8 @@ constexpr char kProtections[] =
 // The block lists and rules every message carries.
 constexpr char kBlocking[] =
     R"("block_lists":["https://easylist.to/easylist/easylist.txt"],)"
-    R"("block_rules":["||ads.example^"],)";
+    R"("block_rules":["||ads.example^"],)"
+    R"("block_resources":"https://example.com/resources.json",)";
 
 // A message with these sites and a Personal, Work and Private profile. Work
 // lets third-party cookies through and blocks no ads.
@@ -126,6 +127,7 @@ TEST(BrowserProfilesTest, AMessageReadsTheBlockListsAndRules) {
   EXPECT_EQ(read->block_lists, std::vector<std::string>{
                                    "https://easylist.to/easylist/easylist.txt"});
   EXPECT_EQ(read->block_rules, std::vector<std::string>{"||ads.example^"});
+  EXPECT_EQ(read->block_resources, "https://example.com/resources.json");
 }
 
 TEST(BrowserProfilesTest, AnAdBlockingModeTheEngineDoesNotKnowIsRefused) {

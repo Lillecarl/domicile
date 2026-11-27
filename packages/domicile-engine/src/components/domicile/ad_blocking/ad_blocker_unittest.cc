@@ -15,13 +15,20 @@ namespace {
 
 using network::mojom::RequestDestination;
 
+// adblock-rust's resource list with one stand-in script, `noop.js`, whose
+// content is `(function() {})();` in base64.
+constexpr char kResources[] =
+    R"([{"name":"noop.js","aliases":["noopjs"],)"
+    R"("kind":{"mime":"application/javascript"},)"
+    R"("content":"KGZ1bmN0aW9uKCkge30pKCk7"}])";
+
 constexpr bool kStandard = false;
 constexpr bool kStrict = true;
 
 class AdBlockerTest : public testing::Test {
  protected:
   void Build(std::vector<std::string> lists, std::vector<std::string> rules) {
-    blocker_ = AdBlocker::Build(lists, rules);
+    blocker_ = AdBlocker::Build(lists, rules, /*resources=*/"");
   }
 
   bool Blocks(const char* url,
@@ -33,6 +40,18 @@ class AdBlockerTest : public testing::Test {
 
   std::unique_ptr<AdBlocker> blocker_;
 };
+
+TEST(AdBlockerResourcesTest, TakesAdblockRustsResourceList) {
+  EXPECT_TRUE(AdBlocker::Build({"||ads.example^\n"}, {}, kResources)
+                  ->has_resources());
+}
+
+TEST(AdBlockerResourcesTest, HasNoneForNoneOrAnotherText) {
+  EXPECT_FALSE(AdBlocker::Build({}, {}, "")->has_resources());
+  EXPECT_FALSE(AdBlocker::Build({}, {}, "{\"not\": \"a list\"}")
+                   ->has_resources());
+  EXPECT_FALSE(AdBlocker::Build({}, {}, "\xff\xfe")->has_resources());
+}
 
 TEST(BlockListExpiryTest, ReadsTheListsExpires) {
   EXPECT_EQ(BlockListExpiry("! Title: A\n! Expires: 4 days\n||ads.example^\n"),

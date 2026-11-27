@@ -226,6 +226,9 @@ std::optional<BrowserProfiles> ParseBrowserProfiles(
   }
   profiles.block_lists = *std::move(lists);
   profiles.block_rules = *std::move(rules);
+  if (const std::string* resources = message.FindString("block_resources")) {
+    profiles.block_resources = *resources;
+  }
   profiles.default_profile = *fallback;
   profiles.default_private_profile = *fallback_private;
   if (!Consistent(profiles)) {

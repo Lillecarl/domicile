@@ -961,13 +961,17 @@ fn ads_are_blocked_with_easylist_easyprivacy_and_ublock_origins_filters() {
         ]
     );
     assert!(browser.block_rules.is_empty());
+    assert_eq!(
+        browser.block_resources,
+        "https://raw.githubusercontent.com/brave/adblock-resources/master/dist/resources.json"
+    );
 }
 
 #[test]
 fn the_config_names_its_own_block_lists_and_rules() {
     let browser = Config::parse(&browser_config(
         r#", "block_lists": ["https://example.com/list.txt", "/etc/domicile/mine.txt"],
-            "block_rules": ["||ads.example^"]"#,
+            "block_rules": ["||ads.example^"], "block_resources": """#,
     ))
     .unwrap()
     .browser;
@@ -976,6 +980,7 @@ fn the_config_names_its_own_block_lists_and_rules() {
         ["https://example.com/list.txt", "/etc/domicile/mine.txt"]
     );
     assert_eq!(browser.block_rules, ["||ads.example^"]);
+    assert_eq!(browser.block_resources, "");
 }
 
 #[test]
@@ -987,6 +992,32 @@ fn a_block_list_is_an_https_address_or_an_absolute_path() {
             matches!(err, ConfigError::Validation(_)),
             "{list:?}: got {err:?}"
         );
+    }
+}
+
+#[test]
+fn block_resources_are_an_https_address_an_absolute_path_or_none() {
+    for resources in ["http://example.com/resources.json", "resources.json"] {
+        let err = Config::parse(&browser_config(&format!(
+            r#", "block_resources": {resources:?}"#
+        )))
+        .unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Validation(_)),
+            "{resources:?}: got {err:?}"
+        );
+    }
+    for resources in [
+        "https://example.com/resources.json",
+        "/etc/resources.json",
+        "",
+    ] {
+        let browser = Config::parse(&browser_config(&format!(
+            r#", "block_resources": {resources:?}"#
+        )))
+        .unwrap()
+        .browser;
+        assert_eq!(browser.block_resources, resources);
     }
 }
 

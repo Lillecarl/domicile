@@ -93,6 +93,14 @@ export type BrowserConfig = {
    * `block_lists`.
    */
   block_rules?: string[];
+  /**
+   * The scriptlets and stand-in files the lists' `##+js()` and `$redirect`
+   * rules name, as adblock-rust's JSON: an `https:` address, which the
+   * engine fetches and keeps up to date, or an absolute path. Brave's
+   * `adblock-resources` unless set; `""` names none, and those rules
+   * only block.
+   */
+  block_resources?: string;
   /** The profile a new private window opens in. Private. */
   default_private_profile?: string;
   /** The profile a site opens in when `sites` names none. Not private. */

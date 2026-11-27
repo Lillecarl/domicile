@@ -61,13 +61,19 @@ class AdBlocker {
   };
 
   // `lists` are filter lists' texts, each valid UTF-8; `rules` the user's own
-  // rules, one per entry.
+  // rules, one per entry; `resources` the scriptlets and stand-in files the
+  // rules name, as adblock-rust's JSON, or empty for none.
   static std::unique_ptr<AdBlocker> Build(const std::vector<std::string>& lists,
-                                          const std::vector<std::string>& rules);
+                                          const std::vector<std::string>& rules,
+                                          std::string_view resources);
 
   AdBlocker(const AdBlocker&) = delete;
   AdBlocker& operator=(const AdBlocker&) = delete;
   ~AdBlocker();
+
+  // Whether the engines took the resources Build was given: false for none,
+  // and for a text that is not adblock-rust's resource list.
+  bool has_resources() const { return has_resources_; }
 
   // Whether to block a `method` request for `url`, of AdBlockRequestType
   // `type`, from the page at `page`, the top-level document's address.
@@ -97,9 +103,10 @@ class AdBlocker {
 
  private:
   struct Engines;
-  explicit AdBlocker(std::unique_ptr<Engines> engines);
+  AdBlocker(std::unique_ptr<Engines> engines, bool has_resources);
 
   const std::unique_ptr<Engines> engines_;
+  const bool has_resources_;
 };
 
 }  // namespace domicile

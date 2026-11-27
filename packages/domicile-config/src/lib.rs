@@ -902,7 +902,17 @@ pub struct BrowserConfig {
     /// Rules of your own, in the same syntax, which apply on top of
     /// `block_lists`.
     pub block_rules: Vec<String>,
+    /// The scriptlets and stand-in files the lists' `##+js()` and `$redirect`
+    /// rules name, as adblock-rust's JSON: an `https:` address, which the
+    /// engine fetches and keeps up to date, or an absolute path. Brave's
+    /// `adblock-resources` unless set; `""` names none, and those rules
+    /// only block.
+    pub block_resources: String,
 }
+
+/// The resources [`BrowserConfig::block_resources`] names unless set.
+pub const DEFAULT_BLOCK_RESOURCES: &str =
+    "https://raw.githubusercontent.com/brave/adblock-resources/master/dist/resources.json";
 
 /// The lists [`BrowserConfig::block_lists`] names unless set.
 pub const DEFAULT_BLOCK_LISTS: [&str; 3] = [
@@ -937,6 +947,7 @@ impl Default for BrowserConfig {
             sites: BTreeMap::new(),
             block_lists: DEFAULT_BLOCK_LISTS.map(String::from).to_vec(),
             block_rules: Vec::new(),
+            block_resources: DEFAULT_BLOCK_RESOURCES.to_string(),
         }
     }
 }
@@ -1108,6 +1119,12 @@ impl BrowserConfig {
         if let Some(list) = self.block_lists.iter().find(|list| !is_block_list(list)) {
             return invalid(format!(
                 "browser.block_lists {list:?} is not an `https:` address or an absolute path"
+            ));
+        }
+        if !self.block_resources.is_empty() && !is_block_list(&self.block_resources) {
+            return invalid(format!(
+                "browser.block_resources {:?} is not an `https:` address or an absolute path",
+                self.block_resources
             ));
         }
         match profile(&self.default_profile) {

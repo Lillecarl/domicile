@@ -8,6 +8,7 @@ use std::collections::HashSet;
 
 use adblock::lists::{ExpiresInterval, FilterSet, ParseOptions, RuleTypes};
 use adblock::request::Request;
+use adblock::resources::Resource;
 use adblock::url_parser::{set_domain_resolver, ResolvesDomain};
 use adblock::Engine;
 
@@ -21,6 +22,11 @@ mod ffi {
         important: bool,
         /// An exception rule (`@@`) matched.
         exception: bool,
+        /// The `data:` URL a `$redirect` rule answers with instead, or empty.
+        redirect: String,
+        /// The URL less what `$removeparam` rules remove, or empty when they
+        /// remove nothing.
+        rewritten_url: String,
     }
 
     /// What one engine hides on a page at one address, before the page's
@@ -60,6 +66,11 @@ mod ffi {
         /// How long a list says to keep it, by its `! Expires:`, in hours: 0
         /// when it names none.
         fn list_expires_hours(text: &str) -> u32;
+        /// Gives the engine the scriptlets and stand-in files `##+js()` and
+        /// `$redirect` rules name: `json` is adblock-rust's resource list,
+        /// as Brave's adblock-resources builds it. False when it is not one,
+        /// and then the engine has none.
+        fn use_resources(self: &mut FilterEngine, json: &str) -> bool;
 
         /// Checks a request for `url`, at host `hostname`, of adblock-rust's
         /// type `request_type`, from the page at `page_hostname`.
@@ -75,6 +86,18 @@ mod ffi {
             third_party: bool,
             method: &str,
         ) -> Verdict;
+
+        /// The `Content-Security-Policy` the engine's `$csp` rules add to a
+        /// document or frame's response, or empty for none.
+        fn csp_directives(
+            self: &FilterEngine,
+            url: &str,
+            hostname: &str,
+            page_hostname: &str,
+            request_type: &str,
+            third_party: bool,
+            method: &str,
+        ) -> String;
 
         /// What the engine hides on the page at `url`.
         fn cosmetics(self: &FilterEngine, url: &str) -> Cosmetics;
@@ -149,7 +172,33 @@ impl FilterEngine {
             matched: result.filter.is_some(),
             important: result.important,
             exception: result.exception.is_some(),
+            redirect: result.redirect.unwrap_or_default(),
+            rewritten_url: result.rewritten_url.unwrap_or_default(),
         }
+    }
+
+    fn use_resources(&mut self, json: &str) -> bool {
+        match serde_json::from_str::<Vec<Resource>>(json) {
+            Ok(resources) => {
+                self.0.use_resources(resources);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    fn csp_directives(
+        &self,
+        url: &str,
+        hostname: &str,
+        page_hostname: &str,
+        request_type: &str,
+        third_party: bool,
+        method: &str,
+    ) -> String {
+        let request =
+            Request::preparsed(url, hostname, page_hostname, request_type, third_party, method);
+        self.0.get_csp_directives(&request).unwrap_or_default()
     }
 
     fn cosmetics(&self, url: &str) -> ffi::Cosmetics {

@@ -302,6 +302,7 @@ fn browser_profiles_wire_shape_is_pinned() {
         sites: [("github.com/acme".to_string(), "work".to_string())].into(),
         block_lists: vec!["https://easylist.to/easylist/easylist.txt".into()],
         block_rules: vec!["||ads.example^".into()],
+        block_resources: "https://example.com/resources.json".into(),
     })
     .unwrap();
     assert_eq!(
@@ -328,6 +329,7 @@ fn browser_profiles_wire_shape_is_pinned() {
             "sites": { "github.com/acme": "work" },
             "block_lists": ["https://easylist.to/easylist/easylist.txt"],
             "block_rules": ["||ads.example^"],
+            "block_resources": "https://example.com/resources.json",
         })
     );
 }

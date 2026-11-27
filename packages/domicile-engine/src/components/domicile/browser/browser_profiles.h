@@ -94,6 +94,10 @@ struct BrowserProfiles {
   std::vector<std::string> block_lists;
   // The user's own filter rules, on top of the lists'.
   std::vector<std::string> block_rules;
+  // The scriptlets and stand-in files the rules name, as adblock-rust's
+  // JSON: an `https:` address or an absolute path. Empty for none, and when
+  // the message has none.
+  std::string block_resources;
 };
 
 // The profiles of a desk whose compositor sends none: `default` and
@@ -113,7 +117,8 @@ BrowserProfiles DefaultBrowserProfiles();
 //    "default_profile": "personal", "default_private_profile": "private",
 //    "sites": {"github.com/acme": "work"},
 //    "block_lists": ["https://easylist.to/easylist/easylist.txt"],
-//    "block_rules": ["||ads.example^"]}
+//    "block_rules": ["||ads.example^"],
+//    "block_resources": "https://example.com/resources.json"}
 //
 // Nothing when malformed, or when it contradicts itself as the config refuses
 // to: a default that is no profile or is private, a default private profile

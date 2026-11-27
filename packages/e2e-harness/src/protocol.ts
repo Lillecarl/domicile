@@ -486,6 +486,7 @@ const extensionsSchema = z.looseObject({
 // reads it; see `docs/architecture/BROWSER-PROFILES.md`.
 const browserProfilesSchema = z.looseObject({
   block_lists: z.array(z.string()),
+  block_resources: z.string(),
   block_rules: z.array(z.string()),
   default_private_profile: z.string(),
   default_profile: z.string(),

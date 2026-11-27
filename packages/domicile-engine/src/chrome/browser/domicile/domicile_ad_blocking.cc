@@ -141,14 +141,17 @@ AdBlocking::AdBlocking() {
 AdBlocking::~AdBlocking() = default;
 
 void AdBlocking::Configure(std::vector<std::string> lists,
-                           std::vector<std::string> rules) {
+                           std::vector<std::string> rules,
+                           std::string resources) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  if (configured_ && lists == lists_ && rules == rules_) {
+  if (configured_ && lists == lists_ && rules == rules_ &&
+      resources == resources_) {
     return;
   }
   configured_ = true;
   lists_ = std::move(lists);
   rules_ = std::move(rules);
+  resources_ = std::move(resources);
   ++generation_;
   // A build under way is for the old config.
   ++build_;
@@ -186,7 +189,7 @@ void AdBlocking::Configure(std::vector<std::string> lists,
             }
             return read;
           },
-          kept_dir_, lists_),
+          kept_dir_, Sources()),
       base::BindOnce(&AdBlocking::Started, weak_factory_.GetWeakPtr(),
                      generation_));
   if (!refresh_.IsRunning()) {
@@ -194,6 +197,14 @@ void AdBlocking::Configure(std::vector<std::string> lists,
                    base::BindRepeating(&AdBlocking::FetchStale,
                                        base::Unretained(this)));
   }
+}
+
+std::vector<std::string> AdBlocking::Sources() const {
+  std::vector<std::string> sources = lists_;
+  if (!resources_.empty()) {
+    sources.push_back(resources_);
+  }
+  return sources;
 }
 
 void AdBlocking::WhenReady(base::OnceClosure ready) {
@@ -234,17 +245,28 @@ void AdBlocking::Rebuild() {
     Built(build, nullptr);
     return;
   }
+  std::string resources;
+  if (auto found = texts_.find(resources_); found != texts_.end()) {
+    resources = found->second;
+  }
   base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE, {base::TaskPriority::USER_BLOCKING},
       base::BindOnce(
-          [](std::vector<std::string> texts, std::vector<std::string> rules) {
+          [](std::vector<std::string> texts, std::vector<std::string> rules,
+             std::string resources, std::string source) {
             const base::TimeTicks start = base::TimeTicks::Now();
-            std::unique_ptr<AdBlocker> blocker = AdBlocker::Build(texts, rules);
+            std::unique_ptr<AdBlocker> blocker =
+                AdBlocker::Build(texts, rules, resources);
+            if (!resources.empty() && !blocker->has_resources()) {
+              LOG(ERROR) << "domicile: block resources " << source
+                         << " are not adblock-rust's resource list, so "
+                            "##+js() and $redirect rules only block.";
+            }
             VLOG(1) << "domicile: ad blocking: built in "
                     << (base::TimeTicks::Now() - start);
             return blocker;
           },
-          std::move(texts), rules_),
+          std::move(texts), rules_, std::move(resources), resources_),
       base::BindOnce(&AdBlocking::Built, weak_factory_.GetWeakPtr(), build));
 }
 
@@ -275,7 +297,7 @@ void AdBlocking::KeepFor(const std::string& list, const std::string& text) {
 
 void AdBlocking::FetchStale() {
   const base::Time now = base::Time::Now();
-  for (const std::string& list : lists_) {
+  for (const std::string& list : Sources()) {
     if (!IsFetched(list) || fetching_.contains(list)) {
       continue;
     }
@@ -322,7 +344,9 @@ void AdBlocking::Fetched(const std::string& list,
   }
   std::optional<std::string> text = Checked(list, std::move(body));
   // Not `base::Contains`: `base/containers/contains.h` is gone at our pin.
-  if (!text.has_value() || std::ranges::find(lists_, list) == lists_.end()) {
+  const std::vector<std::string> sources = Sources();
+  if (!text.has_value() ||
+      std::ranges::find(sources, list) == sources.end()) {
     return;
   }
   VLOG(1) << "domicile: ad blocking: fetched " << list << ", "

@@ -15,6 +15,11 @@ does; the engine has neither limit.
   `[]` fetches none.
 - **`browser.block_rules`**: rules of the user's own, in the same syntax,
   which apply on top of the lists.
+- **`browser.block_resources`**: the scriptlets and stand-in files that
+  `##+js()` and `$redirect` rules name, as adblock-rust's JSON, fetched,
+  kept and read as a list is. Unset: Brave's
+  [adblock-resources](https://github.com/brave/adblock-resources)
+  (`DEFAULT_BLOCK_RESOURCES`). `""` names none, and such rules only block.
 - **A profile's `protections.block_ads_and_trackers`**: `standard`, `strict`
   or `off`. Unset: `standard`, or `strict` in a private profile.
 

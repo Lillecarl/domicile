@@ -580,6 +580,7 @@ impl Host {
         sites: BTreeMap<String, String>,
         block_lists: Vec<String>,
         block_rules: Vec<String>,
+        block_resources: String,
     ) {
         self.browser_profiles = Some(HostMessage::BrowserProfiles {
             profiles,
@@ -588,6 +589,7 @@ impl Host {
             sites,
             block_lists,
             block_rules,
+            block_resources,
         });
     }
 

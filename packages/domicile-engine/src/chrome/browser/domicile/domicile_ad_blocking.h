@@ -45,6 +45,8 @@ class AdBlocker;
 // - A path is read at each change of the config.
 // - A list that cannot be read, or is not UTF-8 text, is left out, and an
 //   error names it.
+// - The config's resources, the scriptlets and stand-in files the rules
+//   name, are fetched, kept and read as a list is, and given to the blocker.
 //
 // Requests that start while the config's lists are first read and built wait
 // for it, so a page restored at start is blocked like the rest. A rebuild
@@ -58,10 +60,12 @@ class AdBlocking {
   AdBlocking(const AdBlocking&) = delete;
   AdBlocking& operator=(const AdBlocking&) = delete;
 
-  // The config's `browser.block_lists` and `browser.block_rules`. Reads and
-  // builds again when they changed.
+  // The config's `browser.block_lists`, `browser.block_rules` and
+  // `browser.block_resources` (empty for none). Reads and builds again when
+  // they changed.
   void Configure(std::vector<std::string> lists,
-                 std::vector<std::string> rules);
+                 std::vector<std::string> rules,
+                 std::string resources);
 
   // Runs `ready` once the blocker for the config is up: at once, unless the
   // config's lists are being read and built for the first time.
@@ -76,8 +80,8 @@ class AdBlocking {
   AdBlocking();
   ~AdBlocking();
 
-  // What a read of the config's lists found: each list's text, by list, and
-  // when each `https:` one was kept.
+  // What a read of the config's lists and resources found: each one's text,
+  // by its address or path, and when each `https:` one was kept.
   struct Read {
     Read();
     Read(Read&&);
@@ -88,6 +92,9 @@ class AdBlocking {
     std::map<std::string, base::Time> kept;
   };
 
+  // The lists, and the resources when the config names some: what is read,
+  // fetched and kept.
+  std::vector<std::string> Sources() const;
   void Started(int generation, Read read);
   // Builds the blocker from the texts in hand, for `generation`.
   void Rebuild();
@@ -103,6 +110,7 @@ class AdBlocking {
   base::FilePath kept_dir_;
   std::vector<std::string> lists_;
   std::vector<std::string> rules_;
+  std::string resources_;
   bool configured_ = false;
   // Bumped on each change of the config, so an answer for an older one is
   // dropped.

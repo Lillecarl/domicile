@@ -249,7 +249,9 @@ set.
 file's absolute path, in the syntax uBlock Origin and Adblock Plus read.
 `browser.block_rules` adds rules of your own in the same syntax, in every
 profile that blocks ads: a rule that starts with `@@` lets something load that
-a list blocks.
+a list blocks. `browser.block_resources` names the small scripts and stand-in
+files that rules such as `##+js()` and `$redirect` use, as an `https:` address
+or a file's path: Brave's unless set, and `""` for none.
 
 <!-- /tabs -->
 

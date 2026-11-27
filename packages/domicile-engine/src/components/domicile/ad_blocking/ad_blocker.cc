@@ -113,14 +113,22 @@ struct AdBlocker::Engines {
 // static
 std::unique_ptr<AdBlocker> AdBlocker::Build(
     const std::vector<std::string>& lists,
-    const std::vector<std::string>& rules) {
+    const std::vector<std::string>& rules,
+    std::string_view resources) {
   std::string own;
   for (const std::string& rule : rules) {
     own += rule;
     own += '\n';
   }
-  return base::WrapUnique(new AdBlocker(std::make_unique<Engines>(
-      Engines{.lists = EngineOf(lists), .rules = EngineOf({own})})));
+  auto engines = std::make_unique<Engines>(
+      Engines{.lists = EngineOf(lists), .rules = EngineOf({own})});
+  // Each engine keeps its own copy: adblock-rust has no way to share one.
+  // Not UTF-8 is not adblock-rust's JSON either.
+  const bool has_resources =
+      !resources.empty() && base::IsStringUTF8(resources) &&
+      engines->lists->use_resources(Str(resources)) &&
+      engines->rules->use_resources(Str(resources));
+  return base::WrapUnique(new AdBlocker(std::move(engines), has_resources));
 }
 
 AdBlocker::Cosmetics::Cosmetics() = default;
@@ -128,8 +136,8 @@ AdBlocker::Cosmetics::Cosmetics(Cosmetics&&) = default;
 AdBlocker::Cosmetics& AdBlocker::Cosmetics::operator=(Cosmetics&&) = default;
 AdBlocker::Cosmetics::~Cosmetics() = default;
 
-AdBlocker::AdBlocker(std::unique_ptr<Engines> engines)
-    : engines_(std::move(engines)) {}
+AdBlocker::AdBlocker(std::unique_ptr<Engines> engines, bool has_resources)
+    : engines_(std::move(engines)), has_resources_(has_resources) {}
 
 AdBlocker::~AdBlocker() = default;
 

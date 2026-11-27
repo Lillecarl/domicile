@@ -53,6 +53,94 @@ TEST(AdBlockerResourcesTest, HasNoneForNoneOrAnotherText) {
   EXPECT_FALSE(AdBlocker::Build({}, {}, "\xff\xfe")->has_resources());
 }
 
+using Kind = AdBlocker::Decision::Kind;
+
+// The `$removeparam` rules here name `$script`: an untyped one applies to
+// documents, frames and fetches only, as in uBlock Origin.
+
+AdBlocker::Decision Decide(const AdBlocker& blocker,
+                           const char* url,
+                           const char* page,
+                           bool strict = kStandard,
+                           const char* method = "GET") {
+  return blocker.Decide(GURL(url), GURL(page), "script", method, strict);
+}
+
+TEST(AdBlockerDecideTest, AnswersARedirectWithItsStandIn) {
+  std::unique_ptr<AdBlocker> blocker = AdBlocker::Build(
+      {"||ads.example^$script,redirect=noop.js\n"}, {}, kResources);
+  const AdBlocker::Decision decision =
+      Decide(*blocker, "https://ads.example/a.js", "https://news.example/");
+  EXPECT_EQ(decision.kind, Kind::kRedirect);
+  EXPECT_EQ(decision.url.spec(),
+            "data:application/javascript;base64,KGZ1bmN0aW9uKCkge30pKCk7");
+}
+
+TEST(AdBlockerDecideTest, BlocksARedirectWithoutResources) {
+  std::unique_ptr<AdBlocker> blocker = AdBlocker::Build(
+      {"||ads.example^$script,redirect=noop.js\n"}, {}, "");
+  EXPECT_EQ(
+      Decide(*blocker, "https://ads.example/a.js", "https://news.example/")
+          .kind,
+      Kind::kBlock);
+}
+
+TEST(AdBlockerDecideTest, RemovesTheParametersAListNames) {
+  std::unique_ptr<AdBlocker> blocker = AdBlocker::Build(
+      {"||cdn.example^$script,removeparam=utm_source\n"}, {}, "");
+  EXPECT_EQ(Decide(*blocker, "https://cdn.example/a.js?utm_source=x&b=1",
+                   "https://news.example/"),
+            (AdBlocker::Decision{.kind = Kind::kRewrite,
+                                 .url = GURL("https://cdn.example/a.js?b=1")}));
+}
+
+TEST(AdBlockerDecideTest, LeavesAPostsParameters) {
+  std::unique_ptr<AdBlocker> blocker = AdBlocker::Build(
+      {"||cdn.example^$script,removeparam=utm_source\n"}, {}, "");
+  EXPECT_EQ(Decide(*blocker, "https://cdn.example/a.js?utm_source=x",
+                   "https://news.example/", kStandard, "POST")
+                .kind,
+            Kind::kAllow);
+}
+
+TEST(AdBlockerDecideTest, RemovesAListsParametersFromASitesOwnOnlyInStrict) {
+  std::unique_ptr<AdBlocker> blocker =
+      AdBlocker::Build({"$script,removeparam=utm_source\n"}, {}, "");
+  const char* own = "https://news.example/a.js?utm_source=x";
+  EXPECT_EQ(Decide(*blocker, own, "https://news.example/").kind,
+            Kind::kAllow);
+  EXPECT_EQ(Decide(*blocker, own, "https://news.example/", kStrict).kind,
+            Kind::kRewrite);
+}
+
+TEST(AdBlockerDecideTest, RemovesTheUsersParametersEverywhere) {
+  std::unique_ptr<AdBlocker> blocker =
+      AdBlocker::Build({}, {"$script,removeparam=utm_source"}, "");
+  EXPECT_EQ(Decide(*blocker, "https://news.example/a.js?utm_source=x",
+                   "https://news.example/")
+                .kind,
+            Kind::kRewrite);
+}
+
+TEST(AdBlockerCspTest, AddsTheListsAndTheUsersPolicies) {
+  std::unique_ptr<AdBlocker> blocker =
+      AdBlocker::Build({"||news.example^$csp=script-src 'none'\n"},
+                       {"||news.example^$csp=img-src 'self'"}, "");
+  EXPECT_EQ(blocker->CspDirectives(GURL("https://news.example/"),
+                                   GURL("https://news.example/"), "document",
+                                   "GET"),
+            "script-src 'none',img-src 'self'");
+}
+
+TEST(AdBlockerCspTest, IsEmptyWithoutACspRule) {
+  std::unique_ptr<AdBlocker> blocker =
+      AdBlocker::Build({"||ads.example^\n"}, {}, "");
+  EXPECT_EQ(blocker->CspDirectives(GURL("https://news.example/"),
+                                   GURL("https://news.example/"), "document",
+                                   "GET"),
+            "");
+}
+
 TEST(BlockListExpiryTest, ReadsTheListsExpires) {
   EXPECT_EQ(BlockListExpiry("! Title: A\n! Expires: 4 days\n||ads.example^\n"),
             base::Days(4));

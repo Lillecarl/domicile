@@ -111,6 +111,26 @@ fetches and WebSockets, whose page is the frame's tab's main page. Not:
 A blocked request fails with `ERR_BLOCKED_BY_CLIENT`, which a page sees as a
 network error. `--vmodule=domicile_ad_blocking=1` logs each one.
 
+Each checked request goes through an `AdBlockingLoader`, which acts on
+`AdBlocker::Decide`:
+
+- **`$redirect`**: a blocked request whose rule names a resource is answered
+  with that stand-in (`noop.js`, a 1×1 GIF) from `browser.block_resources`,
+  as Brave's `MakeStubResponse` does, so a page that waits for the script
+  still runs. It counts as blocked. Without resources it is only blocked.
+- **`$removeparam`**: an allowed GET or HEAD whose rules remove parameters is
+  redirected to the address without them before the network sees it, as an
+  extension's webRequest redirect is. A list's applies where a list's block
+  would (another site's request, or any in Strict); the user's everywhere.
+  As in uBlock Origin, an untyped `$removeparam` is for documents, frames and
+  fetches.
+- **`$csp`**: a document's or frame's response gets the `Content-Security-Policy`
+  the lists' and the user's rules add, in Standard and Strict, as Brave adds
+  it; a frame tree's own navigation is checked in the mode of the page it
+  goes to.
+- **A server's redirect** is checked as a new request: one to a blocked
+  address fails.
+
 `guard-ad-blocking.sh` checks what a page loads and hides in each mode.
 
 ## What is hidden
@@ -156,7 +176,8 @@ keeps everything. It leaves alone a link within one site, whose parameters
 may be its own, a frame's navigation, a POST, back, forward and reload, and
 an Electron app's page. `--vmodule=link_tracking_throttle=1` logs each one.
 
-Not yet: the lists' `$removeparam` rules.
+The lists' `$removeparam` rules apply to a page's requests ([What is
+checked](#what-is-checked)), not to its navigation.
 
 ## Device details
 
@@ -230,6 +251,7 @@ Not yet: procedural filters (`:has-text()`, `:upward()`) and scriptlets
 - [x] Settings lists the sites with their own mode (`site_privacy`)
 - [x] cosmetic filters: what the lists hide by a page's elements
 - [x] tracking taken out of links to other sites
-- [ ] scriptlets and procedural filters, cookie banners, `$removeparam`
+- [x] `$redirect`, `$removeparam` and `$csp`, with Brave's resources
+- [ ] scriptlets and procedural filters, cookie banners
 - [x] fingerprinting protection: canvas, audio and processor count farbled
 - [ ] farbling in workers, WebGL, fonts and the screen

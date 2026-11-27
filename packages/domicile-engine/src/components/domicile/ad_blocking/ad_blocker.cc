@@ -43,6 +43,13 @@ void AddAll(std::set<std::string>& into,
   }
 }
 
+// Whether `url` is another site's than `page`'s, by registrable domain, as
+// cookies count sites.
+bool IsThirdParty(const GURL& url, const GURL& page) {
+  return !net::registry_controlled_domains::SameDomainOrHost(
+      url, page, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
+}
+
 rust::Box<ad_blocking::FilterEngine> EngineOf(
     const std::vector<std::string>& texts) {
   rust::Box<ad_blocking::FilterSetBuilder> builder =
@@ -146,27 +153,78 @@ bool AdBlocker::ShouldBlock(const GURL& url,
                             std::string_view type,
                             std::string_view method,
                             bool block_first_party) const {
-  const bool third_party =
-      !net::registry_controlled_domains::SameDomainOrHost(
-          url, page,
-          net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
+  return Decide(url, page, type, method, block_first_party).blocks();
+}
+
+AdBlocker::Decision AdBlocker::Decide(const GURL& url,
+                                      const GURL& page,
+                                      std::string_view type,
+                                      std::string_view method,
+                                      bool block_first_party) const {
+  const bool third_party = IsThirdParty(url, page);
   const auto check = [&](const ad_blocking::FilterEngine& engine) {
     return engine.check(Str(url.spec()), Str(url.host()), Str(page.host()),
                         Str(type), third_party, Str(method));
   };
   const ad_blocking::Verdict mine = check(*engines_->rules);
   const ad_blocking::Verdict listed = check(*engines_->lists);
-  if (mine.important || listed.important) {
-    return true;
+  const auto blocked = [](const ad_blocking::Verdict& verdict) {
+    if (verdict.redirect.empty()) {
+      return Decision{.kind = Decision::Kind::kBlock};
+    }
+    return Decision{.kind = Decision::Kind::kRedirect,
+                    .url = GURL(std::string(verdict.redirect))};
+  };
+  const auto rewritten = [&](const ad_blocking::Verdict& verdict) {
+    const GURL to(std::string(verdict.rewritten_url));
+    // A redirect would send a POST's body again, and the network has not
+    // seen the request to know it may.
+    if (verdict.rewritten_url.empty() || !to.is_valid() || to == url ||
+        !(method == "GET" || method == "HEAD")) {
+      return Decision{};
+    }
+    return Decision{.kind = Decision::Kind::kRewrite, .url = to};
+  };
+  if (mine.important) {
+    return blocked(mine);
+  }
+  if (listed.important) {
+    return blocked(listed);
   }
   if (mine.exception) {
-    return false;
+    return rewritten(mine);
   }
   if (mine.matched) {
-    return true;
+    return blocked(mine);
   }
-  return listed.matched && !listed.exception &&
-         (third_party || block_first_party);
+  const bool lists_apply = third_party || block_first_party;
+  if (!lists_apply) {
+    return rewritten(mine);
+  }
+  if (listed.matched && !listed.exception) {
+    return blocked(listed);
+  }
+  const Decision own = rewritten(mine);
+  return own.kind == Decision::Kind::kRewrite ? own : rewritten(listed);
+}
+
+std::string AdBlocker::CspDirectives(const GURL& url,
+                                     const GURL& page,
+                                     std::string_view type,
+                                     std::string_view method) const {
+  const bool third_party = IsThirdParty(url, page);
+  const auto csp = [&](const ad_blocking::FilterEngine& engine) {
+    return std::string(engine.csp_directives(Str(url.spec()), Str(url.host()),
+                                             Str(page.host()), Str(type),
+                                             third_party, Str(method)));
+  };
+  const std::string listed = csp(*engines_->lists);
+  const std::string mine = csp(*engines_->rules);
+  if (listed.empty() || mine.empty()) {
+    return listed + mine;
+  }
+  // Two policies in one header, each enforced, as two headers would be.
+  return listed + "," + mine;
 }
 
 AdBlocker::Cosmetics AdBlocker::CosmeticsFor(const GURL& page) const {

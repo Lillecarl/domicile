@@ -12,8 +12,7 @@
 
 #include "base/time/time.h"
 #include "services/network/public/mojom/fetch_api.mojom-shared.h"
-
-class GURL;
+#include "url/gurl.h"
 
 namespace domicile {
 
@@ -40,6 +39,29 @@ std::optional<base::TimeDelta> BlockListExpiry(std::string_view text);
 // asked where requests start.
 class AdBlocker {
  public:
+  // What to do with one request. See Decide.
+  struct Decision {
+    enum class Kind {
+      kAllow,
+      kBlock,
+      // Answer with `url`, a `data:` URL of a `$redirect` rule's stand-in,
+      // instead of loading.
+      kRedirect,
+      // Load `url`, the request's less what `$removeparam` rules remove.
+      kRewrite,
+    };
+
+    // Whether the request is kept from the network.
+    bool blocks() const {
+      return kind == Kind::kBlock || kind == Kind::kRedirect;
+    }
+
+    friend bool operator==(const Decision&, const Decision&) = default;
+
+    Kind kind = Kind::kAllow;
+    GURL url;
+  };
+
   // What a page at one address hides by its elements (cosmetic filters, as
   // `##.ad` and `example.com##.promo`), before its classes and ids are known.
   struct Cosmetics {
@@ -89,6 +111,26 @@ class AdBlocker {
                    std::string_view type,
                    std::string_view method,
                    bool block_first_party) const;
+
+  // ShouldBlock's verdict, with what a blocking rule's `$redirect` answers
+  // instead (when the blocker has resources) and what an allowed request's
+  // `$removeparam` rules remove. A list's `$removeparam` applies where a
+  // list's block would; the user's everywhere. Only a GET or HEAD is
+  // rewritten.
+  Decision Decide(const GURL& url,
+                  const GURL& page,
+                  std::string_view type,
+                  std::string_view method,
+                  bool block_first_party) const;
+
+  // The `Content-Security-Policy` the lists' and the user's `$csp` rules add
+  // to the response for `url`, a document or frame of AdBlockRequestType
+  // `type` in the page at `page`, or empty for none. In every mode that
+  // blocks, as Brave adds it.
+  std::string CspDirectives(const GURL& url,
+                            const GURL& page,
+                            std::string_view type,
+                            std::string_view method) const;
 
   // What the page at `page` hides. See docs/architecture/AD-BLOCKING.md.
   Cosmetics CosmeticsFor(const GURL& page) const;

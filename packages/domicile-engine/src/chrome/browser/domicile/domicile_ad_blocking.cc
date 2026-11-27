@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/byte_size.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
 #include "base/functional/bind.h"
@@ -19,6 +20,7 @@
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
@@ -41,18 +43,28 @@
 #include "crypto/hash.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/bindings/self_owned_associated_receiver.h"
+#include "mojo/public/cpp/system/data_pipe.h"
+#include "net/base/data_url.h"
 #include "net/base/net_errors.h"
+#include "net/http/http_response_headers.h"
+#include "net/http/http_status_code.h"
+#include "net/http/http_util.h"
+#include "net/url_request/redirect_info.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/cpp/parsed_headers.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/self_deleting_url_loader_factory.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "services/network/public/cpp/url_loader_completion_status.h"
 #include "services/network/public/cpp/url_loader_factory_builder.h"
+#include "services/network/public/mojom/early_hints.mojom.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "url/gurl.h"
 
@@ -371,8 +383,343 @@ void AdBlocking::Fetched(const std::string& list,
 
 namespace {
 
-// Checks each request of one frame's page against AdBlocking. See
-// ProxyAdBlocking.
+// The page a request is checked for, and that page's mode.
+struct CheckedIn {
+  GURL page;
+  AdBlockingMode mode;
+};
+
+// What `request`, from the frame `frame_id`, is checked in: nothing when it
+// is not checked, as when no blocker is up, the page is not a website's or
+// its mode is Off. A frame tree's own navigation (kDocument) is checked in
+// the mode of the page it goes to; any other request in the committed
+// page's.
+std::optional<CheckedIn> CheckedInFor(
+    content::GlobalRenderFrameHostId frame_id,
+    const network::ResourceRequest& request) {
+  if (AdBlocking::Get().blocker() == nullptr ||
+      !(request.url.SchemeIsHTTPOrHTTPS() || request.url.SchemeIsWSOrWSS())) {
+    return std::nullopt;
+  }
+  content::RenderFrameHost* frame = content::RenderFrameHost::FromID(frame_id);
+  if (frame == nullptr) {
+    return std::nullopt;
+  }
+  content::WebContents* contents =
+      content::WebContents::FromRenderFrameHost(frame);
+  // An app may take a window over after its frame's loader was made.
+  if (ElectronPage::SessionOf(*contents)) {
+    return std::nullopt;
+  }
+  PagePrivacy::CreateForWebContents(contents);
+  const PagePrivacy& privacy = *PagePrivacy::FromWebContents(contents);
+  CheckedIn checked;
+  if (request.destination == network::mojom::RequestDestination::kDocument) {
+    checked = {.page = request.url, .mode = privacy.ModeFor(request.url)};
+  } else {
+    // The page is the guest's own top document: a <webview>'s embedder is
+    // the shell, not the site.
+    checked = {
+        .page = contents->GetPrimaryMainFrame()->GetLastCommittedURL(),
+        .mode = privacy.mode()};
+  }
+  if (!checked.page.SchemeIsHTTPOrHTTPS() ||
+      checked.mode == AdBlockingMode::kOff) {
+    return std::nullopt;
+  }
+  return checked;
+}
+
+bool IsDocument(const network::ResourceRequest& request) {
+  using network::mojom::RequestDestination;
+  return request.destination == RequestDestination::kDocument ||
+         request.destination == RequestDestination::kIframe ||
+         request.destination == RequestDestination::kFrame ||
+         request.destination == RequestDestination::kFencedframe;
+}
+
+// One checked request, between the page's loader and the network's: blocks
+// it, answers a `$redirect` with its stand-in, loads it without what
+// `$removeparam` removes, checks each redirect the network answers, and
+// adds a document's `$csp`. See ProxyAdBlocking.
+class AdBlockingLoader final : public network::mojom::URLLoader,
+                               public network::mojom::URLLoaderClient {
+ public:
+  AdBlockingLoader(
+      CheckedIn checked,
+      content::GlobalRenderFrameHostId frame,
+      mojo::PendingRemote<network::mojom::URLLoaderFactory> network,
+      int32_t request_id,
+      uint32_t options,
+      const network::ResourceRequest& request,
+      mojo::PendingReceiver<network::mojom::URLLoader> loader,
+      mojo::PendingRemote<network::mojom::URLLoaderClient> client,
+      const net::MutableNetworkTrafficAnnotationTag& traffic_annotation)
+      : checked_(std::move(checked)),
+        frame_(frame),
+        network_(std::move(network)),
+        request_id_(request_id),
+        options_(options),
+        request_(request),
+        traffic_annotation_(traffic_annotation),
+        loader_(this, std::move(loader)),
+        client_(std::move(client)) {
+    loader_.set_disconnect_handler(
+        base::BindOnce(&AdBlockingLoader::Done, base::Unretained(this)));
+    client_.set_disconnect_handler(
+        base::BindOnce(&AdBlockingLoader::Done, base::Unretained(this)));
+  }
+
+  void Start() {
+    const AdBlocker::Decision decision = Decide(request_);
+    switch (decision.kind) {
+      case AdBlocker::Decision::Kind::kBlock:
+        return Fail(net::ERR_BLOCKED_BY_CLIENT);
+      case AdBlocker::Decision::Kind::kRedirect:
+        return Stub(decision.url);
+      case AdBlocker::Decision::Kind::kRewrite:
+        return RedirectTo(decision.url);
+      case AdBlocker::Decision::Kind::kAllow:
+        return StartOnTheNetwork();
+    }
+  }
+
+  // network::mojom::URLLoader:
+  void FollowRedirect(network::HttpRequestHeadersUpdateParams update,
+                      const std::optional<GURL>& new_url) override {
+    if (rewritten_) {
+      // RedirectTo's own: the network has not seen the request yet.
+      request_.url = *std::exchange(rewritten_, std::nullopt);
+      for (const std::string& name : update.removed_headers) {
+        request_.headers.RemoveHeader(name);
+      }
+      request_.headers.MergeFrom(update.modified_headers);
+      request_.cors_exempt_headers.MergeFrom(
+          update.modified_cors_exempt_headers);
+      return StartOnTheNetwork();
+    }
+    // Any other redirect is the network's, so its loader is up.
+    CHECK(network_loader_);
+    network_loader_->FollowRedirect(std::move(update), new_url);
+  }
+
+  void SetPriority(net::RequestPriority priority,
+                   int32_t intra_priority_value) override {
+    request_.priority = priority;
+    if (network_loader_) {
+      network_loader_->SetPriority(priority, intra_priority_value);
+    }
+  }
+
+  // network::mojom::URLLoaderClient:
+  void OnReceiveEarlyHints(network::mojom::EarlyHintsPtr hints) override {
+    client_->OnReceiveEarlyHints(std::move(hints));
+  }
+
+  void OnReceiveResponse(
+      network::mojom::URLResponseHeadPtr head,
+      mojo::ScopedDataPipeConsumerHandle body,
+      std::optional<mojo_base::BigBuffer> cached_metadata) override {
+    const AdBlocker* blocker = AdBlocking::Get().blocker();
+    if (blocker != nullptr && IsDocument(request_) && head->headers) {
+      const std::string directives = blocker->CspDirectives(
+          request_.url, PageOf(request_),
+          AdBlockRequestType(request_.destination), request_.method);
+      if (!directives.empty()) {
+        VLOG(1) << "domicile: ad blocking: adding the policy " << directives
+                << " to " << request_.url.possibly_invalid_spec();
+        head->headers->AddHeader("Content-Security-Policy", directives);
+        // Blink reads a document's policy from the parsed headers.
+        head->parsed_headers =
+            network::PopulateParsedHeaders(head->headers.get(), request_.url);
+      }
+    }
+    client_->OnReceiveResponse(std::move(head), std::move(body),
+                               std::move(cached_metadata));
+  }
+
+  void OnReceiveRedirect(const net::RedirectInfo& redirect,
+                         network::mojom::URLResponseHeadPtr head) override {
+    network::ResourceRequest next = request_;
+    next.url = redirect.new_url;
+    next.method = redirect.new_method;
+    // A server's redirect is followed as it is: rewriting it again could
+    // loop with a server that adds the parameters back.
+    if (Decide(next).blocks()) {
+      return Fail(net::ERR_BLOCKED_BY_CLIENT);
+    }
+    request_ = std::move(next);
+    client_->OnReceiveRedirect(redirect, std::move(head));
+  }
+
+  void OnUploadProgress(int64_t current_position,
+                        int64_t total_size,
+                        OnUploadProgressCallback callback) override {
+    client_->OnUploadProgress(current_position, total_size,
+                              std::move(callback));
+  }
+
+  void OnTransferSizeUpdated(int32_t transfer_size_diff) override {
+    client_->OnTransferSizeUpdated(transfer_size_diff);
+  }
+
+  void OnComplete(const network::URLLoaderCompletionStatus& status) override {
+    client_->OnComplete(status);
+    Done();
+  }
+
+ private:
+  ~AdBlockingLoader() override = default;
+
+  // The page `request` is checked for: itself, when it is a frame tree's
+  // navigation.
+  GURL PageOf(const network::ResourceRequest& request) const {
+    return request.destination == network::mojom::RequestDestination::kDocument
+               ? request.url
+               : checked_.page;
+  }
+
+  AdBlocker::Decision Decide(const network::ResourceRequest& request) const {
+    const AdBlocker* blocker = AdBlocking::Get().blocker();
+    // A page's own navigation is the user's to make.
+    if (blocker == nullptr ||
+        request.destination == network::mojom::RequestDestination::kDocument ||
+        !(request.url.SchemeIsHTTPOrHTTPS() || request.url.SchemeIsWSOrWSS())) {
+      return {};
+    }
+    const std::string_view type = AdBlockRequestType(request.destination);
+    AdBlocker::Decision decision =
+        blocker->Decide(request.url, checked_.page, type, request.method,
+                        checked_.mode == AdBlockingMode::kStrict);
+    if (decision.kind != AdBlocker::Decision::Kind::kAllow) {
+      VLOG(1) << "domicile: ad blocking: "
+              << (decision.kind == AdBlocker::Decision::Kind::kBlock
+                      ? "blocked"
+                  : decision.kind == AdBlocker::Decision::Kind::kRedirect
+                      ? "answered with a stand-in"
+                      : "removed parameters from")
+              << " a " << type << " request for "
+              << request.url.possibly_invalid_spec() << " from "
+              << checked_.page.possibly_invalid_spec() << " ("
+              << AdBlockingModeName(checked_.mode) << ")";
+    }
+    return decision;
+  }
+
+  void StartOnTheNetwork() {
+    network_->CreateLoaderAndStart(
+        network_loader_.BindNewPipeAndPassReceiver(), request_id_, options_,
+        request_, network_client_.BindNewPipeAndPassRemote(),
+        traffic_annotation_);
+    network_client_.set_disconnect_handler(base::BindOnce(
+        &AdBlockingLoader::Fail, base::Unretained(this), net::ERR_ABORTED));
+  }
+
+  // Answers with a `$redirect` rule's stand-in, as Brave's MakeStubResponse
+  // does.
+  void Stub(const GURL& data_url) {
+    std::string mime_type;
+    std::string charset;
+    std::string data;
+    if (!net::DataURL::Parse(data_url, &mime_type, &charset, &data)) {
+      // adblock-rust builds it from the resources, so this is its bug.
+      LOG(ERROR) << "domicile: ad blocking: a $redirect stand-in is no "
+                    "data: URL, so the request is only blocked";
+      return Fail(net::ERR_BLOCKED_BY_CLIENT);
+    }
+    Counted();
+    mojo::ScopedDataPipeProducerHandle producer;
+    mojo::ScopedDataPipeConsumerHandle consumer;
+    if (mojo::CreateDataPipe(std::max<size_t>(data.size(), 1), producer,
+                             consumer) != MOJO_RESULT_OK) {
+      return Fail(net::ERR_INSUFFICIENT_RESOURCES);
+    }
+    auto head = network::mojom::URLResponseHead::New();
+    head->headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+        net::HttpUtil::AssembleRawHeaders(base::StringPrintf(
+            "HTTP/1.1 200 OK\n"
+            "Content-Type: %s\n"
+            "Access-Control-Allow-Origin: *\n\n",
+            mime_type.c_str())));
+    head->mime_type = mime_type;
+    head->charset = charset;
+    head->content_length = data.size();
+    client_->OnReceiveResponse(std::move(head), std::move(consumer),
+                               std::nullopt);
+    producer->WriteAllData(base::as_byte_span(data));
+    producer.reset();
+    network::URLLoaderCompletionStatus status(net::OK);
+    status.decoded_body_length = base::ByteSize(data.size());
+    client_->OnComplete(status);
+    Done();
+  }
+
+  // Redirects to `url` before the network sees the request, as Chrome's
+  // webRequest does when an extension redirects one.
+  void RedirectTo(const GURL& url) {
+    constexpr int kStatus = net::HTTP_TEMPORARY_REDIRECT;
+    const net::RedirectInfo redirect = net::RedirectInfo::ComputeRedirectInfo(
+        request_.method, request_.url, request_.site_for_cookies,
+        request_.update_first_party_url_on_redirect
+            ? net::RedirectInfo::FirstPartyURLPolicy::UPDATE_URL_ON_REDIRECT
+            : net::RedirectInfo::FirstPartyURLPolicy::NEVER_CHANGE_URL,
+        request_.referrer_policy, request_.referrer.spec(),
+        request_.request_initiator, kStatus, url,
+        /*referrer_policy_header=*/std::nullopt,
+        /*insecure_scheme_was_upgraded=*/false, /*copy_fragment=*/false,
+        /*is_signed_exchange_fallback_redirect=*/false);
+    auto head = network::mojom::URLResponseHead::New();
+    head->headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+        net::HttpUtil::AssembleRawHeaders(base::StringPrintf(
+            "HTTP/1.1 %i Internal Redirect\n"
+            "Location: %s\n"
+            "Non-Authoritative-Reason: Domicile ad blocking\n\n",
+            kStatus, url.spec().c_str())));
+    head->encoded_data_length = 0;
+    rewritten_ = url;
+    client_->OnReceiveRedirect(redirect, std::move(head));
+  }
+
+  void Fail(int error) {
+    if (error == net::ERR_BLOCKED_BY_CLIENT) {
+      Counted();
+    }
+    client_->OnComplete(network::URLLoaderCompletionStatus(error));
+    Done();
+  }
+
+  // One more blocked on the page, for its shell's count.
+  void Counted() {
+    content::RenderFrameHost* frame = content::RenderFrameHost::FromID(frame_);
+    if (frame == nullptr) {
+      return;
+    }
+    content::WebContents* contents =
+        content::WebContents::FromRenderFrameHost(frame);
+    PagePrivacy::CreateForWebContents(contents);
+    PagePrivacy::FromWebContents(contents)->CountBlocked();
+  }
+
+  void Done() { delete this; }
+
+  const CheckedIn checked_;
+  const content::GlobalRenderFrameHostId frame_;
+  mojo::Remote<network::mojom::URLLoaderFactory> network_;
+  const int32_t request_id_;
+  const uint32_t options_;
+  network::ResourceRequest request_;
+  const net::MutableNetworkTrafficAnnotationTag traffic_annotation_;
+  // The URL RedirectTo sent the page to, until the page follows.
+  std::optional<GURL> rewritten_;
+
+  mojo::Receiver<network::mojom::URLLoader> loader_;
+  mojo::Remote<network::mojom::URLLoaderClient> client_;
+  mojo::Remote<network::mojom::URLLoader> network_loader_;
+  mojo::Receiver<network::mojom::URLLoaderClient> network_client_{this};
+};
+
+// Hands each request of one frame that is checked to an AdBlockingLoader,
+// and the rest straight to the network. See ProxyAdBlocking.
 class AdBlockingURLLoaderFactory final
     : public network::SelfDeletingURLLoaderFactory {
  public:
@@ -409,62 +756,20 @@ class AdBlockingURLLoaderFactory final
              const network::ResourceRequest& request,
              mojo::PendingRemote<network::mojom::URLLoaderClient> client,
              const net::MutableNetworkTrafficAnnotationTag& traffic_annotation) {
-    if (Blocks(request)) {
-      mojo::Remote<network::mojom::URLLoaderClient>(std::move(client))
-          ->OnComplete(
-              network::URLLoaderCompletionStatus(net::ERR_BLOCKED_BY_CLIENT));
+    std::optional<CheckedIn> checked = CheckedInFor(frame_, request);
+    if (!checked) {
+      network_->CreateLoaderAndStart(std::move(loader), request_id, options,
+                                     request, std::move(client),
+                                     traffic_annotation);
       return;
     }
-    network_->CreateLoaderAndStart(std::move(loader), request_id, options,
-                                   request, std::move(client),
-                                   traffic_annotation);
-  }
-
-  // Whether the blocker blocks `request`, in its page's mode, and counts it
-  // for the page if so.
-  bool Blocks(const network::ResourceRequest& request) const {
-    const AdBlocker* blocker = AdBlocking::Get().blocker();
-    // A page's own navigation is the user's to make.
-    if (blocker == nullptr ||
-        request.destination == network::mojom::RequestDestination::kDocument ||
-        !(request.url.SchemeIsHTTPOrHTTPS() || request.url.SchemeIsWSOrWSS())) {
-      return false;
-    }
-    content::RenderFrameHost* frame = content::RenderFrameHost::FromID(frame_);
-    if (frame == nullptr) {
-      return false;
-    }
-    content::WebContents* contents =
-        content::WebContents::FromRenderFrameHost(frame);
-    // An app may take a window over after its frame's loader was made.
-    if (ElectronPage::SessionOf(*contents)) {
-      return false;
-    }
-    // The page is the guest's own top document: a <webview>'s embedder is
-    // the shell, not the site.
-    const GURL& page = contents->GetPrimaryMainFrame()->GetLastCommittedURL();
-    if (!page.SchemeIsHTTPOrHTTPS()) {
-      return false;
-    }
-    // The page's own: its window's, its site's or its profile's.
-    PagePrivacy::CreateForWebContents(contents);
-    PagePrivacy& privacy = *PagePrivacy::FromWebContents(contents);
-    const AdBlockingMode mode = privacy.mode();
-    if (mode == AdBlockingMode::kOff) {
-      return false;
-    }
-    const bool strict = mode == AdBlockingMode::kStrict;
-    const std::string_view type = AdBlockRequestType(request.destination);
-    if (!blocker->ShouldBlock(request.url, page, type, request.method,
-                              strict)) {
-      return false;
-    }
-    privacy.CountBlocked();
-    VLOG(1) << "domicile: ad blocking: blocked a " << type << " request for "
-            << request.url.possibly_invalid_spec() << " from "
-            << page.possibly_invalid_spec() << " ("
-            << AdBlockingModeName(mode) << ")";
-    return true;
+    mojo::PendingRemote<network::mojom::URLLoaderFactory> network;
+    network_->Clone(network.InitWithNewPipeAndPassReceiver());
+    // Owns itself: it goes when the request ends or either side does.
+    (new AdBlockingLoader(*std::move(checked), frame_, std::move(network),
+                          request_id, options, request, std::move(loader),
+                          std::move(client), traffic_annotation))
+        ->Start();
   }
 
   mojo::Remote<network::mojom::URLLoaderFactory> network_;

@@ -56,6 +56,8 @@ FILTER='PinchMetadataTest.*:ScrollMetadataTest.*:FrameSinkBrokerTest.*:WindowDif
 # LinkTracking 4, DeviceDetails 4, AdBlockerResources 2, AdBlockerDecide 6,
 # AdBlockerCsp 2, AdBlockerCosmetics 2, BlockListExpiry 2.
 #
+# 1188, and it was 1187 — the page asking where the pointer is, is one
+# ControlChannel case. Before that
 # 1187, and it was 1172 — the ad blocker's resources, `$redirect`,
 # `$removeparam`, `$csp`, scriptlets, procedural filters and lists' own
 # `! Expires:` are fourteen cases in five suites, and refusing a profiles
@@ -416,7 +418,7 @@ FILTER='PinchMetadataTest.*:ScrollMetadataTest.*:FrameSinkBrokerTest.*:WindowDif
 # so the floor sat 12 below the truth and a whole suite could have stopped
 # linking with room to spare. That is the failure this exists to catch, so the
 # number is the real one.
-FLOOR=1187
+FLOOR=1188
 
 # From inside the out directory, because this is a component build and the
 # binary loads its own .so files from beside it.

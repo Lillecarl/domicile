@@ -418,22 +418,27 @@ std::optional<CheckedIn> CheckedInFor(
   }
   content::WebContents* contents =
       content::WebContents::FromRenderFrameHost(frame);
-  // An app may take a window over after its frame's loader was made.
+  const bool navigation =
+      request.destination == network::mojom::RequestDestination::kDocument;
+  // The page is the guest's own top document: a <webview>'s embedder is the
+  // shell, not the site.
+  const GURL page =
+      navigation ? request.url
+                 : contents->GetPrimaryMainFrame()->GetLastCommittedURL();
+  // Checked when its loader starts, as an app may take a window over later.
   if (ElectronPage::SessionOf(*contents)) {
-    return std::nullopt;
+    // An app's page is in no profile, so has no mode of its own.
+    return AdBlocking::Get().blocks_electron_apps() &&
+                   page.SchemeIsHTTPOrHTTPS()
+               ? std::optional<CheckedIn>(
+                     {.page = page, .mode = AdBlockingMode::kStandard})
+               : std::nullopt;
   }
   PagePrivacy::CreateForWebContents(contents);
   const PagePrivacy& privacy = *PagePrivacy::FromWebContents(contents);
-  CheckedIn checked;
-  if (request.destination == network::mojom::RequestDestination::kDocument) {
-    checked = {.page = request.url, .mode = privacy.ModeFor(request.url)};
-  } else {
-    // The page is the guest's own top document: a <webview>'s embedder is
-    // the shell, not the site.
-    checked = {
-        .page = contents->GetPrimaryMainFrame()->GetLastCommittedURL(),
-        .mode = privacy.mode()};
-  }
+  CheckedIn checked = {
+      .page = page,
+      .mode = navigation ? privacy.ModeFor(page) : privacy.mode()};
   if (!checked.page.SchemeIsHTTPOrHTTPS() ||
       checked.mode == AdBlockingMode::kOff) {
     return std::nullopt;
@@ -775,7 +780,8 @@ class AdBlockingLoader final : public network::mojom::URLLoader,
     Done();
   }
 
-  // One more blocked on the page, for its shell's count.
+  // One more blocked on the page, for its shell's count. An Electron app's
+  // page has no shield to count for.
   void Counted() {
     content::RenderFrameHost* frame = content::RenderFrameHost::FromID(frame_);
     if (frame == nullptr) {
@@ -783,6 +789,9 @@ class AdBlockingLoader final : public network::mojom::URLLoader,
     }
     content::WebContents* contents =
         content::WebContents::FromRenderFrameHost(frame);
+    if (ElectronPage::SessionOf(*contents)) {
+      return;
+    }
     PagePrivacy::CreateForWebContents(contents);
     PagePrivacy::FromWebContents(contents)->CountBlocked();
   }
@@ -920,22 +929,26 @@ class CosmeticFiltering final
     if (!url.SchemeIsHTTPOrHTTPS()) {
       return;
     }
-    // An app may take a window over after it was attached.
-    if (ElectronPage::SessionOf(GetWebContents())) {
-      return;
-    }
     const AdBlocker* blocker = AdBlocking::Get().blocker();
     if (blocker == nullptr) {
       return;
     }
     // The page's mode: for its main frame, the page about to commit's; for
-    // a frame in it, the committed page's.
-    PagePrivacy::CreateForWebContents(&GetWebContents());
-    const PagePrivacy& privacy =
-        *PagePrivacy::FromWebContents(&GetWebContents());
-    const AdBlockingMode mode = navigation->IsInPrimaryMainFrame()
-                                    ? privacy.ModeFor(url)
-                                    : privacy.mode();
+    // a frame in it, the committed page's. An app may take a window over
+    // after it was attached; its page is in no profile, and hides in
+    // Standard when the config asks.
+    AdBlockingMode mode = AdBlockingMode::kOff;
+    if (ElectronPage::SessionOf(GetWebContents())) {
+      if (AdBlocking::Get().blocks_electron_apps()) {
+        mode = AdBlockingMode::kStandard;
+      }
+    } else {
+      PagePrivacy::CreateForWebContents(&GetWebContents());
+      const PagePrivacy& privacy =
+          *PagePrivacy::FromWebContents(&GetWebContents());
+      mode = navigation->IsInPrimaryMainFrame() ? privacy.ModeFor(url)
+                                                : privacy.mode();
+    }
     if (mode == AdBlockingMode::kOff) {
       return;
     }
@@ -983,10 +996,9 @@ void ProxyAdBlocking(content::RenderFrameHost* frame,
   if (frame == nullptr) {
     return;
   }
-  content::WebContents* contents =
-      content::WebContents::FromRenderFrameHost(frame);
-  // An Electron app's pages are the app's, as in Electron.
-  if (contents == nullptr || ElectronPage::SessionOf(*contents)) {
+  // Every frame of a guest, an Electron app's too: whether its requests are
+  // checked is decided as each starts, by the config of the moment.
+  if (content::WebContents::FromRenderFrameHost(frame) == nullptr) {
     return;
   }
   // Every load of the frame, whatever its page is now: it may navigate to a

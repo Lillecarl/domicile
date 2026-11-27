@@ -229,6 +229,8 @@ std::optional<BrowserProfiles> ParseBrowserProfiles(
   if (const std::string* resources = message.FindString("block_resources")) {
     profiles.block_resources = *resources;
   }
+  profiles.block_in_electron_apps =
+      message.FindBool("block_in_electron_apps").value_or(false);
   profiles.default_profile = *fallback;
   profiles.default_private_profile = *fallback_private;
   if (!Consistent(profiles)) {

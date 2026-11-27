@@ -965,13 +965,14 @@ fn ads_are_blocked_with_easylist_easyprivacy_and_ublock_origins_filters() {
         browser.block_resources,
         "https://raw.githubusercontent.com/brave/adblock-resources/master/dist/resources.json"
     );
+    assert!(!browser.block_in_electron_apps);
 }
 
 #[test]
 fn the_config_names_its_own_block_lists_and_rules() {
     let browser = Config::parse(&browser_config(
         r#", "block_lists": ["https://example.com/list.txt", "/etc/domicile/mine.txt"],
-            "block_rules": ["||ads.example^"], "block_resources": """#,
+            "block_rules": ["||ads.example^"], "block_resources": "", "block_in_electron_apps": true"#,
     ))
     .unwrap()
     .browser;
@@ -981,6 +982,7 @@ fn the_config_names_its_own_block_lists_and_rules() {
     );
     assert_eq!(browser.block_rules, ["||ads.example^"]);
     assert_eq!(browser.block_resources, "");
+    assert!(browser.block_in_electron_apps);
 }
 
 #[test]

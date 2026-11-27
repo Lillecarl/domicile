@@ -75,6 +75,11 @@ class AdBlocking {
   // config, and for one with no lists and no rules.
   const AdBlocker* blocker() const { return blocker_.get(); }
 
+  // The config's `browser.block_in_electron_apps`: whether an Electron app's
+  // web pages are blocked in too, in Standard.
+  void set_blocks_electron_apps(bool blocks) { blocks_electron_apps_ = blocks; }
+  bool blocks_electron_apps() const { return blocks_electron_apps_; }
+
  private:
   friend class base::NoDestructor<AdBlocking>;
   AdBlocking();
@@ -111,6 +116,7 @@ class AdBlocking {
   std::vector<std::string> lists_;
   std::vector<std::string> rules_;
   std::string resources_;
+  bool blocks_electron_apps_ = false;
   bool configured_ = false;
   // Bumped on each change of the config, so an answer for an older one is
   // dropped.
@@ -136,8 +142,9 @@ class AdBlocking {
 // Puts AdBlocking in front of `frame`'s network loads: a request a website's
 // page makes, in a profile that blocks ads, fails with
 // ERR_BLOCKED_BY_CLIENT when the blocker says so, and any other goes to the
-// network as before. Not for a worker's loads (no frame), an Electron app's
-// pages, or the shell's and extensions' own pages. Called from
+// network as before. Not for a worker's loads (no frame), or the shell's and
+// extensions' own pages; an Electron app's web pages only when the config
+// asks (`browser.block_in_electron_apps`), in Standard. Called from
 // ChromeContentBrowserClient::WillCreateURLLoaderFactory.
 void ProxyAdBlocking(content::RenderFrameHost* frame,
                      network::URLLoaderFactoryBuilder& builder);
@@ -145,8 +152,8 @@ void ProxyAdBlocking(content::RenderFrameHost* frame,
 // Hides what the lists name by its elements in each website page `guest`
 // commits, in its mode (Standard and Strict alike; Off hides nothing): sends
 // the page's frame its cosmetic filters before it commits, for
-// CosmeticFilters in the renderer. Not an Electron app's pages. From
-// AttachTabHelpers.
+// CosmeticFilters in the renderer. An Electron app's web pages only when the
+// config asks, in Standard. From AttachTabHelpers.
 void AttachCosmeticFiltering(content::WebContents& guest);
 
 }  // namespace domicile

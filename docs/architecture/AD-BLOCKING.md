@@ -15,6 +15,10 @@ does; the engine has neither limit.
   `[]` fetches none.
 - **`browser.block_rules`**: rules of the user's own, in the same syntax,
   which apply on top of the lists.
+- **`browser.block_in_electron_apps`**: also blocks in an Electron app's
+  web pages (an `https:` page an app shows), in Standard, as an app's page
+  is in no profile and has no shield. Off unless set: an app can break in
+  ways no shield fixes.
 - **`browser.block_resources`**: the scriptlets and stand-in files that
   `##+js()` and `$redirect` rules name, as adblock-rust's JSON, fetched,
   kept and read as a list is. Unset: Brave's
@@ -104,8 +108,8 @@ fetches and WebSockets, whose page is the frame's tab's main page. Not:
 
 - a navigation of the page itself (`document`), which the user asked for;
 - a worker's own loads, which have no frame;
-- an Electron app's pages, the shell's, `domicile:` and `chrome-extension:`
-  pages;
+- an Electron app's pages, unless `browser.block_in_electron_apps`; the
+  shell's, `domicile:` and `chrome-extension:` pages;
 - a request that isn't `http(s)` or `ws(s)`.
 
 A blocked request fails with `ERR_BLOCKED_BY_CLIENT`, which a page sees as a

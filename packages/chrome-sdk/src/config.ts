@@ -101,6 +101,11 @@ export type BrowserConfig = {
    * only block.
    */
   block_resources?: string;
+  /**
+   * Also blocks ads and trackers in Electron apps' web pages, in
+   * Standard. Off unless set: an app can break in ways no shield fixes.
+   */
+  block_in_electron_apps?: boolean;
   /** The profile a new private window opens in. Private. */
   default_private_profile?: string;
   /** The profile a site opens in when `sites` names none. Not private. */

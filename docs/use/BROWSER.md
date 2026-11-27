@@ -252,6 +252,8 @@ profile that blocks ads: a rule that starts with `@@` lets something load that
 a list blocks. `browser.block_resources` names the small scripts and stand-in
 files that rules such as `##+js()` and `$redirect` use, as an `https:` address
 or a file's path: Brave's unless set, and `""` for none.
+`browser.block_in_electron_apps` set to `true` also blocks in the web pages a
+desktop app built on Electron shows, such as Slack's, in Standard.
 
 <!-- /tabs -->
 

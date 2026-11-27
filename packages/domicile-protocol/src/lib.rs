@@ -1241,6 +1241,8 @@ pub enum HostMessage {
         /// adblock-rust's JSON: an `https:` address or an absolute path, or
         /// empty for none.
         block_resources: String,
+        /// Whether Electron apps' web pages are blocked in too.
+        block_in_electron_apps: bool,
     },
 
     /// The config's `spellcheck`: whether the browser checks spelling in

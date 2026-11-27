@@ -908,6 +908,9 @@ pub struct BrowserConfig {
     /// `adblock-resources` unless set; `""` names none, and those rules
     /// only block.
     pub block_resources: String,
+    /// Also blocks ads and trackers in Electron apps' web pages, in
+    /// Standard. Off unless set: an app can break in ways no shield fixes.
+    pub block_in_electron_apps: bool,
 }
 
 /// The resources [`BrowserConfig::block_resources`] names unless set.
@@ -948,6 +951,7 @@ impl Default for BrowserConfig {
             block_lists: DEFAULT_BLOCK_LISTS.map(String::from).to_vec(),
             block_rules: Vec::new(),
             block_resources: DEFAULT_BLOCK_RESOURCES.to_string(),
+            block_in_electron_apps: false,
         }
     }
 }

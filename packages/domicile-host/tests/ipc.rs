@@ -328,6 +328,7 @@ fn the_browser_profiles_ride_with_the_handshake() {
         vec!["https://easylist.to/easylist/easylist.txt".into()],
         vec!["||ads.example^".into()],
         "https://example.com/resources.json".into(),
+        false,
     );
 
     let out = session.ingest(&to_line(&ChromeMessage::Hello {
@@ -344,6 +345,7 @@ fn the_browser_profiles_ride_with_the_handshake() {
             block_lists: vec!["https://easylist.to/easylist/easylist.txt".into()],
             block_rules: vec!["||ads.example^".into()],
             block_resources: "https://example.com/resources.json".into(),
+            block_in_electron_apps: false,
         }),
         "{out:?}"
     );

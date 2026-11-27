@@ -98,6 +98,9 @@ struct BrowserProfiles {
   // JSON: an `https:` address or an absolute path. Empty for none, and when
   // the message has none.
   std::string block_resources;
+  // Whether Electron apps' web pages are blocked in too. False when the
+  // message does not say.
+  bool block_in_electron_apps = false;
 };
 
 // The profiles of a desk whose compositor sends none: `default` and
@@ -118,7 +121,8 @@ BrowserProfiles DefaultBrowserProfiles();
 //    "sites": {"github.com/acme": "work"},
 //    "block_lists": ["https://easylist.to/easylist/easylist.txt"],
 //    "block_rules": ["||ads.example^"],
-//    "block_resources": "https://example.com/resources.json"}
+//    "block_resources": "https://example.com/resources.json",
+//    "block_in_electron_apps": false}
 //
 // Nothing when malformed, or when it contradicts itself as the config refuses
 // to: a default that is no profile or is private, a default private profile
